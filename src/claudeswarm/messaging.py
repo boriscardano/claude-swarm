@@ -221,16 +221,28 @@ class TmuxMessageDelivery:
             # Use bash comment to display message (no execution, no approval needed)
             cmd = f"# [MESSAGE] {escaped}"
 
-            # Send to tmux pane (C-m auto-executes the command)
+            # Send command text to tmux pane
             result = subprocess.run(
-                ['tmux', 'send-keys', '-t', pane_id, cmd, 'C-m'],
+                ['tmux', 'send-keys', '-t', pane_id, cmd],
                 capture_output=True,
                 text=True,
                 timeout=5
             )
 
             if result.returncode != 0:
-                logger.error(f"Failed to send to pane {pane_id}: {result.stderr}")
+                logger.error(f"Failed to send command to pane {pane_id}: {result.stderr}")
+                return False
+
+            # Send Enter key separately to execute the command
+            result = subprocess.run(
+                ['tmux', 'send-keys', '-t', pane_id, 'Enter'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if result.returncode != 0:
+                logger.error(f"Failed to send Enter to pane {pane_id}: {result.stderr}")
                 return False
 
             return True

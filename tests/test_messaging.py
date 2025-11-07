@@ -272,12 +272,24 @@ class TestTmuxMessageDelivery:
         result = TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
 
         assert result is True
-        mock_run.assert_called_once()
-        args = mock_run.call_args[0][0]
-        assert args[0] == 'tmux'
-        assert args[1] == 'send-keys'
-        assert args[2] == '-t'
-        assert args[3] == 'session:0.1'
+        # Should be called twice: once for command, once for Enter key
+        assert mock_run.call_count == 2
+
+        # First call: send the command
+        first_call_args = mock_run.call_args_list[0][0][0]
+        assert first_call_args[0] == 'tmux'
+        assert first_call_args[1] == 'send-keys'
+        assert first_call_args[2] == '-t'
+        assert first_call_args[3] == 'session:0.1'
+        assert first_call_args[4].startswith('# [MESSAGE]')
+
+        # Second call: send Enter key
+        second_call_args = mock_run.call_args_list[1][0][0]
+        assert second_call_args[0] == 'tmux'
+        assert second_call_args[1] == 'send-keys'
+        assert second_call_args[2] == '-t'
+        assert second_call_args[3] == 'session:0.1'
+        assert second_call_args[4] == 'Enter'
 
     @patch('subprocess.run')
     def test_send_to_pane_failure(self, mock_run):
