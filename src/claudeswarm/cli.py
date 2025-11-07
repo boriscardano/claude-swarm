@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from claudeswarm.locking import LockManager
-from claudeswarm.discovery import discover_agents, refresh_registry, list_active_agents
+from claudeswarm.discovery import refresh_registry, list_active_agents
 from claudeswarm.monitoring import start_monitoring
 
 __all__ = ["main"]

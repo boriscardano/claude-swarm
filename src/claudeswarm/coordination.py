@@ -13,7 +13,6 @@ communicate their current work, blockers, and coordination needs.
 
 from __future__ import annotations
 
-import re
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone

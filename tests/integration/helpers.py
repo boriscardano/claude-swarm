@@ -113,6 +113,10 @@ class IntegrationTestContext:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Clean up test context."""
+        # Reset the global messaging system to clear rate limiters
+        import claudeswarm.messaging as messaging_module
+        messaging_module._default_messaging_system = None
+
         # Restore original working directory
         if self.original_cwd:
             import os
@@ -210,8 +214,8 @@ class IntegrationTestContext:
                 with open(lock_file, "r") as f:
                     lock_data = json.load(f)
 
-                # Subtract seconds from locked_at timestamp
-                lock_data["locked_at"] -= seconds
+                # Subtract seconds from locked_at timestamp to make it older
+                lock_data["locked_at"] = lock_data["locked_at"] - seconds
 
                 with open(lock_file, "w") as f:
                     json.dump(lock_data, f, indent=2)
