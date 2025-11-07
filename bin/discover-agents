@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# discover-agents - Discover active Claude Code agents in tmux sessions
+#
+# Usage:
+#   discover-agents              # Run discovery once
+#   discover-agents --watch      # Continuous monitoring mode
+#   discover-agents --json       # Output to stdout as JSON
+#   discover-agents --help       # Show help
+
+set -euo pipefail
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Show help if requested
+if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    cat << 'HELP'
+discover-agents - Discover active Claude Code agents
+
+Usage:
+    discover-agents [options]
+
+Options:
+    --watch         Run continuously, refreshing every 30 seconds
+    --json          Output results to stdout in JSON format
+    -h, --help      Show this help message
+
+Description:
+    Scans all active tmux sessions and panes to discover running Claude Code
+    instances. Updates ACTIVE_AGENTS.json with current agent registry.
+
+Examples:
+    # Single discovery run
+    discover-agents
+
+    # Watch mode (continuous monitoring)
+    discover-agents --watch
+
+    # Get JSON output
+    discover-agents --json
+HELP
+    exit 0
+fi
+
+# Check if uv is available
+if ! command -v uv &> /dev/null; then
+    echo "Error: uv is not installed. Please install it first:" >&2
+    echo "  curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+    exit 1
+fi
+
+# Check if tmux is available
+if ! command -v tmux &> /dev/null; then
+    echo "Error: tmux is not installed. Please install tmux first." >&2
+    exit 1
+fi
+
+# Run the discovery command via Python module
+cd "$PROJECT_ROOT"
+exec uv run python -m claudeswarm.discovery "$@"
