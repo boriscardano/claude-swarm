@@ -16,6 +16,7 @@ from typing import NoReturn
 
 from claudeswarm.locking import LockManager
 from claudeswarm.discovery import discover_agents, refresh_registry, list_active_agents
+from claudeswarm.monitoring import start_monitoring
 
 __all__ = ["main"]
 
@@ -222,6 +223,23 @@ def cmd_cleanup_stale_locks(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
+def cmd_start_monitoring(args: argparse.Namespace) -> None:
+    """Start the monitoring dashboard."""
+    try:
+        start_monitoring(
+            filter_type=args.filter_type,
+            filter_agent=args.filter_agent,
+            use_tmux=not args.no_tmux
+        )
+        sys.exit(0)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def main() -> NoReturn:
     """Main entry point for the claudeswarm CLI.
 
@@ -329,6 +347,28 @@ def main() -> NoReturn:
         help="Clean up stale locks",
     )
     cleanup_parser.set_defaults(func=cmd_cleanup_stale_locks)
+
+    # start-monitoring command
+    monitoring_parser = subparsers.add_parser(
+        "start-monitoring",
+        help="Start the monitoring dashboard",
+    )
+    monitoring_parser.add_argument(
+        "--filter-type",
+        type=str,
+        help="Filter messages by type (BLOCKED, QUESTION, INFO, etc.)",
+    )
+    monitoring_parser.add_argument(
+        "--filter-agent",
+        type=str,
+        help="Filter messages by agent ID",
+    )
+    monitoring_parser.add_argument(
+        "--no-tmux",
+        action="store_true",
+        help="Run in current terminal instead of creating tmux pane",
+    )
+    monitoring_parser.set_defaults(func=cmd_start_monitoring)
 
     args = parser.parse_args()
 

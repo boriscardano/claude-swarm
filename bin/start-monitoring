@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# start-monitoring - Start the monitoring dashboard
+#
+# Usage:
+#   start-monitoring [options]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    cat << 'HELP'
+start-monitoring - Start the monitoring dashboard
+
+Usage:
+    start-monitoring [options]
+
+Options:
+    --filter-type TYPE      Filter messages by type (e.g., BLOCKED, QUESTION)
+    --filter-agent ID       Filter messages by agent ID (e.g., agent-2)
+    --no-tmux              Run in current terminal (don't create tmux pane)
+
+Description:
+    Starts the real-time monitoring dashboard that shows:
+    - Recent agent messages with color coding
+    - Active agent count and status
+    - Current file locks
+    - Pending acknowledgments
+    
+    By default, launches in a new tmux pane for side-by-side viewing.
+    The dashboard auto-refreshes every 2 seconds.
+
+Color Coding:
+    RED     BLOCKED, ERROR messages
+    YELLOW  QUESTION, REQUIRES-ACK messages
+    GREEN   COMPLETED, ACK messages
+    BLUE    INFO, REVIEW-REQUEST messages
+    MAGENTA Lock operations
+
+Examples:
+    # Start full dashboard in tmux pane
+    start-monitoring
+
+    # Show only blocked messages
+    start-monitoring --filter-type BLOCKED
+
+    # Show messages from/to specific agent
+    start-monitoring --filter-agent agent-3
+
+    # Run in current terminal
+    start-monitoring --no-tmux
+
+Controls:
+    Ctrl+C  Stop monitoring
+    q       Quit (when in no-tmux mode)
+HELP
+    exit 0
+fi
+
+if ! command -v uv &> /dev/null; then
+    echo "Error: uv is not installed" >&2
+    exit 1
+fi
+
+if ! command -v tmux &> /dev/null; then
+    echo "Warning: tmux is not installed. Running in current terminal." >&2
+    echo "Install tmux for better experience with split panes." >&2
+fi
+
+cd "$PROJECT_ROOT"
+exec uv run python -m claudeswarm.monitoring "$@"

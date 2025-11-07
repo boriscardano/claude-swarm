@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# acquire-file-lock - Acquire an exclusive lock on a file
+#
+# Usage:
+#   acquire-file-lock <filepath> <agent-id> [reason]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    cat << 'HELP'
+acquire-file-lock - Acquire an exclusive lock on a file
+
+Usage:
+    acquire-file-lock <filepath> <agent-id> [reason]
+
+Arguments:
+    filepath    Path to the file to lock (relative to project root)
+    agent-id    Your agent identifier (e.g., "agent-0")
+    reason      Optional reason for locking (for visibility)
+
+Options:
+    --timeout N     Wait up to N seconds for stale lock cleanup (default: 30)
+
+Description:
+    Attempts to acquire an exclusive lock on the specified file.
+    If the file is already locked, returns information about the current holder.
+    Automatically releases stale locks (>5 minutes old).
+
+    IMPORTANT: Always acquire a lock before editing any file to prevent conflicts.
+
+Examples:
+    # Lock a file with reason
+    acquire-file-lock src/auth.py agent-2 "implementing JWT authentication"
+
+    # Lock without reason
+    acquire-file-lock src/models.py agent-3
+
+    # Lock with custom timeout
+    acquire-file-lock src/api.py agent-1 "refactoring endpoints" --timeout 60
+
+Exit Codes:
+    0   Lock acquired successfully
+    1   File is already locked (conflict)
+    2   Invalid arguments or other error
+HELP
+    exit 0
+fi
+
+if [[ $# -lt 2 ]]; then
+    echo "Error: Missing required arguments" >&2
+    echo "Usage: acquire-file-lock <filepath> <agent-id> [reason]" >&2
+    echo "Run 'acquire-file-lock --help' for more information" >&2
+    exit 1
+fi
+
+if ! command -v uv &> /dev/null; then
+    echo "Error: uv is not installed" >&2
+    exit 1
+fi
+
+cd "$PROJECT_ROOT"
+exec uv run python -m claudeswarm.locking acquire "$@"

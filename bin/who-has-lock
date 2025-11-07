@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# who-has-lock - Query who holds a lock on a file
+#
+# Usage:
+#   who-has-lock <filepath>
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    cat << 'HELP'
+who-has-lock - Query who holds a lock on a file
+
+Usage:
+    who-has-lock <filepath>
+
+Arguments:
+    filepath    Path to check (relative to project root)
+
+Options:
+    --all       Show all active locks (ignores filepath argument)
+
+Description:
+    Checks if a file is currently locked and returns information
+    about the lock holder if it is.
+
+Examples:
+    # Check specific file
+    who-has-lock src/auth.py
+
+    # List all active locks
+    who-has-lock --all
+
+Output Format:
+    If locked:
+        LOCKED by agent-2 since 2025-11-07 14:30:15
+        Reason: implementing JWT authentication
+
+    If not locked:
+        UNLOCKED
+
+Exit Codes:
+    0   Query successful (file may or may not be locked)
+    1   File not found or invalid path
+    2   Other error
+HELP
+    exit 0
+fi
+
+if [[ $# -lt 1 ]]; then
+    echo "Error: Missing required argument" >&2
+    echo "Usage: who-has-lock <filepath>" >&2
+    echo "Run 'who-has-lock --help' for more information" >&2
+    exit 1
+fi
+
+if ! command -v uv &> /dev/null; then
+    echo "Error: uv is not installed" >&2
+    exit 1
+fi
+
+cd "$PROJECT_ROOT"
+exec uv run python -m claudeswarm.locking query "$@"

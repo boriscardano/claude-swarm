@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# send-to-agent - Send a message to a specific agent
+#
+# Usage:
+#   send-to-agent <agent-id> <message-type> <message-content>
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    cat << 'HELP'
+send-to-agent - Send a message to a specific agent
+
+Usage:
+    send-to-agent <agent-id> <message-type> <message>
+
+Arguments:
+    agent-id        Target agent identifier (e.g., "agent-0")
+    message-type    Type of message (QUESTION, INFO, REVIEW-REQUEST, etc.)
+    message         Message content (use quotes if contains spaces)
+
+Message Types:
+    QUESTION        Ask for information or clarification
+    REVIEW-REQUEST  Request code review
+    BLOCKED         Indicate work is blocked
+    COMPLETED       Announce task completion
+    CHALLENGE       Challenge a decision or approach
+    INFO            Share information
+    ACK             Acknowledge message receipt
+
+Examples:
+    # Ask a question
+    send-to-agent agent-1 QUESTION "What database schema are we using?"
+
+    # Request code review
+    send-to-agent agent-2 REVIEW-REQUEST "Please review PR #42"
+
+    # Share information
+    send-to-agent agent-0 INFO "Auth implementation complete"
+HELP
+    exit 0
+fi
+
+if [[ $# -lt 3 ]]; then
+    echo "Error: Missing required arguments" >&2
+    echo "Usage: send-to-agent <agent-id> <message-type> <message>" >&2
+    echo "Run 'send-to-agent --help' for more information" >&2
+    exit 1
+fi
+
+if ! command -v uv &> /dev/null; then
+    echo "Error: uv is not installed" >&2
+    exit 1
+fi
+
+cd "$PROJECT_ROOT"
+exec uv run python -m claudeswarm.messaging send "$@"

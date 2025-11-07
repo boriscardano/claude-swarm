@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# broadcast-to-all - Broadcast a message to all active agents
+#
+# Usage:
+#   broadcast-to-all <message-type> <message-content>
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    cat << 'HELP'
+broadcast-to-all - Broadcast a message to all active agents
+
+Usage:
+    broadcast-to-all <message-type> <message>
+
+Arguments:
+    message-type    Type of message (QUESTION, INFO, COMPLETED, etc.)
+    message         Message content (use quotes if contains spaces)
+
+Options:
+    --include-self  Send to all agents including yourself (default: exclude)
+
+Message Types:
+    QUESTION        Ask for information or clarification
+    INFO            Share information
+    COMPLETED       Announce task completion
+    BLOCKED         Indicate work is blocked
+    CHALLENGE       Challenge a decision or approach
+
+Examples:
+    # Announce completion
+    broadcast-to-all COMPLETED "Authentication module finished"
+
+    # Ask everyone a question
+    broadcast-to-all QUESTION "Has anyone seen issues with the test suite?"
+
+    # Share important information
+    broadcast-to-all INFO "Deployment starts in 10 minutes"
+HELP
+    exit 0
+fi
+
+if [[ $# -lt 2 ]]; then
+    echo "Error: Missing required arguments" >&2
+    echo "Usage: broadcast-to-all <message-type> <message>" >&2
+    echo "Run 'broadcast-to-all --help' for more information" >&2
+    exit 1
+fi
+
+if ! command -v uv &> /dev/null; then
+    echo "Error: uv is not installed" >&2
+    exit 1
+fi
+
+cd "$PROJECT_ROOT"
+exec uv run python -m claudeswarm.messaging broadcast "$@"

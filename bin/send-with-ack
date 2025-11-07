@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# send-with-ack - Send a message that requires acknowledgment
+#
+# Usage:
+#   send-with-ack <agent-id> <message-type> <message-content>
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    cat << 'HELP'
+send-with-ack - Send a message that requires acknowledgment
+
+Usage:
+    send-with-ack <agent-id> <message-type> <message>
+
+Arguments:
+    agent-id        Target agent identifier (e.g., "agent-0")
+    message-type    Type of message (QUESTION, REVIEW-REQUEST, BLOCKED, etc.)
+    message         Message content (use quotes if contains spaces)
+
+Options:
+    --timeout N     Seconds to wait before retry (default: 30)
+
+Description:
+    Sends a message that requires acknowledgment from the recipient.
+    If no ACK is received within the timeout, the system will:
+    1. Retry up to 3 times with exponential backoff (30s, 60s, 120s)
+    2. After max retries, escalate to all agents
+
+    Use this for critical messages that must be acknowledged.
+
+Examples:
+    # Ask critical question
+    send-with-ack agent-1 QUESTION "Need database credentials to proceed"
+
+    # Block on dependency
+    send-with-ack agent-2 BLOCKED "Waiting for auth.py to be available"
+
+    # Request urgent review
+    send-with-ack agent-3 REVIEW-REQUEST "Security fix needs review ASAP"
+
+Exit Codes:
+    0   Message sent successfully (ACK still pending)
+    1   Invalid arguments or send failed
+HELP
+    exit 0
+fi
+
+if [[ $# -lt 3 ]]; then
+    echo "Error: Missing required arguments" >&2
+    echo "Usage: send-with-ack <agent-id> <message-type> <message>" >&2
+    echo "Run 'send-with-ack --help' for more information" >&2
+    exit 1
+fi
+
+if ! command -v uv &> /dev/null; then
+    echo "Error: uv is not installed" >&2
+    exit 1
+fi
+
+cd "$PROJECT_ROOT"
+exec uv run python -m claudeswarm.ack send "$@"
