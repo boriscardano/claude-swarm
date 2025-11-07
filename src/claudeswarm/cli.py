@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -301,7 +302,26 @@ def cmd_start_monitoring(args: argparse.Namespace) -> None:
 
 
 def cmd_onboard(args: argparse.Namespace) -> None:
-    """Onboard all discovered agents to the coordination system."""
+    """Onboard all discovered agents to the coordination system.
+
+    This command:
+    1. Discovers all active Claude Code agents via tmux
+    2. Broadcasts onboarding messages to all discovered agents
+    3. Provides coordination protocol documentation
+
+    Args:
+        args: Parsed command-line arguments
+
+    Side Effects:
+        - Refreshes agent registry (ACTIVE_AGENTS.json)
+        - Sends multiple broadcast messages to all agents
+        - May trigger rate limiting in messaging system
+
+    Exit Codes:
+        0: Success - all agents onboarded
+        1: Error - discovery failed or no agents found
+    """
+    import time
     from claudeswarm.messaging import broadcast_message, MessageType
 
     print("=== Claude Swarm Agent Onboarding ===")
@@ -321,6 +341,13 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         print(f"Found {len(agents)} active agent(s): {', '.join(a.id for a in agents)}")
         print()
 
+    except subprocess.CalledProcessError as e:
+        print(f"Error: tmux command failed. Is tmux running?", file=sys.stderr)
+        print(f"Details: {e}", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError as e:
+        print(f"Error: Required file not found: {e}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
         print(f"Error during discovery: {e}", file=sys.stderr)
         sys.exit(1)
@@ -345,36 +372,66 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         "",
         f"ACTIVE AGENTS: {', '.join(a.id for a in agents)}",
         "",
-        "DOCUMENTATION: See AGENT_PROTOCOL.md, TUTORIAL.md, or docs/INTEGRATION_GUIDE.md",
+        "DOCUMENTATION: See docs/AGENT_PROTOCOL.md, docs/TUTORIAL.md, or docs/INTEGRATION_GUIDE.md",
         "",
         "Ready to coordinate! Use 'claudeswarm --help' for full command list.",
     ]
 
-    success_count = 0
-    for msg in messages:
-        if not msg.strip():
-            continue
+    # Filter out empty messages
+    messages_to_send = [m for m in messages if m.strip()]
+
+    messages_sent = 0
+    failed_messages = 0
+    MESSAGE_DELAY = 0.5  # Rate limiting: wait between messages
+
+    for i, msg in enumerate(messages_to_send, 1):
+        # Progress indication
+        print(f"  Sending message {i}/{len(messages_to_send)}...", end='\r')
+        sys.stdout.flush()
 
         try:
             result = broadcast_message(
                 sender_id="system",
                 message_type=MessageType.INFO,
                 content=msg,
-                exclude_self=False
+                exclude_self=True  # System doesn't need its own messages
             )
-            delivered = sum(result.values())
-            success_count += delivered
-        except Exception as e:
-            print(f"Warning: Failed to send message: {e}", file=sys.stderr)
 
+            delivered = sum(result.values())
+            if delivered == 0:
+                failed_messages += 1
+            else:
+                messages_sent += 1
+
+            # Rate limiting: wait between messages to avoid overwhelming the system
+            if i < len(messages_to_send):
+                time.sleep(MESSAGE_DELAY)
+
+        except Exception as e:
+            print(f"\nWarning: Failed to send message: {e}", file=sys.stderr)
+            failed_messages += 1
+
+    print(f"  Sent {messages_sent}/{len(messages_to_send)} messages successfully          ")
     print()
-    print(f"Onboarding complete! Messages delivered to {len(agents)} agent(s).")
+
+    # Check if too many messages failed
+    if failed_messages > len(messages_to_send) * 0.5:
+        print("WARNING: Most messages failed to deliver!", file=sys.stderr)
+        print("Agents may not have received onboarding information.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Onboarding complete! {messages_sent} messages delivered to {len(agents)} agent(s).")
     print()
     print("All agents have been notified about:")
     print("  - Coordination protocol rules")
     print("  - Available commands")
     print("  - How to send messages and acquire locks")
     print("  - Where to find documentation")
+
+    if failed_messages > 0:
+        print()
+        print(f"Note: {failed_messages} message(s) failed to deliver", file=sys.stderr)
+
     print()
     print("Agents are now ready to coordinate!")
     sys.exit(0)
