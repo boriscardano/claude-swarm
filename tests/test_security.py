@@ -131,6 +131,120 @@ class TestPathTraversalPrevention:
             assert conflict is None
 
 
+class TestMonitoringCommandInjectionPrevention:
+    """Tests for command injection prevention in monitoring dashboard."""
+
+    def test_filter_type_validation_rejects_command_injection(self):
+        """Test that command injection via filter_type is rejected."""
+        from claudeswarm.monitoring import MessageType
+
+        # Attempt command injection via filter_type - should raise ValueError
+        malicious_filter = "INFO && rm -rf /"
+
+        with pytest.raises(ValueError):
+            MessageType(malicious_filter)
+
+    def test_filter_type_validation_rejects_shell_metacharacters(self):
+        """Test that shell metacharacters in filter_type are rejected."""
+        from claudeswarm.monitoring import MessageType
+
+        # Various shell injection attempts - all should raise ValueError
+        malicious_inputs = [
+            "; ls -la",
+            "| cat /etc/passwd",
+            "$(whoami)",
+            "`id`",
+            "INFO; malicious-command",
+            "INFO && malicious",
+            "INFO || malicious",
+        ]
+
+        for malicious in malicious_inputs:
+            with pytest.raises(ValueError):
+                MessageType(malicious)
+
+    def test_filter_agent_validation_rejects_shell_metacharacters(self):
+        """Test that shell metacharacters in filter_agent are rejected."""
+        from claudeswarm.validators import ValidationError, validate_agent_id
+
+        # Attempt command injection via filter_agent
+        malicious_agents = [
+            "agent-1; rm -rf /",
+            "agent$(whoami)",
+            "agent`id`",
+            "agent | ls",
+            "agent && malicious",
+            "agent@malicious",  # @ not allowed
+            "agent.malicious",  # . not allowed
+            "../../../etc/passwd",
+        ]
+
+        for malicious in malicious_agents:
+            # Should raise ValidationError
+            with pytest.raises(ValidationError):
+                validate_agent_id(malicious)
+
+    def test_valid_filter_type_passes_validation(self):
+        """Test that valid MessageType values pass validation."""
+        from claudeswarm.monitoring import MessageFilter, MessageType
+
+        # All valid MessageType values should work
+        valid_types = ["INFO", "QUESTION", "BLOCKED", "COMPLETED", "ACK", "CHALLENGE", "REVIEW-REQUEST"]
+
+        for msg_type in valid_types:
+            msg_filter = MessageFilter()
+            # Should not raise any exception
+            try:
+                msg_filter.msg_types = {MessageType(msg_type)}
+            except Exception as e:
+                pytest.fail(f"Valid message type '{msg_type}' was rejected: {e}")
+
+    def test_valid_filter_agent_passes_validation(self):
+        """Test that valid agent IDs pass validation."""
+        from claudeswarm.validators import validate_agent_id
+
+        # Valid agent IDs (alphanumeric, hyphens, underscores)
+        valid_agents = [
+            "agent-1",
+            "agent_2",
+            "my-agent-123",
+            "AgentABC",
+            "test_agent_456",
+        ]
+
+        for agent_id in valid_agents:
+            # Should not raise ValidationError
+            try:
+                validate_agent_id(agent_id)
+            except Exception as e:
+                pytest.fail(f"Valid agent ID '{agent_id}' was rejected: {e}")
+
+    def test_shlex_quote_escapes_dangerous_characters(self):
+        """Test that shlex.quote properly escapes shell metacharacters."""
+        import shlex
+
+        dangerous_inputs = [
+            "; rm -rf /",
+            "$(malicious)",
+            "`malicious`",
+            "| cat /etc/passwd",
+            "&& malicious",
+            "|| malicious",
+            "> /tmp/evil",
+            "< /etc/passwd",
+        ]
+
+        for dangerous in dangerous_inputs:
+            quoted = shlex.quote(dangerous)
+
+            # The quoted string should be safe - either wrapped in single quotes
+            # or have dangerous characters escaped
+            assert quoted.startswith("'") or "\\" in quoted
+
+            # When unquoted in a shell, it should be treated as a literal string
+            # not as a command
+
+
 class TestMessageAuthentication:
     """Tests for HMAC message authentication."""
 

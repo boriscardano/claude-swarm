@@ -20,6 +20,7 @@ import os
 import subprocess
 import time
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -41,7 +42,7 @@ def check_tmux_available() -> bool:
         return False
 
 
-def get_current_tmux_session() -> str | None:
+def get_current_tmux_session() -> Optional[str]:
     """Get the current tmux session name if in a tmux session."""
     try:
         result = subprocess.run(
@@ -82,7 +83,7 @@ def kill_test_session(session_name: str) -> None:
         pass
 
 
-def create_test_pane(session_name: str) -> str | None:
+def create_test_pane(session_name: str) -> Optional[str]:
     """Create a new pane in the test session and return its index."""
     try:
         # Split window horizontally

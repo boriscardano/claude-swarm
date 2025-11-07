@@ -22,6 +22,7 @@ import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
 from .messaging import MessageType, broadcast_message, send_message
 from .utils import load_json, save_json
@@ -101,7 +102,7 @@ class AckSystem:
     MAX_RETRIES = 3
     RETRY_DELAYS = [30, 60, 120]  # Exponential backoff in seconds
 
-    def __init__(self, pending_file: Path | None = None):
+    def __init__(self, pending_file: Optional[Path] = None):
         """Initialize ACK system.
 
         Args:
@@ -147,7 +148,7 @@ class AckSystem:
         msg_type: MessageType,
         content: str,
         timeout: int = 30,
-    ) -> str | None:
+    ) -> Optional[str]:
         """Send a message that requires acknowledgment.
 
         The message will be sent with [REQUIRES-ACK] prefix and tracked
@@ -278,7 +279,7 @@ class AckSystem:
             logger.warning(f"No pending ACK found for message {msg_id}")
             return False
 
-    def check_pending_acks(self, agent_id: str | None = None) -> list[PendingAck]:
+    def check_pending_acks(self, agent_id: Optional[str] = None) -> list[PendingAck]:
         """Check for messages awaiting acknowledgment.
 
         Args:
@@ -396,7 +397,7 @@ class AckSystem:
             exclude_self=False,  # Include sender in escalation
         )
 
-    def get_pending_count(self, agent_id: str | None = None) -> int:
+    def get_pending_count(self, agent_id: Optional[str] = None) -> int:
         """Get count of pending ACKs.
 
         Args:
@@ -408,7 +409,7 @@ class AckSystem:
         acks = self.check_pending_acks(agent_id)
         return len(acks)
 
-    def clear_pending_acks(self, agent_id: str | None = None) -> int:
+    def clear_pending_acks(self, agent_id: Optional[str] = None) -> int:
         """Clear pending ACKs (for testing/admin purposes).
 
         Args:
@@ -433,7 +434,7 @@ class AckSystem:
 
 
 # Module-level singleton instance
-_default_ack_system: AckSystem | None = None
+_default_ack_system: Optional[AckSystem] = None
 _system_lock = threading.Lock()
 
 
@@ -507,7 +508,7 @@ def receive_ack(msg_id: str, agent_id: str) -> bool:
     return acknowledge_message(msg_id, agent_id)
 
 
-def check_pending_acks(agent_id: str | None = None) -> list[PendingAck]:
+def check_pending_acks(agent_id: Optional[str] = None) -> list[PendingAck]:
     """Check for messages awaiting acknowledgment.
 
     Args:

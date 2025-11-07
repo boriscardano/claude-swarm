@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path, PurePath
-from typing import Any
+from typing import Any, Optional
 
 __all__ = [
     "ValidationError",
@@ -218,7 +218,7 @@ def validate_file_path(
     filepath: Any,
     must_exist: bool = False,
     must_be_relative: bool = False,
-    project_root: Path | None = None,
+    project_root: Optional[Path] = None,
     check_traversal: bool = True
 ) -> Path:
     """Validate a file path.

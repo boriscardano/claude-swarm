@@ -330,11 +330,21 @@ class TestQueryFunctions:
         work_items = initialized_coord.get_section("Current Work")
         assert work_items is not None
 
+    def test_get_current_work_no_file(self, temp_project):
+        """Test getting current work when file doesn't exist."""
+        work_items = get_current_work(project_root=temp_project)
+        assert work_items == []
+
     def test_get_blocked_items_empty(self, initialized_coord):
         """Test getting blocked items from template."""
         blocked = get_blocked_items(project_root=initialized_coord.project_root)
         # Template has one example
         assert len(blocked) >= 1
+
+    def test_get_blocked_items_no_file(self, temp_project):
+        """Test getting blocked items when file doesn't exist."""
+        blocked = get_blocked_items(project_root=temp_project)
+        assert blocked == []
 
     def test_get_review_queue_empty(self, initialized_coord):
         """Test getting review queue from template."""
@@ -342,11 +352,21 @@ class TestQueryFunctions:
         # Template has one example
         assert len(queue) >= 1
 
+    def test_get_review_queue_no_file(self, temp_project):
+        """Test getting review queue when file doesn't exist."""
+        queue = get_review_queue(project_root=temp_project)
+        assert queue == []
+
     def test_get_decisions_empty(self, initialized_coord):
         """Test getting decisions from template."""
         decisions = get_decisions(project_root=initialized_coord.project_root)
         # Template has one example
         assert len(decisions) >= 1
+
+    def test_get_decisions_no_file(self, temp_project):
+        """Test getting decisions when file doesn't exist."""
+        decisions = get_decisions(project_root=temp_project)
+        assert decisions == []
 
 
 class TestHelperFunctions:
@@ -465,6 +485,11 @@ class TestEdgeCases:
         with pytest.raises(FileNotFoundError):
             coord_file.read_file()
 
+    def test_get_section_file_not_exists(self, coord_file):
+        """Test getting section when file doesn't exist returns None."""
+        result = coord_file.get_section("Sprint Goals")
+        assert result is None
+
     def test_update_section_empty_name(self, initialized_coord):
         """Test updating section with empty name raises error."""
         with pytest.raises(ValueError, match="Section name cannot be empty"):
@@ -504,6 +529,26 @@ Additional notes:
 
         retrieved = initialized_coord.get_section("Sprint Goals")
         assert retrieved == multiline_content
+
+    def test_append_to_empty_section(self, temp_project):
+        """Test appending to a section that doesn't exist yet."""
+        coord = CoordinationFile(project_root=temp_project, agent_id="test-agent")
+        coord.init_file()
+
+        # Create a new section by appending
+        result = coord.append_to_section("New Section", "First line")
+        assert result is True
+
+        content = coord.get_section("New Section")
+        assert content == "First line"
+
+        # Append another line
+        result = coord.append_to_section("New Section", "Second line")
+        assert result is True
+
+        content = coord.get_section("New Section")
+        assert "First line" in content
+        assert "Second line" in content
 
 
 class TestRebuildContent:

@@ -557,6 +557,19 @@ def start_monitoring(
 ) -> None:
     """Start the monitoring dashboard.
 
+    SECURITY NOTE:
+    This function handles user-provided filter parameters that are ultimately
+    passed to shell commands via tmux send-keys. To prevent command injection:
+    1. filter_type is validated against MessageType enum (only fixed values allowed)
+    2. filter_agent is validated with validate_agent_id() (alphanumeric, hyphens, underscores only)
+    3. Both parameters are escaped with shlex.quote() before shell execution
+
+    These three layers of defense ensure that malicious inputs like:
+    - "INFO && rm -rf /"
+    - "agent-1; malicious-command"
+    - "$(malicious)" or "`malicious`"
+    are rejected or safely escaped before reaching the shell.
+
     Args:
         filter_type: If provided, filter to this message type
         filter_agent: If provided, filter to this agent ID
@@ -577,7 +590,13 @@ def start_monitoring(
             sys.exit(1)
 
     if filter_agent:
-        msg_filter.agent_ids = {filter_agent}
+        # SECURITY: Validate agent_id format to prevent command injection
+        try:
+            validated_agent = validate_agent_id(filter_agent)
+            msg_filter.agent_ids = {validated_agent}
+        except ValidationError as e:
+            print(f"Invalid agent ID: {e}", file=sys.stderr)
+            sys.exit(1)
 
     # Create monitor
     monitor = Monitor(message_filter=msg_filter)
