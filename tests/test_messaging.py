@@ -8,13 +8,16 @@ Tests cover:
 - Broadcast delivery
 - Special character handling
 - Message serialization/deserialization
+- Thread safety and concurrent access
 
 Author: Agent-2 (FuchsiaPond)
+Modified: Agent-ThreadSafety (added concurrent rate limiting tests)
 """
 
 import json
 import pytest
 import tempfile
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -605,6 +608,305 @@ class TestSpecialCharacterHandling:
         # Unicode should be preserved
         assert "你好" in escaped or "\\u" in escaped
         assert "🎉" in escaped or "\\u" in escaped
+
+
+class TestRateLimiterThreadSafety:
+    """Tests for RateLimiter thread safety.
+
+    These tests verify that the RateLimiter correctly handles concurrent access
+    from multiple threads without race conditions.
+    """
+
+    def test_concurrent_check_rate_limit(self):
+        """Test concurrent check_rate_limit calls are thread-safe."""
+        limiter = RateLimiter(max_messages=10, window_seconds=60)
+        agent_id = "agent-1"
+        results = []
+        errors = []
+
+        def check_limit():
+            """Worker thread that checks rate limit."""
+            try:
+                for _ in range(5):
+                    result = limiter.check_rate_limit(agent_id)
+                    results.append(result)
+                    time.sleep(0.001)  # Small delay to increase race condition likelihood
+            except Exception as e:
+                errors.append(e)
+
+        # Run 5 threads concurrently checking rate limit
+        threads = [threading.Thread(target=check_limit) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Should have no errors
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+        # Should have 25 results (5 threads * 5 checks each)
+        assert len(results) == 25
+        # All should be True since we haven't recorded any messages
+        assert all(results)
+
+    def test_concurrent_record_message(self):
+        """Test concurrent record_message calls are thread-safe."""
+        limiter = RateLimiter(max_messages=50, window_seconds=60)
+        agent_id = "agent-1"
+        errors = []
+
+        def record_messages():
+            """Worker thread that records messages."""
+            try:
+                for _ in range(10):
+                    limiter.record_message(agent_id)
+                    time.sleep(0.001)  # Small delay to increase race condition likelihood
+            except Exception as e:
+                errors.append(e)
+
+        # Run 5 threads concurrently recording messages
+        threads = [threading.Thread(target=record_messages) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Should have no errors
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+
+        # Should have recorded 50 messages total (5 threads * 10 messages each)
+        # Verify by checking the internal state
+        assert len(limiter._message_times[agent_id]) == 50
+
+    def test_concurrent_check_and_record(self):
+        """Test concurrent check_rate_limit and record_message calls."""
+        limiter = RateLimiter(max_messages=20, window_seconds=60)
+        agent_id = "agent-1"
+        successful_checks = []
+        errors = []
+        lock = threading.Lock()
+
+        def check_and_record():
+            """Worker thread that checks and records messages."""
+            try:
+                for _ in range(5):
+                    if limiter.check_rate_limit(agent_id):
+                        limiter.record_message(agent_id)
+                        with lock:
+                            successful_checks.append(1)
+                    time.sleep(0.001)  # Small delay
+            except Exception as e:
+                errors.append(e)
+
+        # Run 5 threads concurrently checking and recording
+        threads = [threading.Thread(target=check_and_record) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Should have no errors
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+
+        # Should have at most max_messages successful recordings
+        assert len(successful_checks) <= 20
+        # Should have exactly max_messages recorded
+        assert len(limiter._message_times[agent_id]) <= 20
+
+    def test_concurrent_rate_limit_enforcement(self):
+        """Test that rate limits are properly enforced under concurrent load."""
+        limiter = RateLimiter(max_messages=10, window_seconds=60)
+        agent_id = "agent-1"
+        successful_sends = []
+        blocked_sends = []
+        errors = []
+        lock = threading.Lock()
+
+        def attempt_send():
+            """Worker thread that attempts to send messages."""
+            try:
+                for _ in range(5):
+                    if limiter.check_rate_limit(agent_id):
+                        limiter.record_message(agent_id)
+                        with lock:
+                            successful_sends.append(1)
+                    else:
+                        with lock:
+                            blocked_sends.append(1)
+                    time.sleep(0.001)
+            except Exception as e:
+                errors.append(e)
+
+        # Run 5 threads, each attempting 5 sends (25 total attempts)
+        threads = [threading.Thread(target=attempt_send) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Should have no errors
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+
+        # Should have exactly 10 successful sends (the rate limit)
+        assert len(successful_sends) == 10, f"Expected 10 successful, got {len(successful_sends)}"
+
+        # Should have blocked the remaining 15 attempts
+        assert len(blocked_sends) == 15, f"Expected 15 blocked, got {len(blocked_sends)}"
+
+        # Verify internal state matches
+        assert len(limiter._message_times[agent_id]) == 10
+
+    def test_concurrent_multi_agent(self):
+        """Test concurrent access for multiple agents is properly isolated."""
+        limiter = RateLimiter(max_messages=5, window_seconds=60)
+        results = {}
+        errors = []
+        lock = threading.Lock()
+
+        def agent_worker(agent_id):
+            """Worker thread for a specific agent."""
+            try:
+                count = 0
+                for _ in range(10):
+                    if limiter.check_rate_limit(agent_id):
+                        limiter.record_message(agent_id)
+                        count += 1
+                    time.sleep(0.001)
+                with lock:
+                    results[agent_id] = count
+            except Exception as e:
+                errors.append((agent_id, e))
+
+        # Run 3 agents concurrently, each attempting 10 messages
+        agent_ids = ["agent-1", "agent-2", "agent-3"]
+        threads = [threading.Thread(target=agent_worker, args=(aid,)) for aid in agent_ids]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Should have no errors
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+
+        # Each agent should have successfully sent exactly 5 messages
+        for agent_id in agent_ids:
+            assert results[agent_id] == 5, f"{agent_id} sent {results[agent_id]} messages, expected 5"
+            assert len(limiter._message_times[agent_id]) == 5
+
+    def test_concurrent_cleanup_inactive_agents(self):
+        """Test cleanup_inactive_agents is thread-safe with concurrent operations."""
+        limiter = RateLimiter(max_messages=10, window_seconds=1)
+        errors = []
+        cleanup_counts = []
+        lock = threading.Lock()
+
+        # Pre-populate with some old messages
+        for i in range(5):
+            limiter.record_message(f"agent-{i}")
+
+        # Wait for messages to become old
+        time.sleep(1.1)
+
+        def cleanup_worker():
+            """Worker thread that performs cleanup."""
+            try:
+                count = limiter.cleanup_inactive_agents(cutoff_seconds=1)
+                with lock:
+                    cleanup_counts.append(count)
+            except Exception as e:
+                errors.append(e)
+
+        def record_worker():
+            """Worker thread that records new messages."""
+            try:
+                for i in range(5, 10):
+                    limiter.record_message(f"agent-{i}")
+                    time.sleep(0.001)
+            except Exception as e:
+                errors.append(e)
+
+        # Run cleanup and record operations concurrently
+        threads = []
+        threads.append(threading.Thread(target=cleanup_worker))
+        threads.append(threading.Thread(target=record_worker))
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Should have no errors
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+
+        # Should have cleaned up the 5 old agents
+        assert sum(cleanup_counts) == 5
+
+    def test_concurrent_reset_agent(self):
+        """Test reset_agent is thread-safe with concurrent operations."""
+        limiter = RateLimiter(max_messages=10, window_seconds=60)
+        agent_id = "agent-1"
+        errors = []
+
+        # Pre-populate with messages
+        for _ in range(10):
+            limiter.record_message(agent_id)
+
+        def reset_worker():
+            """Worker thread that resets the agent."""
+            try:
+                limiter.reset_agent(agent_id)
+            except Exception as e:
+                errors.append(e)
+
+        def check_worker():
+            """Worker thread that checks rate limit."""
+            try:
+                limiter.check_rate_limit(agent_id)
+            except Exception as e:
+                errors.append(e)
+
+        # Run reset and check operations concurrently
+        threads = []
+        threads.append(threading.Thread(target=reset_worker))
+        threads.extend([threading.Thread(target=check_worker) for _ in range(5)])
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Should have no errors
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+
+    def test_no_deadlock_with_nested_operations(self):
+        """Test that there are no deadlocks with rapid sequential operations."""
+        limiter = RateLimiter(max_messages=10, window_seconds=60)
+        errors = []
+
+        def rapid_operations():
+            """Worker thread performing rapid mixed operations."""
+            try:
+                for i in range(20):
+                    agent_id = f"agent-{i % 5}"
+                    limiter.check_rate_limit(agent_id)
+                    limiter.record_message(agent_id)
+                    if i % 10 == 0:
+                        limiter.cleanup_inactive_agents(cutoff_seconds=3600)
+            except Exception as e:
+                errors.append(e)
+
+        # Run multiple threads with rapid mixed operations
+        threads = [threading.Thread(target=rapid_operations) for _ in range(10)]
+        for t in threads:
+            t.start()
+
+        # Use a timeout to detect deadlocks
+        for t in threads:
+            t.join(timeout=5.0)
+            if t.is_alive():
+                errors.append("Thread deadlock detected - thread did not complete in time")
+
+        # Should have no errors
+        assert len(errors) == 0, f"Errors occurred: {errors}"
 
 
 if __name__ == "__main__":

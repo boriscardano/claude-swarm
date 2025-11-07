@@ -23,6 +23,7 @@ import json
 import logging
 import shlex
 import subprocess
+import threading
 import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -222,6 +223,9 @@ class RateLimiter:
         # Track message timestamps per agent
         self._message_times: Dict[str, deque] = defaultdict(lambda: deque(maxlen=self.max_messages))
 
+        # Thread safety lock for protecting shared state
+        self._lock = threading.Lock()
+
     def check_rate_limit(self, agent_id: str) -> bool:
         """Check if agent is within rate limit.
 
@@ -231,28 +235,31 @@ class RateLimiter:
         Returns:
             True if within limit, False if rate limit exceeded
         """
-        now = datetime.now()
-        cutoff = now - timedelta(seconds=self.window_seconds)
+        with self._lock:
+            now = datetime.now()
+            cutoff = now - timedelta(seconds=self.window_seconds)
 
-        # Remove old timestamps
-        times = self._message_times[agent_id]
-        while times and times[0] < cutoff:
-            times.popleft()
+            # Remove old timestamps
+            times = self._message_times[agent_id]
+            while times and times[0] < cutoff:
+                times.popleft()
 
-        # Check if we're at the limit
-        if len(times) >= self.max_messages:
-            return False
+            # Check if we're at the limit
+            if len(times) >= self.max_messages:
+                return False
 
-        return True
+            return True
 
     def record_message(self, agent_id: str):
         """Record that a message was sent by an agent."""
-        self._message_times[agent_id].append(datetime.now())
+        with self._lock:
+            self._message_times[agent_id].append(datetime.now())
 
     def reset_agent(self, agent_id: str):
         """Reset rate limit for a specific agent."""
-        if agent_id in self._message_times:
-            del self._message_times[agent_id]
+        with self._lock:
+            if agent_id in self._message_times:
+                del self._message_times[agent_id]
 
     def cleanup_inactive_agents(self, cutoff_seconds: int = 3600):
         """Remove tracking data for agents that haven't sent messages recently.
@@ -266,20 +273,21 @@ class RateLimiter:
         Returns:
             Number of agents cleaned up
         """
-        now = datetime.now()
-        cutoff = now - timedelta(seconds=cutoff_seconds)
+        with self._lock:
+            now = datetime.now()
+            cutoff = now - timedelta(seconds=cutoff_seconds)
 
-        # Find agents with no recent activity
-        agents_to_remove = []
-        for agent_id, times in self._message_times.items():
-            if not times or (times and times[-1] < cutoff):
-                agents_to_remove.append(agent_id)
+            # Find agents with no recent activity
+            agents_to_remove = []
+            for agent_id, times in self._message_times.items():
+                if not times or (times and times[-1] < cutoff):
+                    agents_to_remove.append(agent_id)
 
-        # Remove inactive agents
-        for agent_id in agents_to_remove:
-            del self._message_times[agent_id]
+            # Remove inactive agents
+            for agent_id in agents_to_remove:
+                del self._message_times[agent_id]
 
-        return len(agents_to_remove)
+            return len(agents_to_remove)
 
 
 class TmuxMessageDelivery:

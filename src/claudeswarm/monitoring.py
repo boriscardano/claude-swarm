@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -32,6 +33,7 @@ from claudeswarm.ack import PendingAck, check_pending_acks
 from claudeswarm.discovery import Agent, list_active_agents
 from claudeswarm.locking import FileLock, LockManager
 from claudeswarm.messaging import Message, MessageType
+from claudeswarm.validators import ValidationError, validate_agent_id
 
 __all__ = [
     "MonitoringState",
@@ -599,13 +601,35 @@ def start_monitoring(
             print("Warning: Failed to create tmux pane, running in current terminal", file=sys.stderr)
         else:
             # Send monitoring command to the new pane
-            # Build command to run monitoring in the new pane
-            cmd = f"cd {Path.cwd()} && python -m claudeswarm.monitoring"
+            # Build command safely with proper escaping to prevent command injection
+            cmd_parts = [
+                'cd', shlex.quote(str(Path.cwd())),
+                '&&',
+                'python', '-m', 'claudeswarm.monitoring'
+            ]
 
+            # Validate and add filter_type if provided
             if filter_type:
-                cmd += f" --filter-type {filter_type}"
+                # Validate filter_type is a valid MessageType to prevent injection
+                try:
+                    MessageType(filter_type)
+                    cmd_parts.extend(['--filter-type', shlex.quote(filter_type)])
+                except ValueError:
+                    print(f"Error: Invalid message type: {filter_type}", file=sys.stderr)
+                    print(f"Valid types: {', '.join(t.value for t in MessageType)}", file=sys.stderr)
+                    sys.exit(1)
+
+            # Validate and add filter_agent if provided
             if filter_agent:
-                cmd += f" --filter-agent {filter_agent}"
+                # Validate agent_id format to prevent injection
+                try:
+                    validate_agent_id(filter_agent)
+                    cmd_parts.extend(['--filter-agent', shlex.quote(filter_agent)])
+                except ValidationError as e:
+                    print(f"Error: Invalid agent ID: {e}", file=sys.stderr)
+                    sys.exit(1)
+
+            cmd = ' '.join(cmd_parts)
 
             subprocess.run(
                 ['tmux', 'send-keys', '-t', pane_id, cmd, 'C-m'],

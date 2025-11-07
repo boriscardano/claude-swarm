@@ -502,3 +502,38 @@ class TestConcurrency:
         # All locks should be active
         locks = lock_manager.list_all_locks()
         assert len(locks) == 3
+
+    def test_lock_refresh_is_atomic(self, lock_manager):
+        """Test that lock refresh uses atomic rename without race window."""
+        filepath = "test.py"
+
+        # Agent 1 acquires lock
+        success, _ = lock_manager.acquire_lock(filepath, "agent-1", "initial lock")
+        assert success
+
+        # Get lock path
+        lock_path = lock_manager._get_lock_path(filepath)
+
+        # Verify lock exists
+        assert lock_path.exists()
+        lock_before = lock_manager.who_has_lock(filepath)
+        assert lock_before is not None
+        assert lock_before.agent_id == "agent-1"
+        assert lock_before.reason == "initial lock"
+
+        # Agent 1 refreshes lock
+        time.sleep(0.01)  # Small delay to ensure timestamp changes
+        success, _ = lock_manager.acquire_lock(filepath, "agent-1", "refreshed lock")
+        assert success
+
+        # Verify lock still exists and was updated
+        assert lock_path.exists()
+        lock_after = lock_manager.who_has_lock(filepath)
+        assert lock_after is not None
+        assert lock_after.agent_id == "agent-1"
+        assert lock_after.reason == "refreshed lock"
+        assert lock_after.locked_at > lock_before.locked_at
+
+        # Verify no temp files left behind
+        temp_files = list(lock_manager.lock_dir.glob("*.tmp"))
+        assert len(temp_files) == 0

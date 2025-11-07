@@ -13,6 +13,8 @@ Tests are skipped if tmux is not available.
 Author: Agent-TestCoverage
 """
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess

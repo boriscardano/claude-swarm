@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -333,13 +334,24 @@ class LockManager:
                         # Refresh the lock timestamp
                         existing_lock.locked_at = time.time()
                         existing_lock.reason = reason
-                        # Remove and recreate atomically within the lock
+
+                        # Write to temp file first, then atomic rename
+                        # This eliminates the race window between unlink() and write
+                        temp_lock_path = lock_path.with_suffix('.lock.tmp')
                         try:
-                            lock_path.unlink()
-                            self._write_lock(lock_path, existing_lock)
+                            # Write updated lock to temp file
+                            with temp_lock_path.open('w') as f:
+                                json.dump(existing_lock.to_dict(), f, indent=2)
+
+                            # Atomic rename (os.replace is atomic on POSIX and Windows)
+                            os.replace(str(temp_lock_path), str(lock_path))
                         except Exception:
-                            # If something fails, try to restore the original lock
-                            self._write_lock(lock_path, existing_lock)
+                            # Clean up temp file on failure
+                            if temp_lock_path.exists():
+                                try:
+                                    temp_lock_path.unlink()
+                                except OSError:
+                                    pass
                             raise
                         return True, None
                     else:
