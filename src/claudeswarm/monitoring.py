@@ -515,7 +515,7 @@ def start_monitoring(
                 cmd += f" --filter-agent {filter_agent}"
 
             subprocess.run(
-                ['tmux', 'send-keys', '-t', pane_id, cmd, 'Enter'],
+                ['tmux', 'send-keys', '-t', pane_id, cmd, 'C-m'],
                 timeout=5
             )
 

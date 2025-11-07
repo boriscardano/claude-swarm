@@ -221,9 +221,9 @@ class TmuxMessageDelivery:
             # Use echo to display the message (with -e to interpret \n)
             cmd = f"echo -e '{escaped}'"
 
-            # Send to tmux pane
+            # Send to tmux pane (C-m auto-executes the command)
             result = subprocess.run(
-                ['tmux', 'send-keys', '-t', pane_id, cmd, 'Enter'],
+                ['tmux', 'send-keys', '-t', pane_id, cmd, 'C-m'],
                 capture_output=True,
                 text=True,
                 timeout=5
