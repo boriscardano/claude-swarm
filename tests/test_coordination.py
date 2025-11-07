@@ -361,6 +361,7 @@ class TestHelperFunctions:
             task="Implement feature X",
             status="In Progress",
             agent_id="test-agent",
+            project_root=temp_project,
         )
 
         assert result is True
@@ -378,6 +379,7 @@ class TestHelperFunctions:
             reason="Waiting for API",
             agent="test-agent",
             agent_id="test-agent",
+            project_root=temp_project,
         )
 
         assert result is True
@@ -396,6 +398,7 @@ class TestHelperFunctions:
             author="agent-1",
             reviewer="agent-2",
             agent_id="test-agent",
+            project_root=temp_project,
         )
 
         assert result is True
@@ -412,6 +415,7 @@ class TestHelperFunctions:
             decision="Use PostgreSQL",
             rationale="Better performance for our use case",
             agent_id="test-agent",
+            project_root=temp_project,
         )
 
         assert result is True
@@ -440,6 +444,7 @@ class TestModuleLevelFunctions:
             section="Sprint Goals",
             content="- Module level goal",
             agent_id="test-agent",
+            project_root=temp_project,
         )
 
         assert result is True

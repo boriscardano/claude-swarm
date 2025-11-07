@@ -386,7 +386,11 @@ def init_coordination_file(
 
 
 def update_section(
-    section: str, content: str, agent_id: Optional[str] = None, reason: str = "updating section"
+    section: str,
+    content: str,
+    agent_id: Optional[str] = None,
+    reason: str = "updating section",
+    project_root: Optional[Path] = None,
 ) -> bool:
     """Update a specific section of the coordination file.
 
@@ -397,6 +401,7 @@ def update_section(
         content: New content for the section
         agent_id: Agent identifier (for locking)
         reason: Reason for update
+        project_root: Root directory of the project
 
     Returns:
         True if update succeeded
@@ -408,7 +413,7 @@ def update_section(
     if not section:
         raise ValueError("Section name cannot be empty")
 
-    coord = _get_default_coordination()
+    coord = _get_default_coordination(project_root=project_root)
     if agent_id:
         coord.agent_id = agent_id
 
