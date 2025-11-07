@@ -56,20 +56,32 @@ if ! command -v tmux &> /dev/null; then
     exit 1
 fi
 
+# Validate project root exists
+if [[ ! -d "$PROJECT_ROOT" ]]; then
+    echo "Error: Project root directory not found: $PROJECT_ROOT" >&2
+    exit 1
+fi
+
 # Change to project root
-cd "$PROJECT_ROOT"
+cd "$PROJECT_ROOT" || {
+    echo "Error: Cannot change to project root: $PROJECT_ROOT" >&2
+    exit 1
+}
 
 echo "=== Claude Swarm Agent Onboarding ==="
 echo ""
 
 # Step 1: Discover agents
 echo "Step 1: Discovering active agents..."
-uv run python -m claudeswarm.discovery
+if ! uv run python -m claudeswarm.discovery; then
+    echo "Error: Failed to discover agents" >&2
+    exit 1
+fi
 echo ""
 
 # Step 2: Send onboarding messages using Python script
 echo "Step 2: Broadcasting onboarding messages..."
-uv run python - <<'PYTHON'
+if ! uv run python - <<'PYTHON'
 import sys
 sys.path.insert(0, "src")
 
@@ -136,6 +148,10 @@ print("  - Where to find documentation")
 print()
 print("Agents are now ready to coordinate!")
 PYTHON
+then
+    echo "Error: Onboarding failed. Check the output above for details." >&2
+    exit 1
+fi
 
 echo ""
 echo "=== Onboarding Complete ==="

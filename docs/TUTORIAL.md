@@ -86,7 +86,7 @@ Let's get your first multi-agent system running in 5 minutes.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/claude-swarm.git
+git clone https://github.com/borisbanach/claude-swarm.git
 cd claude-swarm
 
 # Install dependencies

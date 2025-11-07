@@ -19,6 +19,7 @@ Customize:
 
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -46,13 +47,13 @@ ONBOARDING_MESSAGES = [
     "Release lock: claudeswarm lock release --file <path>",
     "List locks: claudeswarm lock list",
     "",
-    "DOCUMENTATION: See AGENT_PROTOCOL.md, TUTORIAL.md, or docs/INTEGRATION_GUIDE.md",
+    "DOCUMENTATION: See docs/AGENT_PROTOCOL.md, docs/TUTORIAL.md, or docs/INTEGRATION_GUIDE.md",
     "",
     "Ready to coordinate! Use 'claudeswarm --help' for full command list.",
 ]
 
 
-def onboard_agents(custom_messages=None):
+def onboard_agents(custom_messages: Optional[List[str]] = None) -> int:
     """
     Discover and onboard all active agents.
 
@@ -62,6 +63,12 @@ def onboard_agents(custom_messages=None):
     Returns:
         int: Number of agents onboarded
     """
+    # Input validation
+    if custom_messages is not None:
+        if not isinstance(custom_messages, list):
+            raise TypeError("custom_messages must be a list of strings")
+        if not all(isinstance(msg, str) for msg in custom_messages):
+            raise TypeError("All messages must be strings")
     print("=== Claude Swarm Agent Onboarding ===\n")
 
     # Step 1: Discover agents
@@ -80,7 +87,8 @@ def onboard_agents(custom_messages=None):
     # Step 2: Send onboarding messages
     print("Step 2: Broadcasting onboarding messages...")
 
-    messages = custom_messages or ONBOARDING_MESSAGES
+    # Create a copy to avoid mutating the original list
+    messages = list(custom_messages) if custom_messages else ONBOARDING_MESSAGES.copy()
 
     # Add agent list to messages
     agent_list_msg = f"ACTIVE AGENTS: {', '.join(a.id for a in agents)}"
@@ -124,7 +132,7 @@ def onboard_agents(custom_messages=None):
     return len(agents)
 
 
-def main():
+def main() -> None:
     """Main entry point for the script."""
     try:
         onboarded = onboard_agents()
