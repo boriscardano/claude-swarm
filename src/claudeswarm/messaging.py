@@ -218,8 +218,8 @@ class TmuxMessageDelivery:
             # Escape the message
             escaped = TmuxMessageDelivery.escape_for_tmux(message)
 
-            # Use echo to display the message (with -e to interpret \n)
-            cmd = f"echo -e '{escaped}'"
+            # Use bash comment to display message (no execution, no approval needed)
+            cmd = f"# [MESSAGE] {escaped}"
 
             # Send to tmux pane (C-m auto-executes the command)
             result = subprocess.run(
