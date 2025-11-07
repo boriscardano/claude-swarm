@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# onboard-agents - Send onboarding messages to all discovered agents
+#
+# Usage:
+#   onboard-agents              # Discover and onboard all agents
+#   onboard-agents --help       # Show help
+
+set -euo pipefail
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Show help if requested
+if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    cat << 'HELP'
+onboard-agents - Onboard all discovered agents to the coordination system
+
+Usage:
+    onboard-agents [options]
+
+Options:
+    -h, --help      Show this help message
+
+Description:
+    Discovers all active Claude Code agents and broadcasts standardized
+    onboarding messages explaining the coordination system, available
+    commands, and protocol rules.
+
+    This command:
+    1. Runs agent discovery
+    2. Broadcasts welcome and protocol information
+    3. Lists all active agents
+    4. Provides quick reference to key commands
+
+Examples:
+    # Onboard all agents
+    onboard-agents
+
+    # Can also be run via claudeswarm CLI
+    claudeswarm onboard
+HELP
+    exit 0
+fi
+
+# Check if uv is available
+if ! command -v uv &> /dev/null; then
+    echo "Error: uv is not installed. Please install it first:" >&2
+    echo "  curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+    exit 1
+fi
+
+# Check if tmux is available
+if ! command -v tmux &> /dev/null; then
+    echo "Error: tmux is not installed. Please install tmux first." >&2
+    exit 1
+fi
+
+# Change to project root
+cd "$PROJECT_ROOT"
+
+echo "=== Claude Swarm Agent Onboarding ==="
+echo ""
+
+# Step 1: Discover agents
+echo "Step 1: Discovering active agents..."
+uv run python -m claudeswarm.discovery
+echo ""
+
+# Step 2: Send onboarding messages using Python script
+echo "Step 2: Broadcasting onboarding messages..."
+uv run python - <<'PYTHON'
+import sys
+sys.path.insert(0, "src")
+
+from claudeswarm.discovery import list_active_agents
+from claudeswarm.messaging import broadcast_message, MessageType
+
+# Get active agents
+agents = list_active_agents()
+
+if not agents:
+    print("No agents discovered. Make sure Claude Code instances are running in tmux.")
+    sys.exit(1)
+
+print(f"Found {len(agents)} active agent(s): {', '.join(a.id for a in agents)}")
+print()
+
+# Send onboarding messages
+messages = [
+    ("=== CLAUDE SWARM COORDINATION ACTIVE ===", "System activation notice"),
+    ("Multi-agent coordination is now available in this session.", "Info"),
+    ("", "Separator"),
+    ("KEY PROTOCOL RULES:", "Header"),
+    ("1. ALWAYS acquire file locks before editing (claudeswarm lock acquire --file <path> --reason <reason>)", "Rule 1"),
+    ("2. ALWAYS release locks immediately after editing (claudeswarm lock release --file <path>)", "Rule 2"),
+    ("3. Use specific message types when communicating (INFO, QUESTION, REVIEW-REQUEST, BLOCKED, etc.)", "Rule 3"),
+    ("4. Check COORDINATION.md for sprint goals and current work", "Rule 4"),
+    ("", "Separator"),
+    ("QUICK COMMAND REFERENCE:", "Header"),
+    ("Discovery: claudeswarm discover-agents", "Command"),
+    ("Send message: claudeswarm send-to-agent <agent-id> <TYPE> '<message>'", "Command"),
+    ("Broadcast: claudeswarm broadcast-to-all <TYPE> '<message>'", "Command"),
+    ("Lock file: claudeswarm lock acquire --file <path> --reason '<reason>'", "Command"),
+    ("Release lock: claudeswarm lock release --file <path>", "Command"),
+    ("List locks: claudeswarm lock list", "Command"),
+    ("", "Separator"),
+    (f"ACTIVE AGENTS: {', '.join(a.id for a in agents)}", "Agent list"),
+    ("", "Separator"),
+    ("DOCUMENTATION: See AGENT_PROTOCOL.md, TUTORIAL.md, or docs/INTEGRATION_GUIDE.md", "Docs"),
+    ("", "Separator"),
+    ("Ready to coordinate! Use 'claudeswarm --help' for full command list.", "Ready"),
+]
+
+success_count = 0
+for msg, label in messages:
+    if msg:  # Skip empty separator messages
+        result = broadcast_message(
+            sender_id="system",
+            message_type=MessageType.INFO,
+            content=msg,
+            exclude_self=False
+        )
+        delivered = sum(result.values())
+        success_count += delivered
+        print(f"  [{label}] Delivered to {delivered}/{len(result)} agents")
+
+print()
+print(f"Onboarding complete! Sent {len([m for m in messages if m[0]])} messages to {len(agents)} agent(s).")
+print()
+print("All agents have been notified about:")
+print("  - Coordination protocol rules")
+print("  - Available commands")
+print("  - How to send messages and acquire locks")
+print("  - Where to find documentation")
+print()
+print("Agents are now ready to coordinate!")
+PYTHON
+
+echo ""
+echo "=== Onboarding Complete ==="

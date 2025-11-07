@@ -1,0 +1,12 @@
+# Claude Swarm Coordination Files
+# Copy these entries to your project's .gitignore file when using Claude Swarm
+
+# Agent coordination runtime files
+.agent_locks/
+ACTIVE_AGENTS.json
+PENDING_ACKS.json
+agent_messages.log
+COORDINATION.md
+
+# Optional: If you cloned claude-swarm inside your project (not recommended)
+# claude-swarm/

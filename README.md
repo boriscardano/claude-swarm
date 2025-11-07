@@ -16,9 +16,21 @@ Claude Swarm enables multiple Claude Code agents to work together on the same co
 
 ### Installation
 
+**Option 1: Install as Package (Recommended for Integration)**
+
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/claude-swarm.git
+# Install directly from GitHub
+pip install git+https://github.com/borisbanach/claude-swarm.git
+
+# Or with uv
+uv pip install git+https://github.com/borisbanach/claude-swarm.git
+```
+
+**Option 2: Clone for Development**
+
+```bash
+# Clone the repository (outside your project directory)
+git clone https://github.com/borisbanach/claude-swarm.git
 cd claude-swarm
 
 # Install dependencies (using uv)
@@ -27,6 +39,8 @@ uv pip install -e ".[dev]"
 # Or using pip
 pip install -e ".[dev]"
 ```
+
+**⚠️ Important:** If integrating with your project, see [Integration Guide](docs/INTEGRATION_GUIDE.md) for git safety and best practices.
 
 ### Run the Demo
 
@@ -120,6 +134,34 @@ Automatically detect and clean up stale locks:
 cleanup_count = lm.cleanup_stale_locks()
 print(f"Cleaned up {cleanup_count} stale locks")
 ```
+
+## Integration with Your Project
+
+### Quick Integration
+
+1. **Install Claude Swarm**
+   ```bash
+   pip install git+https://github.com/borisbanach/claude-swarm.git
+   ```
+
+2. **Update Your .gitignore**
+   ```bash
+   cat claude-swarm/.gitignore.template >> .gitignore
+   ```
+
+3. **Set Up tmux and Launch Agents**
+   ```bash
+   tmux new -s myproject
+   # Split panes and launch Claude Code in each
+   ```
+
+4. **Discover and Onboard Agents**
+   ```bash
+   claudeswarm discover-agents
+   claudeswarm onboard  # Automatically explains coordination to all agents
+   ```
+
+For detailed integration instructions, git safety guidelines, and best practices, see the [Integration Guide](docs/INTEGRATION_GUIDE.md).
 
 ## Architecture
 
@@ -301,6 +343,9 @@ For complete API documentation, see [docs/api-reference.md](docs/api-reference.m
 
 ## Documentation
 
+- **[docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md)** - How to integrate Claude Swarm into your project
+- **[docs/TUTORIAL.md](docs/TUTORIAL.md)** - Step-by-step tutorial from zero to hero
+- **[docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)** - Quick reference card for commands
 - **[docs/api-reference.md](docs/api-reference.md)** - Complete API documentation
 - **[docs/troubleshooting.md](docs/troubleshooting.md)** - Common issues and solutions
 - **[docs/security.md](docs/security.md)** - Security best practices and limitations

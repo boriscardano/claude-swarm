@@ -300,6 +300,86 @@ def cmd_start_monitoring(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_onboard(args: argparse.Namespace) -> None:
+    """Onboard all discovered agents to the coordination system."""
+    from claudeswarm.messaging import broadcast_message, MessageType
+
+    print("=== Claude Swarm Agent Onboarding ===")
+    print()
+
+    # Step 1: Discover agents
+    print("Step 1: Discovering active agents...")
+    try:
+        registry = refresh_registry()
+        agents = list_active_agents()
+
+        if not agents:
+            print("No agents discovered.")
+            print("Make sure Claude Code instances are running in tmux panes.")
+            sys.exit(1)
+
+        print(f"Found {len(agents)} active agent(s): {', '.join(a.id for a in agents)}")
+        print()
+
+    except Exception as e:
+        print(f"Error during discovery: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Step 2: Send onboarding messages
+    print("Step 2: Broadcasting onboarding messages...")
+
+    messages = [
+        "=== CLAUDE SWARM COORDINATION ACTIVE ===",
+        "Multi-agent coordination is now available in this session.",
+        "",
+        "KEY PROTOCOL RULES:",
+        "1. ALWAYS acquire file locks before editing (claudeswarm acquire-file-lock <path> <agent-id> <reason>)",
+        "2. ALWAYS release locks immediately after editing (claudeswarm release-file-lock <path> <agent-id>)",
+        "3. Use specific message types when communicating (INFO, QUESTION, REVIEW-REQUEST, BLOCKED, etc.)",
+        "4. Check COORDINATION.md for sprint goals and current work",
+        "",
+        "QUICK COMMAND REFERENCE:",
+        "Discovery: claudeswarm discover-agents",
+        "List locks: claudeswarm list-all-locks",
+        "Clean up stale locks: claudeswarm cleanup-stale-locks",
+        "",
+        f"ACTIVE AGENTS: {', '.join(a.id for a in agents)}",
+        "",
+        "DOCUMENTATION: See AGENT_PROTOCOL.md, TUTORIAL.md, or docs/INTEGRATION_GUIDE.md",
+        "",
+        "Ready to coordinate! Use 'claudeswarm --help' for full command list.",
+    ]
+
+    success_count = 0
+    for msg in messages:
+        if not msg.strip():
+            continue
+
+        try:
+            result = broadcast_message(
+                sender_id="system",
+                message_type=MessageType.INFO,
+                content=msg,
+                exclude_self=False
+            )
+            delivered = sum(result.values())
+            success_count += delivered
+        except Exception as e:
+            print(f"Warning: Failed to send message: {e}", file=sys.stderr)
+
+    print()
+    print(f"Onboarding complete! Messages delivered to {len(agents)} agent(s).")
+    print()
+    print("All agents have been notified about:")
+    print("  - Coordination protocol rules")
+    print("  - Available commands")
+    print("  - How to send messages and acquire locks")
+    print("  - Where to find documentation")
+    print()
+    print("Agents are now ready to coordinate!")
+    sys.exit(0)
+
+
 def main() -> NoReturn:
     """Main entry point for the claudeswarm CLI.
 
@@ -359,6 +439,13 @@ def main() -> NoReturn:
         help="Output in JSON format",
     )
     list_agents_parser.set_defaults(func=cmd_list_agents)
+
+    # onboard command
+    onboard_parser = subparsers.add_parser(
+        "onboard",
+        help="Onboard all discovered agents to the coordination system",
+    )
+    onboard_parser.set_defaults(func=cmd_onboard)
 
     # acquire-file-lock command
     acquire_parser = subparsers.add_parser(
@@ -450,14 +537,18 @@ Usage:
 
 Commands:
     discover-agents       Discover active Claude Code agents
+    list-agents          List active agents from registry
+    onboard              Onboard all agents to coordination system
     send-to-agent        Send message to specific agent
     broadcast-to-all     Broadcast message to all agents
     acquire-file-lock    Acquire lock on a file
     release-file-lock    Release lock on a file
     who-has-lock        Query lock holder for a file
+    list-all-locks      List all active locks
+    cleanup-stale-locks Clean up stale locks
     send-with-ack       Send message requiring acknowledgment
     start-monitoring    Start monitoring dashboard
-    
+
     help                Show this help message
     version             Show version information
 

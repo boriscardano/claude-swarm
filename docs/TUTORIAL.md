@@ -162,7 +162,43 @@ Registry saved to: ACTIVE_AGENTS.json
 
 Congratulations! Your agents can now see each other.
 
-### Step 5: Send Your First Message
+### Step 5: Onboard All Agents
+
+Now that agents are discovered, they need to know about the coordination system. Run the automated onboarding command:
+
+```bash
+uv run claudeswarm onboard
+```
+
+Expected output:
+```
+=== Claude Swarm Agent Onboarding ===
+
+Step 1: Discovering active agents...
+Found 3 active agent(s): agent-0, agent-1, agent-2
+
+Step 2: Broadcasting onboarding messages...
+
+Onboarding complete! Messages delivered to 3 agent(s).
+
+All agents have been notified about:
+  - Coordination protocol rules
+  - Available commands
+  - How to send messages and acquire locks
+  - Where to find documentation
+
+Agents are now ready to coordinate!
+```
+
+**Check your other panes** - each agent received onboarding messages explaining:
+- How the coordination system works
+- Key protocol rules (always lock files before editing)
+- Essential commands
+- Where to find documentation
+
+This single command prepares all agents to work together!
+
+### Step 6: Send Your First Message
 
 In **Pane 1** (agent-0), send a message to agent-1:
 
@@ -175,7 +211,7 @@ uv run claudeswarm send-to-agent agent-1 INFO "Hello from agent-0!"
 [agent-0][2025-11-07 10:35:00][INFO]: Hello from agent-0!
 ```
 
-### Step 6: Broadcast to Everyone
+### Step 7: Broadcast to Everyone
 
 In **Pane 1** (agent-0), broadcast to all agents:
 
@@ -185,7 +221,7 @@ uv run claudeswarm broadcast-to-all INFO "Team meeting at 3pm!"
 
 **Switch to Panes 2 and 3** - both should receive the message (agent-0 won't receive it since it excludes itself by default).
 
-### Step 7: Test File Locking
+### Step 8: Test File Locking
 
 In **Pane 1** (agent-0), acquire a lock:
 
@@ -236,6 +272,7 @@ Lock acquired on: test.txt
 
 **Congratulations!** You've completed the quick start. Your agents can now:
 - Discover each other
+- Receive automated onboarding
 - Send messages
 - Coordinate file access
 
@@ -1357,8 +1394,9 @@ You've completed the tutorial! You now know how to:
 ### Essential Commands
 
 ```bash
-# Discovery
-uv run claudeswarm discover
+# Discovery & Onboarding
+uv run claudeswarm discover                                # Find all agents
+uv run claudeswarm onboard                                 # Onboard all agents
 
 # Messaging
 uv run claudeswarm send-to-agent <agent-id> <TYPE> "<message>"
@@ -1384,10 +1422,16 @@ uv run claudeswarm cleanup-stale-locks
 - **CHALLENGE** - Disagree politely
 - **ACK** - Acknowledge receipt
 
+### Setup Workflow
+
+```
+Discover → Onboard → Coordinate
+```
+
 ### Lock Workflow
 
 ```
-Discover → Check → Acquire → Edit → Release → Announce
+Check → Acquire → Edit → Release → Announce
 ```
 
 ### The Golden Rules
