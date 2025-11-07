@@ -16,12 +16,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Optional
+
+from .validators import (
+    ValidationError,
+    validate_agent_id,
+    validate_file_path,
+    validate_timeout,
+    normalize_path,
+)
 
 __all__ = [
     "FileLock",
@@ -116,11 +125,49 @@ class LockManager:
         """
         self.project_root = project_root or Path.cwd()
         self.lock_dir = self.project_root / lock_dir
+        self._lock = threading.Lock()  # Protect lock refresh operations
         self._ensure_lock_directory()
 
     def _ensure_lock_directory(self) -> None:
         """Create the lock directory if it doesn't exist."""
         self.lock_dir.mkdir(exist_ok=True, parents=True)
+
+    def _validate_filepath(self, filepath: str) -> None:
+        """Validate that filepath is within the project root to prevent path traversal.
+
+        Args:
+            filepath: Path to validate
+
+        Raises:
+            ValueError: If filepath is outside the project root
+        """
+        # Resolve the filepath to its absolute path
+        try:
+            # Handle both absolute and relative paths
+            if Path(filepath).is_absolute():
+                resolved_path = Path(filepath).resolve()
+            else:
+                resolved_path = (self.project_root / filepath).resolve()
+
+            # Check if resolved path starts with project root
+            # This prevents path traversal attacks using .. or symlinks
+            if not str(resolved_path).startswith(str(self.project_root.resolve())):
+                raise ValueError(
+                    f"Path traversal detected: '{filepath}' resolves to '{resolved_path}' "
+                    f"which is outside project root '{self.project_root.resolve()}'"
+                )
+        except (OSError, RuntimeError) as e:
+            # Handle cases where path doesn't exist or has symlink loops
+            # For glob patterns or non-existent files, we still want to validate the base path
+            # Just check that the path doesn't contain obvious traversal attempts
+            if '..' in filepath or filepath.startswith('/'):
+                # For absolute paths, just ensure they're under project root
+                if filepath.startswith('/'):
+                    if not filepath.startswith(str(self.project_root.resolve())):
+                        raise ValueError(
+                            f"Absolute path '{filepath}' is outside project root '{self.project_root.resolve()}'"
+                        )
+            # For other paths, allow them as they'll be treated as patterns or relative paths
 
     def _get_lock_filename(self, filepath: str) -> str:
         """Generate a unique lock filename for a given filepath.
@@ -132,7 +179,13 @@ class LockManager:
 
         Returns:
             Filename for the lock file (e.g., "abc123def456.lock")
+
+        Raises:
+            ValueError: If filepath is outside the project root
         """
+        # Validate filepath to prevent path traversal attacks
+        self._validate_filepath(filepath)
+
         # Normalize the filepath
         normalized = str(Path(filepath).as_posix())
         # Create hash
@@ -246,22 +299,62 @@ class LockManager:
             Tuple of (success, conflict):
                 - (True, None) if lock acquired successfully
                 - (False, LockConflict) if lock held by another agent
+
+        Raises:
+            ValidationError: If inputs are invalid
         """
+        # Validate inputs
+        agent_id = validate_agent_id(agent_id)
+        timeout = validate_timeout(timeout)
+        # Normalize filepath for cross-platform compatibility
+        filepath = str(normalize_path(filepath))
+
         lock_path = self._get_lock_path(filepath)
 
         # Check for existing lock
         existing_lock = self._read_lock(lock_path)
 
+        # Handle corrupted lock files
+        if lock_path.exists() and existing_lock is None:
+            # File exists but couldn't be read - it's corrupted, remove it
+            try:
+                lock_path.unlink()
+            except OSError:
+                pass  # Ignore errors removing corrupted file
+
         if existing_lock:
             # Check if it's our own lock
             if existing_lock.agent_id == agent_id:
-                # Refresh the lock timestamp
-                existing_lock.locked_at = time.time()
-                existing_lock.reason = reason
-                # Remove and recreate
-                lock_path.unlink()
-                self._write_lock(lock_path, existing_lock)
-                return True, None
+                # Refresh the lock timestamp with proper locking to prevent TOCTOU
+                with self._lock:
+                    # Re-read to ensure no one else modified it
+                    existing_lock = self._read_lock(lock_path)
+                    if existing_lock and existing_lock.agent_id == agent_id:
+                        # Refresh the lock timestamp
+                        existing_lock.locked_at = time.time()
+                        existing_lock.reason = reason
+                        # Remove and recreate atomically within the lock
+                        try:
+                            lock_path.unlink()
+                            self._write_lock(lock_path, existing_lock)
+                        except Exception:
+                            # If something fails, try to restore the original lock
+                            self._write_lock(lock_path, existing_lock)
+                            raise
+                        return True, None
+                    else:
+                        # Someone else acquired the lock between our checks
+                        existing_lock_new = self._read_lock(lock_path)
+                        if existing_lock_new and existing_lock_new.agent_id != agent_id:
+                            conflict = LockConflict(
+                                filepath=existing_lock_new.filepath,
+                                current_holder=existing_lock_new.agent_id,
+                                locked_at=datetime.fromtimestamp(
+                                    existing_lock_new.locked_at, tz=timezone.utc
+                                ),
+                                reason=existing_lock_new.reason,
+                            )
+                            return False, conflict
 
             # Check if the lock is stale
             if existing_lock.is_stale(timeout):

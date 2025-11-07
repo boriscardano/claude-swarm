@@ -12,6 +12,7 @@ the claudeswarm package, including:
 from __future__ import annotations
 
 import json
+import secrets
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ __all__ = [
     "save_json",
     "format_timestamp",
     "parse_timestamp",
+    "get_or_create_secret",
 ]
 
 
@@ -113,3 +115,54 @@ def parse_timestamp(ts: str) -> datetime:
         ValueError: If timestamp format is invalid
     """
     return datetime.fromisoformat(ts)
+
+
+def get_or_create_secret(secret_file: Path = None) -> bytes:
+    """Get or create a shared secret for HMAC message authentication.
+
+    The secret is stored in ~/.claude-swarm/secret by default.
+    If the file doesn't exist, a new cryptographically secure secret is generated.
+
+    Args:
+        secret_file: Path to secret file (default: ~/.claude-swarm/secret)
+
+    Returns:
+        The shared secret as bytes
+
+    Raises:
+        OSError: If secret file cannot be read or written
+    """
+    if secret_file is None:
+        secret_dir = Path.home() / ".claude-swarm"
+        secret_file = secret_dir / "secret"
+
+    # Ensure directory exists
+    secret_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # If secret exists, read it
+    if secret_file.exists():
+        try:
+            with open(secret_file, 'rb') as f:
+                secret = f.read()
+            # Validate secret is not empty
+            if len(secret) < 32:
+                raise ValueError("Secret file is too short (< 32 bytes)")
+            return secret
+        except Exception as e:
+            # If we can't read the secret, generate a new one
+            pass
+
+    # Generate new secret (256 bits = 32 bytes)
+    secret = secrets.token_bytes(32)
+
+    # Write secret to file with restrictive permissions
+    try:
+        # Create file with mode 0o600 (read/write for owner only)
+        with open(secret_file, 'wb') as f:
+            f.write(secret)
+        # Ensure file has correct permissions
+        secret_file.chmod(0o600)
+    except Exception as e:
+        raise OSError(f"Failed to write secret file: {e}")
+
+    return secret

@@ -17,8 +17,11 @@ Phase: Phase 1
 
 from __future__ import annotations
 
+import hmac
+import hashlib
 import json
 import logging
+import shlex
 import subprocess
 import uuid
 from collections import defaultdict, deque
@@ -29,6 +32,15 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .discovery import AgentRegistry, get_registry_path
+from .utils import get_or_create_secret
+from .validators import (
+    ValidationError,
+    validate_agent_id,
+    validate_message_content,
+    validate_rate_limit_config,
+    validate_recipient_list,
+    sanitize_message_content,
+)
 
 __all__ = [
     "MessageType",
@@ -69,6 +81,7 @@ class Message:
         content: Message body/payload
         recipients: List of recipient agent IDs
         msg_id: Unique identifier for tracking (UUID)
+        signature: HMAC signature for message authentication (optional, auto-generated)
     """
 
     sender_id: str
@@ -77,19 +90,75 @@ class Message:
     content: str
     recipients: List[str]
     msg_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    signature: str = field(default="")
 
     def __post_init__(self):
         """Validate message fields."""
-        if not self.sender_id:
-            raise ValueError("sender_id cannot be empty")
-        if not self.content:
-            raise ValueError("content cannot be empty")
-        if not self.recipients:
-            raise ValueError("recipients cannot be empty")
+        # Validate sender_id
+        try:
+            self.sender_id = validate_agent_id(self.sender_id)
+        except ValidationError as e:
+            raise ValueError(f"Invalid sender_id: {e}")
+
+        # Validate content
+        try:
+            self.content = validate_message_content(self.content)
+        except ValidationError as e:
+            raise ValueError(f"Invalid message content: {e}")
+
+        # Validate recipients
+        try:
+            self.recipients = validate_recipient_list(self.recipients)
+        except ValidationError as e:
+            raise ValueError(f"Invalid recipients: {e}")
+
+        # Type conversions
         if isinstance(self.msg_type, str):
             self.msg_type = MessageType(self.msg_type)
         if isinstance(self.timestamp, str):
             self.timestamp = datetime.fromisoformat(self.timestamp)
+
+    def _get_message_data_for_signing(self) -> str:
+        """Get canonical representation of message for signing.
+
+        Returns:
+            String representation of message fields for HMAC signing
+        """
+        return f"{self.sender_id}|{self.timestamp.isoformat()}|{self.msg_type.value}|{self.content}|{','.join(sorted(self.recipients))}|{self.msg_id}"
+
+    def sign(self, secret: bytes = None) -> None:
+        """Sign the message with HMAC-SHA256.
+
+        Args:
+            secret: Shared secret for signing (uses default if None)
+        """
+        if secret is None:
+            secret = get_or_create_secret()
+
+        message_data = self._get_message_data_for_signing()
+        signature = hmac.new(secret, message_data.encode('utf-8'), hashlib.sha256)
+        self.signature = signature.hexdigest()
+
+    def verify_signature(self, secret: bytes = None) -> bool:
+        """Verify the message signature.
+
+        Args:
+            secret: Shared secret for verification (uses default if None)
+
+        Returns:
+            True if signature is valid, False otherwise
+        """
+        if not self.signature:
+            return False
+
+        if secret is None:
+            secret = get_or_create_secret()
+
+        message_data = self._get_message_data_for_signing()
+        expected_signature = hmac.new(secret, message_data.encode('utf-8'), hashlib.sha256)
+
+        # Use constant-time comparison to prevent timing attacks
+        return hmac.compare_digest(self.signature, expected_signature.hexdigest())
 
     def to_dict(self) -> dict:
         """Convert message to dictionary for serialization."""
@@ -99,7 +168,8 @@ class Message:
             'msg_type': self.msg_type.value,
             'content': self.content,
             'recipients': self.recipients,
-            'msg_id': self.msg_id
+            'msg_id': self.msg_id,
+            'signature': self.signature
         }
 
     @classmethod
@@ -111,7 +181,8 @@ class Message:
             msg_type=MessageType(data['msg_type']),
             content=data['content'],
             recipients=data['recipients'],
-            msg_id=data.get('msg_id', str(uuid.uuid4()))
+            msg_id=data.get('msg_id', str(uuid.uuid4())),
+            signature=data.get('signature', '')
         )
 
     def format_for_display(self) -> str:
@@ -136,11 +207,20 @@ class RateLimiter:
         Args:
             max_messages: Maximum messages allowed per window
             window_seconds: Time window in seconds
+
+        Raises:
+            ValidationError: If rate limit configuration is invalid
         """
-        self.max_messages = max_messages
-        self.window_seconds = window_seconds
+        # Validate rate limit configuration
+        try:
+            self.max_messages, self.window_seconds = validate_rate_limit_config(
+                max_messages, window_seconds
+            )
+        except ValidationError as e:
+            raise ValueError(f"Invalid rate limit configuration: {e}")
+
         # Track message timestamps per agent
-        self._message_times: Dict[str, deque] = defaultdict(lambda: deque(maxlen=max_messages))
+        self._message_times: Dict[str, deque] = defaultdict(lambda: deque(maxlen=self.max_messages))
 
     def check_rate_limit(self, agent_id: str) -> bool:
         """Check if agent is within rate limit.
@@ -174,6 +254,33 @@ class RateLimiter:
         if agent_id in self._message_times:
             del self._message_times[agent_id]
 
+    def cleanup_inactive_agents(self, cutoff_seconds: int = 3600):
+        """Remove tracking data for agents that haven't sent messages recently.
+
+        This prevents memory leaks in long-running scenarios where agents
+        come and go but their tracking data remains in memory.
+
+        Args:
+            cutoff_seconds: Remove agents inactive for this many seconds (default: 1 hour)
+
+        Returns:
+            Number of agents cleaned up
+        """
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=cutoff_seconds)
+
+        # Find agents with no recent activity
+        agents_to_remove = []
+        for agent_id, times in self._message_times.items():
+            if not times or (times and times[-1] < cutoff):
+                agents_to_remove.append(agent_id)
+
+        # Remove inactive agents
+        for agent_id in agents_to_remove:
+            del self._message_times[agent_id]
+
+        return len(agents_to_remove)
+
 
 class TmuxMessageDelivery:
     """Handles message delivery via tmux send-keys.
@@ -184,6 +291,8 @@ class TmuxMessageDelivery:
     @staticmethod
     def escape_for_tmux(text: str) -> str:
         """Escape text for safe transmission via tmux send-keys.
+
+        Uses shlex.quote() for proper shell escaping to prevent command injection.
 
         Handles:
         - Single quotes
@@ -197,11 +306,9 @@ class TmuxMessageDelivery:
         Returns:
             Escaped text safe for tmux send-keys
         """
-        # Replace single quotes with '\''
-        text = text.replace("'", "'\"'\"'")
-        # Replace newlines with literal \n for echo
-        text = text.replace("\n", "\\n")
-        return text
+        # Use shlex.quote for safe shell escaping
+        # This prevents command injection by properly quoting the text
+        return shlex.quote(text)
 
     @staticmethod
     def send_to_pane(pane_id: str, message: str) -> bool:
@@ -445,6 +552,9 @@ class MessagingSystem:
             recipients=[recipient_id]
         )
 
+        # Sign the message for authentication
+        message.sign()
+
         # Get recipient pane
         pane_id = self._get_agent_pane(recipient_id)
         if not pane_id:
@@ -520,6 +630,9 @@ class MessagingSystem:
             content=content,
             recipients=recipients
         )
+
+        # Sign the message for authentication
+        message.sign()
 
         # Format message once
         formatted_msg = message.format_for_display()
