@@ -203,10 +203,11 @@ class TestAckSystem:
 
     def test_send_with_ack_validation(self, ack_system: AckSystem) -> None:
         """Test validation of send_with_ack parameters."""
-        with pytest.raises(ValueError, match="sender_id and recipient_id cannot be empty"):
+        # Our new validation provides more specific error messages
+        with pytest.raises(ValueError, match="Invalid input"):
             ack_system.send_with_ack("", "agent-2", MessageType.QUESTION, "Test")
 
-        with pytest.raises(ValueError, match="sender_id and recipient_id cannot be empty"):
+        with pytest.raises(ValueError, match="Invalid input"):
             ack_system.send_with_ack("agent-1", "", MessageType.QUESTION, "Test")
 
     def test_receive_ack_success(self, ack_system: AckSystem, temp_dir: Path) -> None:

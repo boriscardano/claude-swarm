@@ -1,0 +1,549 @@
+"""Input validation utilities for Claude Swarm.
+
+This module provides comprehensive validation functions for:
+- Agent IDs (format, length, allowed characters)
+- File paths (security, existence, platform compatibility)
+- Message content (length, sanitization)
+- Timeout values (ranges, types)
+- Retry counts and other numeric parameters
+
+All validation functions raise ValueError with helpful error messages
+when validation fails, making it easy to provide user feedback.
+
+Author: Agent-Validation
+Phase: Security & Robustness
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from pathlib import Path, PurePath
+from typing import Any
+
+__all__ = [
+    "ValidationError",
+    "validate_agent_id",
+    "validate_message_content",
+    "validate_file_path",
+    "validate_timeout",
+    "validate_retry_count",
+    "validate_rate_limit_config",
+    "validate_recipient_list",
+    "sanitize_message_content",
+    "normalize_path",
+]
+
+# Validation constants
+MAX_MESSAGE_LENGTH = 10 * 1024  # 10KB
+MAX_AGENT_ID_LENGTH = 64
+MAX_REASON_LENGTH = 512
+MIN_TIMEOUT = 1
+MAX_TIMEOUT = 3600  # 1 hour
+MAX_RETRY_COUNT = 5
+MIN_RATE_LIMIT_MESSAGES = 1
+MAX_RATE_LIMIT_MESSAGES = 1000
+MIN_RATE_LIMIT_WINDOW = 1
+MAX_RATE_LIMIT_WINDOW = 3600
+
+# Pattern for valid agent IDs: alphanumeric + hyphens + underscores
+AGENT_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+
+class ValidationError(ValueError):
+    """Raised when validation fails.
+
+    This is a subclass of ValueError for backward compatibility,
+    but provides a more specific exception type for validation errors.
+    """
+    pass
+
+
+def validate_agent_id(agent_id: Any) -> str:
+    """Validate an agent ID.
+
+    Agent IDs must:
+    - Be non-empty strings
+    - Contain only alphanumeric characters, hyphens, and underscores
+    - Be between 1 and 64 characters long
+    - Not start or end with a hyphen
+
+    Args:
+        agent_id: Value to validate
+
+    Returns:
+        The validated agent ID as a string
+
+    Raises:
+        ValidationError: If validation fails with specific reason
+
+    Examples:
+        >>> validate_agent_id("agent-1")
+        'agent-1'
+        >>> validate_agent_id("my_agent_123")
+        'my_agent_123'
+        >>> validate_agent_id("")
+        ValidationError: Agent ID cannot be empty
+        >>> validate_agent_id("agent@123")
+        ValidationError: Agent ID contains invalid characters
+    """
+    # Type check
+    if not isinstance(agent_id, str):
+        raise ValidationError(
+            f"Agent ID must be a string, got {type(agent_id).__name__}"
+        )
+
+    # Empty check
+    if not agent_id or agent_id.strip() == "":
+        raise ValidationError("Agent ID cannot be empty")
+
+    # Strip whitespace
+    agent_id = agent_id.strip()
+
+    # Length check
+    if len(agent_id) > MAX_AGENT_ID_LENGTH:
+        raise ValidationError(
+            f"Agent ID too long (max {MAX_AGENT_ID_LENGTH} characters, "
+            f"got {len(agent_id)})"
+        )
+
+    # Pattern check
+    if not AGENT_ID_PATTERN.match(agent_id):
+        raise ValidationError(
+            f"Agent ID contains invalid characters. "
+            f"Only alphanumeric, hyphens, and underscores allowed: '{agent_id}'"
+        )
+
+    # Edge cases: no leading/trailing hyphens
+    if agent_id.startswith('-') or agent_id.endswith('-'):
+        raise ValidationError(
+            f"Agent ID cannot start or end with a hyphen: '{agent_id}'"
+        )
+
+    return agent_id
+
+
+def validate_message_content(content: Any, max_length: int = MAX_MESSAGE_LENGTH) -> str:
+    """Validate message content.
+
+    Message content must:
+    - Be a string
+    - Not be empty (after stripping)
+    - Not exceed max_length bytes
+
+    Args:
+        content: Content to validate
+        max_length: Maximum allowed length in bytes (default: 10KB)
+
+    Returns:
+        The validated content as a string
+
+    Raises:
+        ValidationError: If validation fails
+
+    Examples:
+        >>> validate_message_content("Hello")
+        'Hello'
+        >>> validate_message_content("")
+        ValidationError: Message content cannot be empty
+        >>> validate_message_content("x" * 20000)
+        ValidationError: Message content too long
+    """
+    # Type check
+    if not isinstance(content, str):
+        raise ValidationError(
+            f"Message content must be a string, got {type(content).__name__}"
+        )
+
+    # Empty check (after stripping)
+    if not content.strip():
+        raise ValidationError("Message content cannot be empty")
+
+    # Length check (in bytes for Unicode safety)
+    content_bytes = content.encode('utf-8')
+    if len(content_bytes) > max_length:
+        raise ValidationError(
+            f"Message content too long (max {max_length} bytes, "
+            f"got {len(content_bytes)} bytes)"
+        )
+
+    return content
+
+
+def sanitize_message_content(content: str) -> str:
+    """Sanitize message content for safe transmission.
+
+    This function:
+    - Normalizes whitespace (but preserves newlines)
+    - Removes null bytes
+    - Removes other control characters (except tab and newline)
+    - Trims leading/trailing whitespace per line
+
+    Args:
+        content: Content to sanitize
+
+    Returns:
+        Sanitized content
+
+    Examples:
+        >>> sanitize_message_content("Hello\\x00World")
+        'HelloWorld'
+        >>> sanitize_message_content("  Line 1  \\n  Line 2  ")
+        'Line 1\\nLine 2'
+    """
+    # Remove null bytes
+    content = content.replace('\x00', '')
+
+    # Remove other control characters except \t and \n
+    content = ''.join(
+        char for char in content
+        if ord(char) >= 32 or char in '\t\n'
+    )
+
+    # Normalize line endings
+    content = content.replace('\r\n', '\n').replace('\r', '\n')
+
+    # Trim each line
+    lines = content.split('\n')
+    lines = [line.rstrip() for line in lines]
+    content = '\n'.join(lines)
+
+    # Trim overall
+    content = content.strip()
+
+    return content
+
+
+def validate_file_path(
+    filepath: Any,
+    must_exist: bool = False,
+    must_be_relative: bool = False,
+    project_root: Path | None = None,
+    check_traversal: bool = True
+) -> Path:
+    """Validate a file path.
+
+    File paths must:
+    - Be valid path strings or Path objects
+    - Not be empty
+    - Not contain path traversal attempts (if check_traversal=True)
+    - Exist (if must_exist=True)
+    - Be relative (if must_be_relative=True)
+    - Be within project_root if specified
+
+    Args:
+        filepath: Path to validate
+        must_exist: If True, path must exist on filesystem
+        must_be_relative: If True, path must be relative (not absolute)
+        project_root: If provided, path must be within this directory
+        check_traversal: If True, check for path traversal attempts
+
+    Returns:
+        Validated Path object
+
+    Raises:
+        ValidationError: If validation fails
+
+    Examples:
+        >>> validate_file_path("src/file.py")
+        PosixPath('src/file.py')
+        >>> validate_file_path("")
+        ValidationError: File path cannot be empty
+        >>> validate_file_path("../../../etc/passwd", check_traversal=True)
+        ValidationError: Path traversal detected
+    """
+    # Type validation
+    if filepath is None:
+        raise ValidationError("File path cannot be None")
+
+    if isinstance(filepath, str):
+        if not filepath.strip():
+            raise ValidationError("File path cannot be empty")
+        try:
+            path = Path(filepath)
+        except (TypeError, ValueError) as e:
+            raise ValidationError(f"Invalid file path: {e}")
+    elif isinstance(filepath, (Path, PurePath)):
+        path = Path(filepath)
+    else:
+        raise ValidationError(
+            f"File path must be a string or Path, got {type(filepath).__name__}"
+        )
+
+    # Relative/absolute check
+    if must_be_relative and path.is_absolute():
+        raise ValidationError(
+            f"File path must be relative, got absolute path: {path}"
+        )
+
+    # Path traversal check
+    if check_traversal:
+        # Check for obvious traversal patterns
+        path_str = str(path)
+        if '..' in path.parts:
+            raise ValidationError(
+                f"Path traversal detected (contains '..'): {path}"
+            )
+
+        # Additional checks for common attack patterns
+        dangerous_patterns = ['../', '..\\', '%2e%2e']
+        if any(pattern in path_str.lower() for pattern in dangerous_patterns):
+            raise ValidationError(
+                f"Potentially dangerous path pattern detected: {path}"
+            )
+
+    # Project root containment check
+    if project_root is not None:
+        try:
+            project_root = Path(project_root).resolve()
+            resolved_path = path.resolve() if path.is_absolute() else (project_root / path).resolve()
+
+            # Check if resolved path is within project root
+            try:
+                resolved_path.relative_to(project_root)
+            except ValueError:
+                raise ValidationError(
+                    f"File path is outside project root: {path}"
+                )
+        except (OSError, RuntimeError) as e:
+            raise ValidationError(f"Error resolving path: {e}")
+
+    # Existence check
+    if must_exist and not path.exists():
+        raise ValidationError(f"File path does not exist: {path}")
+
+    return path
+
+
+def normalize_path(filepath: str | Path) -> Path:
+    """Normalize a file path for cross-platform compatibility.
+
+    This function:
+    - Converts to Path object
+    - Normalizes separators
+    - Resolves . and .. (without resolving symlinks)
+    - Converts to forward slashes internally
+
+    Args:
+        filepath: Path to normalize
+
+    Returns:
+        Normalized Path object
+
+    Examples:
+        >>> normalize_path("src/./file.py")
+        PosixPath('src/file.py')
+        >>> normalize_path("src\\\\file.py")  # Windows-style
+        PosixPath('src/file.py')
+    """
+    path = Path(filepath)
+    # Use as_posix() for consistent representation
+    return Path(path.as_posix())
+
+
+def validate_timeout(timeout: Any, min_val: int = MIN_TIMEOUT, max_val: int = MAX_TIMEOUT) -> int:
+    """Validate a timeout value.
+
+    Timeout must:
+    - Be an integer or convertible to int
+    - Be within the specified range [min_val, max_val]
+
+    Args:
+        timeout: Timeout value to validate
+        min_val: Minimum allowed value (default: 1 second)
+        max_val: Maximum allowed value (default: 3600 seconds / 1 hour)
+
+    Returns:
+        Validated timeout as int
+
+    Raises:
+        ValidationError: If validation fails
+
+    Examples:
+        >>> validate_timeout(30)
+        30
+        >>> validate_timeout(0)
+        ValidationError: Timeout must be between 1 and 3600 seconds
+        >>> validate_timeout(5000)
+        ValidationError: Timeout must be between 1 and 3600 seconds
+    """
+    # Type check and conversion
+    try:
+        timeout_int = int(timeout)
+    except (TypeError, ValueError):
+        raise ValidationError(
+            f"Timeout must be an integer, got {type(timeout).__name__}"
+        )
+
+    # Range check
+    if timeout_int < min_val or timeout_int > max_val:
+        raise ValidationError(
+            f"Timeout must be between {min_val} and {max_val} seconds, "
+            f"got {timeout_int}"
+        )
+
+    return timeout_int
+
+
+def validate_retry_count(retry_count: Any, max_retries: int = MAX_RETRY_COUNT) -> int:
+    """Validate a retry count value.
+
+    Retry count must:
+    - Be an integer or convertible to int
+    - Be non-negative
+    - Not exceed max_retries
+
+    Args:
+        retry_count: Retry count to validate
+        max_retries: Maximum allowed retries (default: 5)
+
+    Returns:
+        Validated retry count as int
+
+    Raises:
+        ValidationError: If validation fails
+
+    Examples:
+        >>> validate_retry_count(3)
+        3
+        >>> validate_retry_count(-1)
+        ValidationError: Retry count must be non-negative
+        >>> validate_retry_count(10)
+        ValidationError: Retry count must not exceed 5
+    """
+    # Type check and conversion
+    try:
+        count_int = int(retry_count)
+    except (TypeError, ValueError):
+        raise ValidationError(
+            f"Retry count must be an integer, got {type(retry_count).__name__}"
+        )
+
+    # Non-negative check
+    if count_int < 0:
+        raise ValidationError("Retry count must be non-negative")
+
+    # Max check
+    if count_int > max_retries:
+        raise ValidationError(
+            f"Retry count must not exceed {max_retries}, got {count_int}"
+        )
+
+    return count_int
+
+
+def validate_rate_limit_config(
+    max_messages: Any,
+    window_seconds: Any
+) -> tuple[int, int]:
+    """Validate rate limit configuration.
+
+    Args:
+        max_messages: Maximum messages per window
+        window_seconds: Time window in seconds
+
+    Returns:
+        Tuple of (validated_max_messages, validated_window_seconds)
+
+    Raises:
+        ValidationError: If validation fails
+
+    Examples:
+        >>> validate_rate_limit_config(10, 60)
+        (10, 60)
+        >>> validate_rate_limit_config(0, 60)
+        ValidationError: max_messages must be between 1 and 1000
+    """
+    # Validate max_messages
+    try:
+        max_msg_int = int(max_messages)
+    except (TypeError, ValueError):
+        raise ValidationError(
+            f"max_messages must be an integer, got {type(max_messages).__name__}"
+        )
+
+    if max_msg_int < MIN_RATE_LIMIT_MESSAGES or max_msg_int > MAX_RATE_LIMIT_MESSAGES:
+        raise ValidationError(
+            f"max_messages must be between {MIN_RATE_LIMIT_MESSAGES} and "
+            f"{MAX_RATE_LIMIT_MESSAGES}, got {max_msg_int}"
+        )
+
+    # Validate window_seconds
+    try:
+        window_int = int(window_seconds)
+    except (TypeError, ValueError):
+        raise ValidationError(
+            f"window_seconds must be an integer, got {type(window_seconds).__name__}"
+        )
+
+    if window_int < MIN_RATE_LIMIT_WINDOW or window_int > MAX_RATE_LIMIT_WINDOW:
+        raise ValidationError(
+            f"window_seconds must be between {MIN_RATE_LIMIT_WINDOW} and "
+            f"{MAX_RATE_LIMIT_WINDOW}, got {window_int}"
+        )
+
+    return max_msg_int, window_int
+
+
+def validate_recipient_list(recipients: Any) -> list[str]:
+    """Validate a list of message recipients.
+
+    Recipient list must:
+    - Be a list or iterable
+    - Not be empty
+    - Contain only valid agent IDs
+    - Not contain duplicates
+
+    Args:
+        recipients: List of recipient agent IDs to validate
+
+    Returns:
+        Validated list of unique agent IDs
+
+    Raises:
+        ValidationError: If validation fails
+
+    Examples:
+        >>> validate_recipient_list(["agent-1", "agent-2"])
+        ['agent-1', 'agent-2']
+        >>> validate_recipient_list([])
+        ValidationError: Recipient list cannot be empty
+        >>> validate_recipient_list(["agent-1", "invalid@agent"])
+        ValidationError: Invalid recipient agent ID at index 1
+    """
+    # Type check
+    if not isinstance(recipients, (list, tuple, set)):
+        raise ValidationError(
+            f"Recipients must be a list, tuple, or set, "
+            f"got {type(recipients).__name__}"
+        )
+
+    # Convert to list
+    recipient_list = list(recipients)
+
+    # Empty check
+    if not recipient_list:
+        raise ValidationError("Recipient list cannot be empty")
+
+    # Validate each recipient
+    validated_recipients = []
+    seen = set()
+
+    for i, recipient in enumerate(recipient_list):
+        try:
+            validated_id = validate_agent_id(recipient)
+        except ValidationError as e:
+            raise ValidationError(
+                f"Invalid recipient agent ID at index {i}: {e}"
+            )
+
+        # Check for duplicates
+        if validated_id in seen:
+            raise ValidationError(
+                f"Duplicate recipient at index {i}: '{validated_id}'"
+            )
+
+        seen.add(validated_id)
+        validated_recipients.append(validated_id)
+
+    return validated_recipients

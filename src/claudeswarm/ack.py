@@ -25,6 +25,13 @@ from pathlib import Path
 
 from .messaging import MessageType, broadcast_message, send_message
 from .utils import load_json, save_json
+from .validators import (
+    ValidationError,
+    validate_agent_id,
+    validate_retry_count,
+    validate_timeout,
+    validate_message_content,
+)
 
 __all__ = [
     "PendingAck",
@@ -159,45 +166,78 @@ class AckSystem:
         Raises:
             ValueError: If sender_id or recipient_id is empty
         """
-        if not sender_id or not recipient_id:
-            raise ValueError("sender_id and recipient_id cannot be empty")
+        # Validate inputs
+        try:
+            sender_id = validate_agent_id(sender_id)
+            recipient_id = validate_agent_id(recipient_id)
+            content = validate_message_content(content)
+            timeout = validate_timeout(timeout, min_val=1, max_val=300)
+        except ValidationError as e:
+            raise ValueError(f"Invalid input: {e}")
 
         # Prefix content with [REQUIRES-ACK]
         ack_content = f"[REQUIRES-ACK] {content}"
 
-        # Send the message
-        message = send_message(sender_id, recipient_id, msg_type, ack_content)
-
-        if not message:
-            logger.error(f"Failed to send message from {sender_id} to {recipient_id}")
-            return None
-
         # Calculate next retry time
         next_retry = datetime.now() + timedelta(seconds=timeout)
 
-        # Create pending ACK entry
+        # Create pending ACK entry BEFORE sending (to avoid race condition)
+        # We'll use a temporary msg_id that we'll update after send
+        temp_msg_id = f"temp-{sender_id}-{datetime.now().timestamp()}"
         pending_ack = PendingAck(
-            msg_id=message.msg_id,
+            msg_id=temp_msg_id,
             sender_id=sender_id,
             recipient_id=recipient_id,
-            message=message.to_dict(),
+            message={},  # Will be filled after send
             sent_at=datetime.now().isoformat(),
             retry_count=0,
             next_retry_at=next_retry.isoformat(),
         )
 
-        # Add to tracking
+        # Add to tracking BEFORE sending
         with self._lock:
             acks = self._load_pending_acks()
             acks.append(pending_ack)
             self._save_pending_acks(acks)
 
-        logger.info(
-            f"Message {message.msg_id} sent with ACK requirement: "
-            f"{sender_id} -> {recipient_id}"
-        )
+        # Send the message
+        try:
+            message = send_message(sender_id, recipient_id, msg_type, ack_content)
 
-        return message.msg_id
+            if not message:
+                logger.error(f"Failed to send message from {sender_id} to {recipient_id}")
+                # Clean up the pending ACK since send failed
+                with self._lock:
+                    acks = self._load_pending_acks()
+                    acks = [ack for ack in acks if ack.msg_id != temp_msg_id]
+                    self._save_pending_acks(acks)
+                return None
+
+            # Update the pending ACK with actual message info
+            with self._lock:
+                acks = self._load_pending_acks()
+                for ack in acks:
+                    if ack.msg_id == temp_msg_id:
+                        ack.msg_id = message.msg_id
+                        ack.message = message.to_dict()
+                        break
+                self._save_pending_acks(acks)
+
+            logger.info(
+                f"Message {message.msg_id} sent with ACK requirement: "
+                f"{sender_id} -> {recipient_id}"
+            )
+
+            return message.msg_id
+
+        except Exception as e:
+            logger.error(f"Exception while sending message: {e}")
+            # Clean up the pending ACK
+            with self._lock:
+                acks = self._load_pending_acks()
+                acks = [ack for ack in acks if ack.msg_id != temp_msg_id]
+                self._save_pending_acks(acks)
+            raise
 
     def receive_ack(self, msg_id: str, agent_id: str) -> bool:
         """Process received acknowledgment for a message.

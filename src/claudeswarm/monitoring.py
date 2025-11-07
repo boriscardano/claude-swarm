@@ -93,34 +93,43 @@ class MessageFilter:
     def matches(self, message: Message) -> bool:
         """Check if a message matches the filter criteria.
 
+        Optimized for fast filtering of large message volumes.
+
         Args:
             message: Message to check
 
         Returns:
             True if message matches all filter criteria
         """
-        # Check message type
-        if self.msg_types and message.msg_type not in self.msg_types:
+        # Check message type first (fastest check using set membership)
+        if self.msg_types is not None and message.msg_type not in self.msg_types:
             return False
 
-        # Check agent IDs (sender or recipients)
-        if self.agent_ids:
-            if message.sender_id not in self.agent_ids:
-                # Check if any recipient matches
-                if not any(r in self.agent_ids for r in message.recipients):
-                    return False
-
-        # Check time range
-        if self.time_range:
+        # Check time range early (fast numerical comparison)
+        if self.time_range is not None:
             start, end = self.time_range
             if not (start <= message.timestamp <= end):
+                return False
+
+        # Check agent IDs last (may involve iteration over recipients)
+        if self.agent_ids is not None:
+            sender_id = message.sender_id
+            # Fast path: check sender first
+            if sender_id in self.agent_ids:
+                return True
+            # Slow path: check recipients (uses optimized set intersection)
+            recipients_set = set(message.recipients)
+            if not self.agent_ids.intersection(recipients_set):
                 return False
 
         return True
 
 
 class LogTailer:
-    """Handles tailing and parsing of log files."""
+    """Handles tailing and parsing of log files.
+
+    Supports context manager protocol for explicit resource management.
+    """
 
     def __init__(self, log_path: Path, max_buffer: int = 100):
         """Initialize log tailer.
@@ -132,21 +141,88 @@ class LogTailer:
         self.log_path = log_path
         self.max_buffer = max_buffer
         self.position = 0
+        self.last_inode = None
+        self._file_handle = None
         self._ensure_log_exists()
+        self._update_inode()
+
+    def __enter__(self) -> 'LogTailer':
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit - cleanup resources."""
+        self.cleanup()
+        return None
+
+    def cleanup(self) -> None:
+        """Clean up any open file handles and reset state."""
+        if self._file_handle is not None:
+            try:
+                self._file_handle.close()
+            except Exception:
+                pass
+            finally:
+                self._file_handle = None
+        self.position = 0
+        self.last_inode = None
 
     def _ensure_log_exists(self) -> None:
         """Create log file if it doesn't exist."""
         if not self.log_path.exists():
             self.log_path.touch()
 
+    def _update_inode(self) -> None:
+        """Update the cached inode number of the log file."""
+        if self.log_path.exists():
+            try:
+                stat_info = self.log_path.stat()
+                self.last_inode = stat_info.st_ino
+            except (OSError, IOError):
+                self.last_inode = None
+
+    def _detect_log_rotation(self) -> bool:
+        """Detect if log file has been rotated.
+
+        Returns:
+            True if rotation detected, False otherwise
+        """
+        if not self.log_path.exists():
+            return True
+
+        try:
+            stat_info = self.log_path.stat()
+            current_size = stat_info.st_size
+            current_inode = stat_info.st_ino
+
+            # Check if file size is smaller than our position (rotation detected)
+            if current_size < self.position:
+                return True
+
+            # Check if inode changed (file was replaced)
+            if self.last_inode is not None and current_inode != self.last_inode:
+                return True
+
+            return False
+
+        except (OSError, IOError):
+            return True
+
     def tail_new_lines(self) -> list[str]:
         """Read new lines from the log file since last read.
+
+        Detects log rotation and resets position when needed.
 
         Returns:
             List of new lines (without newline characters)
         """
         if not self.log_path.exists():
             return []
+
+        # Check for log rotation
+        if self._detect_log_rotation():
+            self.position = 0
+            self._update_inode()
 
         try:
             with open(self.log_path, 'r') as f:
@@ -194,7 +270,10 @@ class LogTailer:
 
 
 class Monitor:
-    """Main monitoring dashboard implementation."""
+    """Main monitoring dashboard implementation.
+
+    Supports context manager protocol for automatic resource cleanup.
+    """
 
     def __init__(
         self,
@@ -216,6 +295,15 @@ class Monitor:
         self.lock_manager = LockManager()
         self.recent_messages: deque[Message] = deque(maxlen=100)
         self.running = False
+
+    def __enter__(self) -> 'Monitor':
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit - cleanup resources."""
+        self.stop()
+        return None
 
     def get_status(self) -> MonitoringState:
         """Get current monitoring state.
@@ -412,8 +500,13 @@ class Monitor:
             sys.exit(1)
 
     def stop(self) -> None:
-        """Stop the monitoring dashboard."""
+        """Stop the monitoring dashboard and cleanup resources."""
         self.running = False
+        # Clear message buffer to free memory
+        self.recent_messages.clear()
+        # Cleanup tailer resources
+        if hasattr(self, 'tailer') and self.tailer is not None:
+            self.tailer.cleanup()
 
 
 def create_tmux_monitoring_pane(

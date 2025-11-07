@@ -210,15 +210,14 @@ Agent 1 implements a feature, Agent 2 reviews:
 
 ```bash
 # Agent 1: Implement and request review
-claudeswarm lock acquire --file src/feature.py --reason "New feature"
+claudeswarm acquire-file-lock src/feature.py agent-1 "New feature"
 # ... implement feature ...
-claudeswarm lock release --file src/feature.py
-claudeswarm send --to agent-2 --type REVIEW-REQUEST --message "Please review src/feature.py"
+claudeswarm release-file-lock src/feature.py agent-1
 
 # Agent 2: Review and provide feedback
-claudeswarm lock acquire --file src/feature.py --reason "Code review"
-claudeswarm send --to agent-1 --type REVIEW-REQUEST --message "Add type hints"
-claudeswarm lock release --file src/feature.py
+claudeswarm acquire-file-lock src/feature.py agent-2 "Code review"
+# ... review code ...
+claudeswarm release-file-lock src/feature.py agent-2
 ```
 
 ### 2. Parallel Development
@@ -227,26 +226,84 @@ Multiple agents work on different files:
 
 ```bash
 # Agent 1: Work on auth
-claudeswarm lock acquire --file "src/auth/*.py" --reason "Auth refactor"
+claudeswarm acquire-file-lock "src/auth/*.py" agent-1 "Auth refactor"
 
 # Agent 2: Work on database (no conflict)
-claudeswarm lock acquire --file "src/db/*.py" --reason "Migration"
+claudeswarm acquire-file-lock "src/db/*.py" agent-2 "Migration"
 ```
 
 ### 3. Task Coordination
 
-Coordinator broadcasts work assignments:
+Use the messaging API for coordination:
 
-```bash
-# Agent 0: Broadcast task
-claudeswarm broadcast --type INFO --message "Sprint planning: check COORDINATION.md"
+```python
+from claudeswarm.messaging import broadcast_message, send_message, MessageType
+
+# Coordinator broadcasts task
+broadcast_message(
+    sender_id="agent-0",
+    message_type=MessageType.INFO,
+    content="Sprint planning: check COORDINATION.md"
+)
 
 # Agents respond
-claudeswarm send --to agent-0 --type ACK --message "Task acknowledged"
+send_message(
+    sender_id="agent-1",
+    recipient_id="agent-0",
+    message_type=MessageType.ACK,
+    content="Task acknowledged"
+)
 ```
+
+## CLI Reference
+
+### Available Commands
+
+```bash
+# Agent Discovery
+claudeswarm discover-agents              # Discover agents once
+claudeswarm discover-agents --watch      # Continuously monitor agents
+claudeswarm discover-agents --json       # JSON output
+claudeswarm list-agents                  # List active agents from registry
+
+# File Locking
+claudeswarm acquire-file-lock <filepath> <agent_id> [reason]
+claudeswarm release-file-lock <filepath> <agent_id>
+claudeswarm who-has-lock <filepath>
+claudeswarm list-all-locks               # List all active locks
+claudeswarm list-all-locks --include-stale
+claudeswarm cleanup-stale-locks          # Clean up old locks
+
+# Monitoring
+claudeswarm start-monitoring             # Start monitoring dashboard
+claudeswarm start-monitoring --filter-type BLOCKED
+claudeswarm start-monitoring --filter-agent agent-1
+claudeswarm start-monitoring --no-tmux   # Run in current terminal
+
+# Global Options
+claudeswarm --project-root /path/to/project <command>
+```
+
+### Examples
+
+```bash
+# Discover agents with custom stale threshold
+claudeswarm discover-agents --stale-threshold 120
+
+# Check who has lock with JSON output
+claudeswarm who-has-lock src/auth.py --json
+
+# Start monitoring filtering to BLOCKED messages
+claudeswarm start-monitoring --filter-type BLOCKED
+```
+
+For complete API documentation, see [docs/api-reference.md](docs/api-reference.md).
 
 ## Documentation
 
+- **[docs/api-reference.md](docs/api-reference.md)** - Complete API documentation
+- **[docs/troubleshooting.md](docs/troubleshooting.md)** - Common issues and solutions
+- **[docs/security.md](docs/security.md)** - Security best practices and limitations
 - **[examples/README.md](examples/README.md)** - Demo and usage guide
 - **[TEST_REPORT.md](TEST_REPORT.md)** - Comprehensive test report
 - **[PHASE3_COMPLETION_SUMMARY.md](PHASE3_COMPLETION_SUMMARY.md)** - Integration test deliverables

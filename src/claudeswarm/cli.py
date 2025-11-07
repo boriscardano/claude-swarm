@@ -17,6 +17,13 @@ from typing import NoReturn
 from claudeswarm.locking import LockManager
 from claudeswarm.discovery import refresh_registry, list_active_agents
 from claudeswarm.monitoring import start_monitoring
+from claudeswarm.validators import (
+    ValidationError,
+    validate_agent_id,
+    validate_file_path,
+    validate_timeout,
+    validate_message_content,
+)
 
 __all__ = ["main"]
 
@@ -29,12 +36,30 @@ def format_timestamp(ts: float) -> str:
 
 def cmd_acquire_file_lock(args: argparse.Namespace) -> None:
     """Acquire a lock on a file."""
+    try:
+        # Validate inputs
+        validated_agent_id = validate_agent_id(args.agent_id)
+        validated_filepath = validate_file_path(
+            args.filepath,
+            must_be_relative=False,
+            check_traversal=True
+        )
+
+        # Validate reason if provided
+        reason = args.reason or ""
+        if reason and len(reason) > 512:
+            print("Error: Lock reason too long (max 512 characters)", file=sys.stderr)
+            sys.exit(1)
+    except ValidationError as e:
+        print(f"Validation error: {e}", file=sys.stderr)
+        sys.exit(1)
+
     manager = LockManager(project_root=args.project_root)
 
     success, conflict = manager.acquire_lock(
-        filepath=args.filepath,
-        agent_id=args.agent_id,
-        reason=args.reason or "",
+        filepath=str(validated_filepath),
+        agent_id=validated_agent_id,
+        reason=reason,
     )
 
     if success:
@@ -59,11 +84,23 @@ def cmd_acquire_file_lock(args: argparse.Namespace) -> None:
 
 def cmd_release_file_lock(args: argparse.Namespace) -> None:
     """Release a lock on a file."""
+    try:
+        # Validate inputs
+        validated_agent_id = validate_agent_id(args.agent_id)
+        validated_filepath = validate_file_path(
+            args.filepath,
+            must_be_relative=False,
+            check_traversal=True
+        )
+    except ValidationError as e:
+        print(f"Validation error: {e}", file=sys.stderr)
+        sys.exit(1)
+
     manager = LockManager(project_root=args.project_root)
 
     success = manager.release_lock(
-        filepath=args.filepath,
-        agent_id=args.agent_id,
+        filepath=str(validated_filepath),
+        agent_id=validated_agent_id,
     )
 
     if success:
@@ -79,9 +116,20 @@ def cmd_release_file_lock(args: argparse.Namespace) -> None:
 
 def cmd_who_has_lock(args: argparse.Namespace) -> None:
     """Check who has a lock on a file."""
+    try:
+        # Validate filepath
+        validated_filepath = validate_file_path(
+            args.filepath,
+            must_be_relative=False,
+            check_traversal=True
+        )
+    except ValidationError as e:
+        print(f"Validation error: {e}", file=sys.stderr)
+        sys.exit(1)
+
     manager = LockManager(project_root=args.project_root)
 
-    lock = manager.who_has_lock(filepath=args.filepath)
+    lock = manager.who_has_lock(filepath=str(validated_filepath))
 
     if lock:
         print(f"Lock on: {args.filepath}")
@@ -134,6 +182,18 @@ def cmd_list_all_locks(args: argparse.Namespace) -> None:
 def cmd_discover_agents(args: argparse.Namespace) -> None:
     """Discover active Claude Code agents."""
     import time
+
+    # Validate stale_threshold
+    try:
+        if args.stale_threshold < 1 or args.stale_threshold > 3600:
+            print("Error: stale_threshold must be between 1 and 3600 seconds", file=sys.stderr)
+            sys.exit(1)
+        if args.watch and (args.interval < 1 or args.interval > 3600):
+            print("Error: interval must be between 1 and 3600 seconds", file=sys.stderr)
+            sys.exit(1)
+    except (TypeError, AttributeError) as e:
+        print(f"Error: Invalid argument type: {e}", file=sys.stderr)
+        sys.exit(1)
 
     try:
         if args.watch:

@@ -13,13 +13,13 @@ communicate their current work, blockers, and coordination needs.
 
 from __future__ import annotations
 
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from .locking import LockManager
+from .utils import atomic_write
 
 __all__ = [
     "CoordinationFile",
@@ -141,15 +141,8 @@ class CoordinationFile:
 
         template = self.get_template(project_name)
 
-        # Write atomically using temp file
-        with tempfile.NamedTemporaryFile(
-            mode="w", dir=self.project_root, delete=False, suffix=".tmp"
-        ) as tmp_file:
-            tmp_file.write(template)
-            tmp_path = Path(tmp_file.name)
-
-        # Atomic rename
-        tmp_path.replace(self.filepath)
+        # Write atomically using atomic_write from utils
+        atomic_write(self.filepath, template)
         return True
 
     def _parse_sections(self, content: str) -> dict[str, CoordinationSection]:
@@ -309,15 +302,8 @@ class CoordinationFile:
             # Rebuild content
             new_file_content = self._rebuild_content(sections, content)
 
-            # Write atomically
-            with tempfile.NamedTemporaryFile(
-                mode="w", dir=self.project_root, delete=False, suffix=".tmp", encoding="utf-8"
-            ) as tmp_file:
-                tmp_file.write(new_file_content)
-                tmp_path = Path(tmp_file.name)
-
-            # Atomic rename
-            tmp_path.replace(self.filepath)
+            # Write atomically using atomic_write from utils
+            atomic_write(self.filepath, new_file_content)
             return True
 
         finally:

@@ -6,12 +6,12 @@ in tmux panes and maintain a registry of their status.
 
 import json
 import subprocess
-import tempfile
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict
-import shutil
+
+from .utils import atomic_write
 
 
 @dataclass
@@ -221,27 +221,19 @@ def _load_existing_registry() -> Optional[AgentRegistry]:
 
 def _save_registry(registry: AgentRegistry) -> None:
     """Save agent registry to file atomically.
-    
+
     Uses atomic write (temp file + rename) to prevent corruption.
-    
+
     Args:
         registry: AgentRegistry to save
     """
     registry_path = get_registry_path()
-    
-    # Write to temporary file first
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        dir=registry_path.parent,
-        prefix=".ACTIVE_AGENTS.",
-        suffix=".tmp",
-        delete=False
-    ) as tmp_file:
-        json.dump(registry.to_dict(), tmp_file, indent=2)
-        tmp_path = Path(tmp_file.name)
-    
-    # Atomic rename
-    shutil.move(str(tmp_path), str(registry_path))
+
+    # Convert registry to JSON string
+    content = json.dumps(registry.to_dict(), indent=2)
+
+    # Use atomic_write from utils for consistent, safe writing
+    atomic_write(registry_path, content)
 
 
 def discover_agents(session_name: Optional[str] = None, stale_threshold: int = 60) -> AgentRegistry:
