@@ -106,8 +106,34 @@ Commands:
   discover          Discover active agents
   send-to-agent     Send a message to a specific agent
   broadcast-to-all  Broadcast message to all agents
+  config            Configuration management
   ...
 ```
+
+### Step 1.5: (Optional) Configure for Your Team
+
+Claude Swarm works with sensible defaults, but you can customize it:
+
+```bash
+# Create default config file
+uv run claudeswarm config init
+
+# View configuration
+uv run claudeswarm config show
+
+# Edit if needed
+uv run claudeswarm config edit
+```
+
+**When to configure:**
+- Small team (2-3 agents): Use `examples/configs/small-team.yaml`
+- Large team (10+): Use `examples/configs/large-team.yaml`
+- Fast-paced work: Use `examples/configs/fast-paced.yaml`
+- Security-critical: Use `examples/configs/strict.yaml`
+
+**You can skip this step** if you're just starting out. The defaults work well for most teams.
+
+For complete configuration options, see [Configuration Guide](CONFIGURATION.md).
 
 ### Step 2: Create Your First Multi-Agent Session
 
@@ -1397,6 +1423,12 @@ You've completed the tutorial! You now know how to:
 # Discovery & Onboarding
 uv run claudeswarm discover                                # Find all agents
 uv run claudeswarm onboard                                 # Onboard all agents
+
+# Configuration
+uv run claudeswarm config init                             # Create config file
+uv run claudeswarm config show                             # View config
+uv run claudeswarm config edit                             # Edit config
+uv run claudeswarm config validate                         # Validate config
 
 # Messaging
 uv run claudeswarm send-to-agent <agent-id> <TYPE> "<message>"

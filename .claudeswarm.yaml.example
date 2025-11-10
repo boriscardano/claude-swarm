@@ -1,0 +1,45 @@
+# Claude Swarm Configuration Example (YAML)
+#
+# This file shows all available configuration options with their default values.
+# Copy this to .claudeswarm.yaml and customize as needed.
+
+# Rate limiting configuration for messaging system
+rate_limiting:
+  # Maximum number of messages an agent can send per window
+  messages_per_minute: 10
+
+  # Time window for rate limiting in seconds
+  window_seconds: 60
+
+# File locking configuration
+locking:
+  # Seconds after which a lock is considered stale
+  stale_timeout: 300
+
+  # Whether to automatically clean up stale locks
+  auto_cleanup: false
+
+  # Default reason string for lock acquisition
+  default_reason: "working"
+
+# Agent discovery configuration
+discovery:
+  # Seconds after which an agent is considered stale
+  stale_threshold: 60
+
+  # Automatic refresh interval in seconds (null = disabled)
+  auto_refresh_interval: null
+
+# Onboarding configuration
+onboarding:
+  # Whether onboarding is enabled
+  enabled: true
+
+  # Optional list of custom onboarding messages
+  custom_messages: null
+
+  # Whether to automatically onboard new agents
+  auto_onboard: false
+
+# Project root directory (null = auto-detect)
+# project_root: null

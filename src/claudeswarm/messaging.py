@@ -32,6 +32,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .config import get_config
 from .discovery import AgentRegistry, get_registry_path
 from .utils import get_or_create_secret
 from .validators import (
@@ -199,19 +200,28 @@ class Message:
 class RateLimiter:
     """Rate limiter for message sending.
 
-    Enforces maximum of 10 messages per agent per minute.
+    Enforces maximum number of messages per agent per time window.
+    Defaults are configurable via .claudeswarm.yaml/toml configuration file.
     """
 
-    def __init__(self, max_messages: int = 10, window_seconds: int = 60):
+    def __init__(self, max_messages: Optional[int] = None, window_seconds: Optional[int] = None):
         """Initialize rate limiter.
 
         Args:
-            max_messages: Maximum messages allowed per window
-            window_seconds: Time window in seconds
+            max_messages: Maximum messages allowed per window (None = use config default)
+            window_seconds: Time window in seconds (None = use config default)
 
         Raises:
             ValidationError: If rate limit configuration is invalid
         """
+        # Use config defaults if not explicitly provided
+        if max_messages is None or window_seconds is None:
+            config = get_config()
+            if max_messages is None:
+                max_messages = config.rate_limiting.messages_per_minute
+            if window_seconds is None:
+                window_seconds = config.rate_limiting.window_seconds
+
         # Validate rate limit configuration
         try:
             self.max_messages, self.window_seconds = validate_rate_limit_config(
@@ -470,20 +480,22 @@ class MessagingSystem:
     - Broadcasting
     - Rate limiting
     - Message logging
+
+    Configuration values default to .claudeswarm.yaml/toml settings.
     """
 
     def __init__(
         self,
         log_file: Path = None,
-        rate_limit_messages: int = 10,
-        rate_limit_window: int = 60
+        rate_limit_messages: Optional[int] = None,
+        rate_limit_window: Optional[int] = None
     ):
         """Initialize messaging system.
 
         Args:
             log_file: Path to message log file
-            rate_limit_messages: Max messages per agent per window
-            rate_limit_window: Rate limit window in seconds
+            rate_limit_messages: Max messages per agent per window (None = use config)
+            rate_limit_window: Rate limit window in seconds (None = use config)
         """
         self.rate_limiter = RateLimiter(rate_limit_messages, rate_limit_window)
         self.message_logger = MessageLogger(log_file)

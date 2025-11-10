@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict
 
+from .config import get_config
 from .utils import atomic_write
 
 
@@ -236,19 +237,24 @@ def _save_registry(registry: AgentRegistry) -> None:
     atomic_write(registry_path, content)
 
 
-def discover_agents(session_name: Optional[str] = None, stale_threshold: int = 60) -> AgentRegistry:
+def discover_agents(session_name: Optional[str] = None, stale_threshold: Optional[int] = None) -> AgentRegistry:
     """Discover active Claude Code agents in tmux panes.
-    
+
     Args:
         session_name: Optional tmux session name to filter by (None = all sessions)
-        stale_threshold: Seconds after which an agent is considered stale (default: 60)
-        
+        stale_threshold: Seconds after which an agent is considered stale
+                        (None = use configured discovery.stale_threshold)
+
     Returns:
         AgentRegistry containing all discovered agents
-        
+
     Raises:
         RuntimeError: If tmux is not running or discovery fails
     """
+    # Use config default if not specified
+    if stale_threshold is None:
+        stale_threshold = get_config().discovery.stale_threshold
+
     current_time = datetime.now(timezone.utc)
     
     # Load existing registry to preserve agent IDs
@@ -330,17 +336,18 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: int = 6
     return registry
 
 
-def refresh_registry(stale_threshold: int = 60) -> AgentRegistry:
+def refresh_registry(stale_threshold: Optional[int] = None) -> AgentRegistry:
     """Refresh the agent registry file.
-    
+
     Discovers agents and saves updated registry to ACTIVE_AGENTS.json.
-    
+
     Args:
-        stale_threshold: Seconds after which an agent is considered stale (default: 60)
-        
+        stale_threshold: Seconds after which an agent is considered stale
+                        (None = use configured discovery.stale_threshold)
+
     Returns:
         Updated AgentRegistry
-        
+
     Raises:
         RuntimeError: If tmux is not running or discovery fails
     """

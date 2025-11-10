@@ -1,0 +1,33 @@
+# Small Team Configuration (2-3 agents)
+# Optimized for close collaboration with minimal overhead.
+# Fast communication, quick lock timeouts, real-time updates.
+
+rate_limiting:
+  # Higher rate for frequent communication
+  messages_per_minute: 15
+
+  # Standard window
+  window_seconds: 60
+
+locking:
+  # Shorter timeout for quick edits (3 minutes)
+  stale_timeout: 180
+
+  # Auto-cleanup enabled for convenience
+  auto_cleanup: true
+
+  default_reason: "working"
+
+discovery:
+  # Faster stale detection (45 seconds)
+  stale_threshold: 45
+
+  # Frequent auto-refresh (every 20 seconds)
+  auto_refresh_interval: 20
+
+onboarding:
+  enabled: true
+  custom_messages: null
+  auto_onboard: false
+
+project_root: null

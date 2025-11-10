@@ -432,8 +432,9 @@ class TestRefreshRegistry:
         mock_discover.return_value = mock_registry
         
         result = refresh_registry()
-        
-        mock_discover.assert_called_once_with(stale_threshold=60)
+
+        # After config integration, default is None (uses config value)
+        mock_discover.assert_called_once_with(stale_threshold=None)
         mock_save.assert_called_once()
         assert result == mock_registry
 

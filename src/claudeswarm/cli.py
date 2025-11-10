@@ -18,6 +18,13 @@ from typing import NoReturn
 from claudeswarm.locking import LockManager
 from claudeswarm.discovery import refresh_registry, list_active_agents
 from claudeswarm.monitoring import start_monitoring
+from claudeswarm.config import (
+    load_config,
+    get_config,
+    ClaudeSwarmConfig,
+    ConfigValidationError,
+    _find_config_file,
+)
 from claudeswarm.validators import (
     ValidationError,
     validate_agent_id,
@@ -301,6 +308,196 @@ def cmd_start_monitoring(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_config_init(args: argparse.Namespace) -> None:
+    """Create default configuration file."""
+    config_path = Path(args.output or ".claudeswarm.yaml")
+
+    # Check if file exists
+    if config_path.exists() and not args.force:
+        print(f"Error: Config file already exists: {config_path}", file=sys.stderr)
+        print("Use --force to overwrite", file=sys.stderr)
+        sys.exit(1)
+
+    # Create default config content
+    default_yaml = """# Claude Swarm Configuration
+# Complete reference: docs/CONFIGURATION.md
+
+# Rate limiting for messaging system
+rate_limiting:
+  # Maximum messages an agent can send per window
+  messages_per_minute: 10
+  # Time window for rate limiting in seconds
+  window_seconds: 60
+
+# Distributed file locking settings
+locking:
+  # Seconds after which a lock is considered stale
+  stale_timeout: 300
+  # Automatically clean up stale locks
+  auto_cleanup: false
+  # Default reason when no reason is provided
+  default_reason: "working"
+
+# Agent discovery configuration
+discovery:
+  # Seconds after which an agent is considered stale
+  stale_threshold: 60
+  # Automatic registry refresh interval (null = disabled)
+  auto_refresh_interval: null
+
+# Agent onboarding configuration
+onboarding:
+  # Whether onboarding system is enabled
+  enabled: true
+  # Custom onboarding messages (null = use defaults)
+  custom_messages: null
+  # Automatically onboard new agents when discovered
+  auto_onboard: false
+
+# Project root directory (null = auto-detect from current directory)
+project_root: null
+"""
+
+    try:
+        config_path.write_text(default_yaml)
+        print(f"Created config file: {config_path.resolve()}")
+        print()
+        print("Default configuration created. Edit this file to customize settings.")
+        print(f"View with: claudeswarm config show")
+        print(f"Edit with: claudeswarm config edit")
+        sys.exit(0)
+    except Exception as e:
+        print(f"Error creating config file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_config_show(args: argparse.Namespace) -> None:
+    """Display current configuration."""
+    try:
+        # Load config
+        if args.file:
+            config_path = Path(args.file)
+            config = load_config(config_path)
+            source = str(config_path)
+        else:
+            config_path = _find_config_file()
+            if config_path:
+                config = load_config(config_path)
+                source = str(config_path)
+            else:
+                config = load_config()  # Load defaults
+                source = "defaults (no config file found)"
+
+        # Output format
+        if args.json:
+            print(json.dumps(config.to_dict(), indent=2))
+        else:
+            print(f"Configuration source: {source}")
+            print()
+
+            # Pretty print as YAML-like format
+            data = config.to_dict()
+            for section, values in data.items():
+                if values is None:
+                    print(f"{section}: null")
+                elif isinstance(values, dict):
+                    print(f"{section}:")
+                    for key, value in values.items():
+                        print(f"  {key}: {value}")
+                else:
+                    print(f"{section}: {values}")
+                print()
+
+        sys.exit(0)
+    except Exception as e:
+        print(f"Error loading config: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_config_validate(args: argparse.Namespace) -> None:
+    """Validate configuration file."""
+    try:
+        # Load config
+        if args.file:
+            config_path = Path(args.file)
+        else:
+            config_path = _find_config_file()
+            if not config_path:
+                print("No config file found to validate", file=sys.stderr)
+                print("Create one with: claudeswarm config init", file=sys.stderr)
+                sys.exit(1)
+
+        print(f"Validating: {config_path}")
+        print()
+
+        # Try to load and validate
+        try:
+            config = load_config(config_path)
+            print("✓ Syntax: Valid")
+            print("✓ Values: Valid")
+            print()
+            print(f"Config file is valid: {config_path}")
+            sys.exit(0)
+        except ConfigValidationError as e:
+            print("✓ Syntax: Valid")
+            print("✗ Values: Invalid", file=sys.stderr)
+            print()
+            print("Validation errors:", file=sys.stderr)
+            print(f"  - {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"✗ Syntax: Invalid - {e}", file=sys.stderr)
+            sys.exit(1)
+
+    except Exception as e:
+        print(f"Error validating config: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_config_edit(args: argparse.Namespace) -> None:
+    """Open configuration file in editor."""
+    import os
+
+    # Find or create config file
+    if args.file:
+        config_path = Path(args.file)
+    else:
+        config_path = _find_config_file()
+        if not config_path:
+            # Create default config
+            config_path = Path(".claudeswarm.yaml")
+            if not config_path.exists():
+                print(f"No config file found. Creating: {config_path}")
+                # Create default config by calling config init
+                cmd_config_init(argparse.Namespace(output=str(config_path), force=False))
+
+    # Get editor
+    editor = os.environ.get("EDITOR")
+    if not editor:
+        # Try common editors
+        for e in ["vim", "vi", "nano", "emacs"]:
+            if subprocess.run(["which", e], capture_output=True).returncode == 0:
+                editor = e
+                break
+
+    if not editor:
+        print("Error: No editor found", file=sys.stderr)
+        print("Set EDITOR environment variable or install vim/nano", file=sys.stderr)
+        sys.exit(1)
+
+    # Open in editor
+    try:
+        result = subprocess.run([editor, str(config_path)])
+        if result.returncode == 0:
+            print(f"Saved: {config_path}")
+            print()
+            print("Validate with: claudeswarm config validate")
+        sys.exit(result.returncode)
+    except Exception as e:
+        print(f"Error opening editor: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_onboard(args: argparse.Namespace) -> None:
     """Onboard all discovered agents to the coordination system.
 
@@ -573,6 +770,71 @@ def main() -> NoReturn:
         help="Run in current terminal instead of creating tmux pane",
     )
     monitoring_parser.set_defaults(func=cmd_start_monitoring)
+
+    # config command group
+    config_parser = subparsers.add_parser(
+        "config",
+        help="Configuration management",
+    )
+    config_subparsers = config_parser.add_subparsers(dest="config_command", help="Config command")
+
+    # config init
+    config_init_parser = config_subparsers.add_parser(
+        "init",
+        help="Create default configuration file",
+    )
+    config_init_parser.add_argument(
+        "-o", "--output",
+        type=str,
+        help="Output path (default: .claudeswarm.yaml)",
+    )
+    config_init_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Overwrite existing file",
+    )
+    config_init_parser.set_defaults(func=cmd_config_init)
+
+    # config show
+    config_show_parser = config_subparsers.add_parser(
+        "show",
+        help="Display current configuration",
+    )
+    config_show_parser.add_argument(
+        "--file",
+        type=str,
+        help="Path to config file (default: search for .claudeswarm.yaml)",
+    )
+    config_show_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON",
+    )
+    config_show_parser.set_defaults(func=cmd_config_show)
+
+    # config validate
+    config_validate_parser = config_subparsers.add_parser(
+        "validate",
+        help="Validate configuration file",
+    )
+    config_validate_parser.add_argument(
+        "--file",
+        type=str,
+        help="Path to config file (default: search for .claudeswarm.yaml)",
+    )
+    config_validate_parser.set_defaults(func=cmd_config_validate)
+
+    # config edit
+    config_edit_parser = config_subparsers.add_parser(
+        "edit",
+        help="Open configuration file in editor",
+    )
+    config_edit_parser.add_argument(
+        "--file",
+        type=str,
+        help="Path to config file (default: search for .claudeswarm.yaml)",
+    )
+    config_edit_parser.set_defaults(func=cmd_config_edit)
 
     args = parser.parse_args()
 

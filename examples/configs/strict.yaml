@@ -1,0 +1,45 @@
+# Strict/Conservative Configuration
+# Very conservative settings with manual controls.
+# For security-critical projects, regulated industries, and learning environments.
+
+rate_limiting:
+  # Very low message rate
+  messages_per_minute: 3
+
+  # Longer window for strict control
+  window_seconds: 60
+
+locking:
+  # Very long timeout (30 minutes)
+  stale_timeout: 1800
+
+  # Manual cleanup only - no automatic cleanup
+  auto_cleanup: false
+
+  # Require explicit reasons
+  default_reason: "MUST_SPECIFY_REASON"
+
+discovery:
+  # Long stale threshold (3 minutes)
+  stale_threshold: 180
+
+  # Manual refresh only - no auto-refresh
+  auto_refresh_interval: null
+
+onboarding:
+  enabled: true
+
+  # Strict protocol messages
+  custom_messages:
+    - "=== STRICT COORDINATION MODE ==="
+    - "CRITICAL: Always provide detailed lock reasons."
+    - "CRITICAL: Manually clean up locks - auto-cleanup is disabled."
+    - "CRITICAL: Low message rate limit - communicate deliberately."
+    - "All actions are logged for audit purposes."
+    - "Review COORDINATION.md before taking any action."
+    - "Coordinate with team lead for complex changes."
+
+  # Manual onboarding only
+  auto_onboard: false
+
+project_root: null

@@ -1,0 +1,41 @@
+# Fast-Paced Development Configuration
+# Optimized for rapid iteration, quick feedback, high message rate.
+# Perfect for hackathons, prototyping, and continuous deployment.
+
+rate_limiting:
+  # Very high message rate
+  messages_per_minute: 25
+
+  # Standard window
+  window_seconds: 60
+
+locking:
+  # Very short timeout (2 minutes)
+  stale_timeout: 120
+
+  # Aggressive auto-cleanup
+  auto_cleanup: true
+
+  default_reason: "quick edit"
+
+discovery:
+  # Fast stale detection (30 seconds)
+  stale_threshold: 30
+
+  # Very frequent refresh (15 seconds)
+  auto_refresh_interval: 15
+
+onboarding:
+  enabled: true
+
+  # Fast-paced specific messages
+  custom_messages:
+    - "=== FAST-PACED MODE ACTIVE ==="
+    - "Quick iterations expected. Lock, edit, release immediately."
+    - "Communicate blockers ASAP."
+    - "Review COORDINATION.md frequently for rapid updates."
+
+  # Auto-onboard new agents for speed
+  auto_onboard: true
+
+project_root: null
