@@ -8,6 +8,7 @@ agents to work together on shared projects through:
 - Message acknowledgment and retry system
 - Real-time monitoring and visibility
 - Shared coordination file management
+- Centralized configuration management
 """
 
 __version__ = "0.1.0"
@@ -22,4 +23,5 @@ __all__ = [
     "coordination",
     "cli",
     "utils",
+    "config",
 ]

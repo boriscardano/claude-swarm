@@ -173,10 +173,35 @@ ACTIVE_AGENTS.json
 PENDING_ACKS.json
 agent_messages.log
 COORDINATION.md
+
+# Claude Swarm configuration (optional - commit to share team settings)
+.claudeswarm.yaml
+.claudeswarm.toml
 EOF
 ```
 
-### 3. Set Up tmux Session
+### 3. (Optional) Configure Claude Swarm
+
+```bash
+# Create default configuration file
+claudeswarm config init
+
+# Edit configuration for your team
+claudeswarm config edit
+
+# Or copy a pre-made example
+cp examples/configs/small-team.yaml .claudeswarm.yaml
+```
+
+**Configuration is optional** - Claude Swarm works with sensible defaults. Only configure if you need to:
+- Adjust rate limits for team size
+- Change lock timeout thresholds
+- Customize onboarding messages
+- Set project-specific settings
+
+See [Configuration Guide](CONFIGURATION.md) for complete reference.
+
+### 4. Set Up tmux Session
 
 ```bash
 # Create tmux session for your project
@@ -188,7 +213,7 @@ tmux new -s myproject
 # Press: Ctrl+b arrow-keys (navigate between panes)
 ```
 
-### 4. Launch Claude Code Agents
+### 5. Launch Claude Code Agents
 
 In each tmux pane:
 ```bash
@@ -196,14 +221,14 @@ cd ~/work/your-project
 claude
 ```
 
-### 5. Discover Agents
+### 6. Discover Agents
 
 In any pane:
 ```bash
 claudeswarm discover-agents
 ```
 
-### 6. Onboard All Agents
+### 7. Onboard All Agents
 
 Use the automated onboarding script:
 ```bash
@@ -441,11 +466,12 @@ For issues and contributions:
 
 1. Install as package: `pip install git+https://github.com/borisbanach/claude-swarm.git`
 2. Update `.gitignore` with coordination files
-3. Create tmux session with multiple panes
-4. Launch Claude Code in each pane
-5. Run `claudeswarm discover-agents`
-6. Run `claudeswarm onboard`
-7. Start coordinating!
+3. (Optional) Configure: `claudeswarm config init`
+4. Create tmux session with multiple panes
+5. Launch Claude Code in each pane
+6. Run `claudeswarm discover-agents`
+7. Run `claudeswarm onboard`
+8. Start coordinating!
 
 **Remember:**
 - ALWAYS acquire locks before editing

@@ -1,0 +1,41 @@
+# Large Team Configuration (10+ agents)
+# Optimized for scale with stricter rate limits and longer timeouts.
+# Prevents message flooding, allows complex work, structured coordination.
+
+rate_limiting:
+  # Lower rate to prevent flooding (8 messages/min)
+  messages_per_minute: 8
+
+  # Standard window
+  window_seconds: 60
+
+locking:
+  # Longer timeout for complex work (10 minutes)
+  stale_timeout: 600
+
+  # Auto-cleanup enabled
+  auto_cleanup: true
+
+  default_reason: "working"
+
+discovery:
+  # Tolerate slower agents (90 seconds)
+  stale_threshold: 90
+
+  # Less frequent refresh to save resources (45 seconds)
+  auto_refresh_interval: 45
+
+onboarding:
+  enabled: true
+
+  # Custom messages for large team coordination
+  custom_messages:
+    - "=== LARGE TEAM COORDINATION ACTIVE ==="
+    - "Please follow structured communication patterns."
+    - "Use COORDINATION.md for task tracking."
+    - "Coordinate with your sub-team lead before taking locks."
+    - "Broadcast messages sparingly - prefer direct messages."
+
+  auto_onboard: false
+
+project_root: null

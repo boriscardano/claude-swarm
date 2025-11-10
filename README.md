@@ -135,6 +135,66 @@ cleanup_count = lm.cleanup_stale_locks()
 print(f"Cleaned up {cleanup_count} stale locks")
 ```
 
+## Configuration
+
+Claude Swarm works out-of-the-box with sensible defaults, but you can customize it for your team's needs.
+
+### Quick Config Setup
+
+```bash
+# Create default config file
+claudeswarm config init
+
+# View current configuration
+claudeswarm config show
+
+# Edit configuration
+claudeswarm config edit
+
+# Validate configuration
+claudeswarm config validate
+```
+
+### Configuration File
+
+Create `.claudeswarm.yaml` in your project root:
+
+```yaml
+rate_limiting:
+  messages_per_minute: 10
+  window_seconds: 60
+
+locking:
+  stale_timeout: 300
+  auto_cleanup: false
+
+discovery:
+  stale_threshold: 60
+  auto_refresh_interval: null
+
+onboarding:
+  enabled: true
+  auto_onboard: false
+```
+
+### Example Configurations
+
+Ready-made configs for common scenarios:
+
+- **`examples/configs/default.yaml`** - Default settings with documentation
+- **`examples/configs/small-team.yaml`** - Optimized for 2-3 agents
+- **`examples/configs/large-team.yaml`** - Optimized for 10+ agents
+- **`examples/configs/fast-paced.yaml`** - High message rate for rapid iteration
+- **`examples/configs/strict.yaml`** - Conservative settings for security-critical projects
+
+Copy an example to your project:
+
+```bash
+cp examples/configs/small-team.yaml .claudeswarm.yaml
+```
+
+For complete configuration reference, see [Configuration Guide](docs/CONFIGURATION.md).
+
 ## Integration with Your Project
 
 ### Quick Integration
@@ -149,13 +209,19 @@ print(f"Cleaned up {cleanup_count} stale locks")
    cat claude-swarm/.gitignore.template >> .gitignore
    ```
 
-3. **Set Up tmux and Launch Agents**
+3. **(Optional) Configure Settings**
+   ```bash
+   claudeswarm config init
+   # Edit .claudeswarm.yaml as needed
+   ```
+
+4. **Set Up tmux and Launch Agents**
    ```bash
    tmux new -s myproject
    # Split panes and launch Claude Code in each
    ```
 
-4. **Discover and Onboard Agents**
+5. **Discover and Onboard Agents**
    ```bash
    claudeswarm discover-agents
    claudeswarm onboard  # Automatically explains coordination to all agents
@@ -308,6 +374,14 @@ claudeswarm discover-agents --watch      # Continuously monitor agents
 claudeswarm discover-agents --json       # JSON output
 claudeswarm list-agents                  # List active agents from registry
 
+# Configuration
+claudeswarm config init                  # Create default config file
+claudeswarm config init -o custom.yaml   # Create with custom name
+claudeswarm config show                  # Show current configuration
+claudeswarm config show --json           # Show as JSON
+claudeswarm config validate              # Validate config file
+claudeswarm config edit                  # Open config in $EDITOR
+
 # File Locking
 claudeswarm acquire-file-lock <filepath> <agent_id> [reason]
 claudeswarm release-file-lock <filepath> <agent_id>
@@ -343,6 +417,7 @@ For complete API documentation, see [docs/api-reference.md](docs/api-reference.m
 
 ## Documentation
 
+- **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** - Complete configuration reference and examples
 - **[docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md)** - How to integrate Claude Swarm into your project
 - **[docs/TUTORIAL.md](docs/TUTORIAL.md)** - Step-by-step tutorial from zero to hero
 - **[docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)** - Quick reference card for commands

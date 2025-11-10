@@ -25,6 +25,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Optional
 
+from .config import get_config
 from .validators import (
     ValidationError,
     validate_agent_id,
@@ -45,6 +46,8 @@ __all__ = [
 LOCK_DIR = ".agent_locks"
 
 # Stale lock timeout in seconds (5 minutes)
+# NOTE: This constant is kept for backward compatibility.
+# Default timeout now comes from configuration (config.locking.stale_timeout)
 STALE_LOCK_TIMEOUT = 300
 
 
@@ -64,15 +67,18 @@ class FileLock:
     locked_at: float
     reason: str
 
-    def is_stale(self, timeout: int = STALE_LOCK_TIMEOUT) -> bool:
+    def is_stale(self, timeout: Optional[int] = None) -> bool:
         """Check if this lock is stale (older than timeout).
 
         Args:
             timeout: Number of seconds after which a lock is considered stale
+                    (None = use configured stale_timeout)
 
         Returns:
             True if the lock is older than the timeout, False otherwise
         """
+        if timeout is None:
+            timeout = get_config().locking.stale_timeout
         return (time.time() - self.locked_at) > timeout
 
     def age_seconds(self) -> float:
@@ -286,7 +292,7 @@ class LockManager:
         filepath: str,
         agent_id: str,
         reason: str = "",
-        timeout: int = STALE_LOCK_TIMEOUT,
+        timeout: Optional[int] = None,
     ) -> tuple[bool, Optional[LockConflict]]:
         """Acquire a lock on a file.
 
@@ -294,7 +300,7 @@ class LockManager:
             filepath: Path to the file to lock (can be a glob pattern)
             agent_id: Unique identifier of the agent acquiring the lock
             reason: Human-readable explanation for the lock
-            timeout: Timeout in seconds for considering locks stale
+            timeout: Timeout in seconds for considering locks stale (None = use config)
 
         Returns:
             Tuple of (success, conflict):
@@ -306,6 +312,9 @@ class LockManager:
         """
         # Validate inputs
         agent_id = validate_agent_id(agent_id)
+        # Use config default if timeout not specified
+        if timeout is None:
+            timeout = get_config().locking.stale_timeout
         timeout = validate_timeout(timeout)
         # Normalize filepath for cross-platform compatibility
         filepath = str(normalize_path(filepath))
@@ -493,15 +502,19 @@ class LockManager:
 
         return locks
 
-    def cleanup_stale_locks(self, timeout: int = STALE_LOCK_TIMEOUT) -> int:
+    def cleanup_stale_locks(self, timeout: Optional[int] = None) -> int:
         """Clean up all stale locks.
 
         Args:
             timeout: Number of seconds after which a lock is considered stale
+                    (None = use configured stale_timeout)
 
         Returns:
             Number of locks cleaned up
         """
+        if timeout is None:
+            timeout = get_config().locking.stale_timeout
+
         count = 0
 
         for lock_file in self.lock_dir.glob("*.lock"):
