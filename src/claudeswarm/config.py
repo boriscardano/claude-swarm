@@ -80,6 +80,7 @@ __all__ = [
     "LockingConfig",
     "DiscoveryConfig",
     "OnboardingConfig",
+    "DashboardConfig",
     "ClaudeSwarmConfig",
     "load_config",
     "get_config",
@@ -247,6 +248,41 @@ class OnboardingConfig:
 
 
 @dataclass
+class DashboardConfig:
+    """Configuration for web dashboard.
+
+    Attributes:
+        enabled: Whether dashboard is available
+        port: Default port for dashboard server
+        host: Default host to bind to
+        auto_open_browser: Whether to open browser automatically
+        refresh_interval: Data refresh interval in seconds
+    """
+    enabled: bool = True
+    port: int = 8080
+    host: str = "localhost"
+    auto_open_browser: bool = True
+    refresh_interval: int = 1  # seconds
+
+    def validate(self) -> None:
+        """Validate dashboard configuration.
+
+        Raises:
+            ConfigValidationError: If validation fails
+        """
+        if self.port < 1024 or self.port > 65535:
+            raise ConfigValidationError(
+                f"port must be between 1024-65535, got {self.port}"
+            )
+        if self.refresh_interval < 1:
+            raise ConfigValidationError(
+                f"refresh_interval must be >= 1, got {self.refresh_interval}"
+            )
+        if not isinstance(self.host, str) or not self.host.strip():
+            raise ConfigValidationError("host cannot be empty")
+
+
+@dataclass
 class ClaudeSwarmConfig:
     """Complete configuration for Claude Swarm.
 
@@ -255,12 +291,14 @@ class ClaudeSwarmConfig:
         locking: File locking configuration
         discovery: Agent discovery configuration
         onboarding: Onboarding configuration
+        dashboard: Dashboard configuration
         project_root: Project root directory (None = auto-detect)
     """
     rate_limiting: RateLimitConfig = field(default_factory=RateLimitConfig)
     locking: LockingConfig = field(default_factory=LockingConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     onboarding: OnboardingConfig = field(default_factory=OnboardingConfig)
+    dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     project_root: Optional[Path] = None
 
     def validate(self) -> None:
@@ -273,6 +311,7 @@ class ClaudeSwarmConfig:
         self.locking.validate()
         self.discovery.validate()
         self.onboarding.validate()
+        self.dashboard.validate()
 
         if self.project_root is not None:
             if not isinstance(self.project_root, (Path, str)):
@@ -300,6 +339,7 @@ class ClaudeSwarmConfig:
             "locking": asdict(self.locking),
             "discovery": asdict(self.discovery),
             "onboarding": asdict(self.onboarding),
+            "dashboard": asdict(self.dashboard),
         }
         if self.project_root is not None:
             result["project_root"] = str(self.project_root)
@@ -452,6 +492,16 @@ def _dict_to_config(data: Dict[str, Any]) -> ClaudeSwarmConfig:
             auto_onboard=onboarding_data.get("auto_onboard", False),
         )
 
+        # Extract dashboard config
+        dashboard_data = data.get("dashboard", {})
+        dashboard = DashboardConfig(
+            enabled=dashboard_data.get("enabled", True),
+            port=dashboard_data.get("port", 8080),
+            host=dashboard_data.get("host", "localhost"),
+            auto_open_browser=dashboard_data.get("auto_open_browser", True),
+            refresh_interval=dashboard_data.get("refresh_interval", 1),
+        )
+
         # Extract project root
         project_root = None
         if "project_root" in data:
@@ -462,6 +512,7 @@ def _dict_to_config(data: Dict[str, Any]) -> ClaudeSwarmConfig:
             locking=locking,
             discovery=discovery,
             onboarding=onboarding,
+            dashboard=dashboard,
             project_root=project_root,
         )
     except Exception as e:

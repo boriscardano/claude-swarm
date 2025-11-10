@@ -354,6 +354,19 @@ onboarding:
   # Automatically onboard new agents when discovered
   auto_onboard: false
 
+# Web dashboard configuration
+dashboard:
+  # Whether dashboard is available
+  enabled: true
+  # Default port for dashboard server
+  port: 8080
+  # Default host to bind to
+  host: localhost
+  # Whether to open browser automatically
+  auto_open_browser: true
+  # Data refresh interval in seconds
+  refresh_interval: 1
+
 # Project root directory (null = auto-detect from current directory)
 project_root: null
 """
@@ -495,6 +508,52 @@ def cmd_config_edit(args: argparse.Namespace) -> None:
         sys.exit(result.returncode)
     except Exception as e:
         print(f"Error opening editor: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_start_dashboard(args: argparse.Namespace) -> None:
+    """Start the web-based monitoring dashboard.
+
+    Launches FastAPI server and optionally opens browser.
+
+    Args:
+        args.port: Port to run server on (default: from config or 8080)
+        args.host: Host to bind to (default: from config or localhost)
+        args.no_browser: Don't auto-open browser
+        args.reload: Enable auto-reload for development
+
+    Exit Codes:
+        0: Server started successfully (won't reach due to blocking)
+        1: Server failed to start
+    """
+    from claudeswarm.web.launcher import start_dashboard_server
+
+    # Load configuration
+    try:
+        config = get_config()
+    except Exception:
+        # Fall back to defaults if config loading fails
+        from claudeswarm.config import DashboardConfig
+        config = argparse.Namespace(dashboard=DashboardConfig())
+
+    # Use command-line args if provided, otherwise use config
+    port = args.port if args.port is not None else config.dashboard.port
+    host = args.host if args.host is not None else config.dashboard.host
+    auto_open = not args.no_browser and config.dashboard.auto_open_browser
+    reload = args.reload
+
+    try:
+        start_dashboard_server(
+            port=port,
+            host=host,
+            auto_open=auto_open,
+            reload=reload
+        )
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -771,6 +830,34 @@ def main() -> NoReturn:
     )
     monitoring_parser.set_defaults(func=cmd_start_monitoring)
 
+    # start-dashboard command
+    dashboard_parser = subparsers.add_parser(
+        "start-dashboard",
+        help="Start web-based monitoring dashboard",
+    )
+    dashboard_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port to run server on (default: from config or 8080)",
+    )
+    dashboard_parser.add_argument(
+        "--host",
+        default=None,
+        help="Host to bind to (default: from config or localhost)",
+    )
+    dashboard_parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Don't automatically open browser",
+    )
+    dashboard_parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable auto-reload for development",
+    )
+    dashboard_parser.set_defaults(func=cmd_start_dashboard)
+
     # config command group
     config_parser = subparsers.add_parser(
         "config",
@@ -867,6 +954,7 @@ Commands:
     cleanup-stale-locks Clean up stale locks
     send-with-ack       Send message requiring acknowledgment
     start-monitoring    Start monitoring dashboard
+    start-dashboard     Start web-based monitoring dashboard
 
     help                Show this help message
     version             Show version information

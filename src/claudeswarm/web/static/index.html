@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Claude Swarm Real-time Monitoring Dashboard">
+    <title>Claude Swarm Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>Claude Swarm Dashboard</h1>
+                <div class="header-meta">
+                    <span class="connection-status" id="connectionStatus">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Connecting...</span>
+                    </span>
+                    <span class="last-updated" id="lastUpdated">Last updated: --</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <main class="dashboard-grid">
+            <!-- Active Agents Panel -->
+            <section class="panel agents-panel">
+                <div class="panel-header">
+                    <h2>Active Agents</h2>
+                    <span class="panel-badge" id="agentsCount">0</span>
+                </div>
+                <div class="panel-content" id="agentsContainer">
+                    <div class="loading">Loading agents...</div>
+                </div>
+            </section>
+
+            <!-- Recent Messages Panel -->
+            <section class="panel messages-panel">
+                <div class="panel-header">
+                    <h2>Recent Messages</h2>
+                    <span class="panel-badge" id="messagesCount">0</span>
+                </div>
+                <div class="panel-content messages-scroll" id="messagesContainer">
+                    <div class="loading">Loading messages...</div>
+                </div>
+            </section>
+
+            <!-- Active Locks Panel -->
+            <section class="panel locks-panel">
+                <div class="panel-header">
+                    <h2>Active Locks</h2>
+                    <span class="panel-badge" id="locksCount">0</span>
+                </div>
+                <div class="panel-content" id="locksContainer">
+                    <div class="loading">Loading locks...</div>
+                </div>
+            </section>
+
+            <!-- Statistics Panel -->
+            <section class="panel stats-panel">
+                <div class="panel-header">
+                    <h2>Statistics</h2>
+                </div>
+                <div class="panel-content stats-grid" id="statsContainer">
+                    <div class="loading">Loading stats...</div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Claude Swarm v1.0 | Real-time monitoring via Server-Sent Events</p>
+        </footer>
+    </div>
+
+    <!-- Error Modal -->
+    <div class="modal" id="errorModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Connection Error</h3>
+                <button class="modal-close" id="closeModal">&times;</button>
+            </div>
+            <div class="modal-body" id="errorMessage">
+                Unable to connect to the server. Please check if the backend is running.
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="retryButton">Retry Connection</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="dashboard.js"></script>
+</body>
+</html>
