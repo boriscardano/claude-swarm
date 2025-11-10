@@ -224,7 +224,31 @@ Agents are now ready to coordinate!
 
 This single command prepares all agents to work together!
 
-### Step 6: Send Your First Message
+### Step 6: Start Monitoring Dashboard (Optional)
+
+For a visual overview of agent activity, start the web dashboard:
+
+```bash
+uv run claudeswarm start-dashboard
+```
+
+The dashboard opens automatically in your browser at http://localhost:8080 showing:
+- **Active Agents**: Real-time list with status indicators
+- **Message Feed**: Live updates of inter-agent communication
+- **File Locks**: Currently locked files and lock holders
+- **Statistics**: Agent count, message rate, and system metrics
+
+**Dashboard Features:**
+- Auto-refresh every second (no manual reload needed)
+- Color-coded message types (INFO, QUESTION, BLOCKED, etc.)
+- Lock age warnings (highlights stale locks >5 minutes)
+- Responsive layout works on any screen size
+
+**Tip:** Leave the dashboard open in a browser tab to monitor your agents while you work!
+
+For detailed dashboard usage, see [DASHBOARD.md](DASHBOARD.md).
+
+### Step 7: Send Your First Message
 
 In **Pane 1** (agent-0), send a message to agent-1:
 
@@ -237,7 +261,7 @@ uv run claudeswarm send-to-agent agent-1 INFO "Hello from agent-0!"
 [agent-0][2025-11-07 10:35:00][INFO]: Hello from agent-0!
 ```
 
-### Step 7: Broadcast to Everyone
+### Step 8: Broadcast to Everyone
 
 In **Pane 1** (agent-0), broadcast to all agents:
 
@@ -247,7 +271,7 @@ uv run claudeswarm broadcast-to-all INFO "Team meeting at 3pm!"
 
 **Switch to Panes 2 and 3** - both should receive the message (agent-0 won't receive it since it excludes itself by default).
 
-### Step 8: Test File Locking
+### Step 9: Test File Locking
 
 In **Pane 1** (agent-0), acquire a lock:
 

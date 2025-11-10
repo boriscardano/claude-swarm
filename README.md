@@ -135,6 +135,58 @@ cleanup_count = lm.cleanup_stale_locks()
 print(f"Cleaned up {cleanup_count} stale locks")
 ```
 
+## Web Dashboard
+
+Claude Swarm includes a web-based monitoring dashboard for real-time agent activity tracking.
+
+### Quick Start
+
+```bash
+# Start dashboard (opens browser automatically)
+claudeswarm start-dashboard
+
+# Custom port
+claudeswarm start-dashboard --port 9000
+
+# Development mode with auto-reload
+claudeswarm start-dashboard --reload
+
+# Don't open browser automatically
+claudeswarm start-dashboard --no-browser
+```
+
+### Features
+
+- **Live Agent Monitoring**: Real-time status of all discovered agents with health indicators (active/stale/dead)
+- **Message Feed**: Live inter-agent communication with color-coded message types (INFO, QUESTION, BLOCKED, etc.)
+- **Lock Tracking**: Monitor file locks, lock holders, reasons, and lock age with stale warnings
+- **System Statistics**: Agent count, message rate, lock count, and system uptime
+- **Auto-refresh**: Updates every second without manual reload using Server-Sent Events (SSE)
+- **Zero Dependencies**: Pure HTML/JavaScript frontend, no frameworks required
+
+See [docs/DASHBOARD.md](docs/DASHBOARD.md) for complete documentation including API reference, security considerations, and troubleshooting guide.
+
+### Configuration
+
+Dashboard settings can be configured in `.claudeswarm.yaml`:
+
+```yaml
+dashboard:
+  port: 8080
+  host: localhost
+  auto_open_browser: true
+  refresh_interval: 1  # seconds
+```
+
+### Access
+
+Once started, open your browser to:
+```
+http://localhost:8080
+```
+
+The dashboard will auto-refresh and show real-time updates as agents communicate and acquire locks.
+
 ## Configuration
 
 Claude Swarm works out-of-the-box with sensible defaults, but you can customize it for your team's needs.
@@ -395,6 +447,12 @@ claudeswarm start-monitoring             # Start monitoring dashboard
 claudeswarm start-monitoring --filter-type BLOCKED
 claudeswarm start-monitoring --filter-agent agent-1
 claudeswarm start-monitoring --no-tmux   # Run in current terminal
+
+# Web Dashboard
+claudeswarm start-dashboard              # Start web dashboard (opens browser)
+claudeswarm start-dashboard --port 9000  # Custom port
+claudeswarm start-dashboard --no-browser # Don't open browser
+claudeswarm start-dashboard --reload     # Development mode with auto-reload
 
 # Global Options
 claudeswarm --project-root /path/to/project <command>

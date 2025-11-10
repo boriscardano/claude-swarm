@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Test - Mock Data</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <h1>Claude Swarm Dashboard (Test Mode)</h1>
+                <div class="header-meta">
+                    <span class="connection-status">
+                        <span class="status-dot connected"></span>
+                        <span class="status-text">Mock Data</span>
+                    </span>
+                    <span class="last-updated">Last updated: Just now</span>
+                </div>
+            </div>
+        </header>
+
+        <main class="dashboard-grid">
+            <!-- Active Agents Panel -->
+            <section class="panel agents-panel">
+                <div class="panel-header">
+                    <h2>Active Agents</h2>
+                    <span class="panel-badge">3</span>
+                </div>
+                <div class="panel-content">
+                    <div class="agent-list">
+                        <div class="agent-item active">
+                            <div class="agent-info">
+                                <span class="agent-status-dot active"></span>
+                                <span class="agent-name">agent-0</span>
+                            </div>
+                            <div class="agent-meta">
+                                <span class="agent-timestamp">5s ago</span>
+                                <span class="agent-pid">PID: 12345</span>
+                            </div>
+                        </div>
+                        <div class="agent-item active">
+                            <div class="agent-info">
+                                <span class="agent-status-dot active"></span>
+                                <span class="agent-name">agent-1</span>
+                            </div>
+                            <div class="agent-meta">
+                                <span class="agent-timestamp">12s ago</span>
+                                <span class="agent-pid">PID: 12346</span>
+                            </div>
+                        </div>
+                        <div class="agent-item stale">
+                            <div class="agent-info">
+                                <span class="agent-status-dot stale"></span>
+                                <span class="agent-name">agent-2</span>
+                            </div>
+                            <div class="agent-meta">
+                                <span class="agent-timestamp">1m ago</span>
+                                <span class="agent-pid">PID: 12347</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Recent Messages Panel -->
+            <section class="panel messages-panel">
+                <div class="panel-header">
+                    <h2>Recent Messages</h2>
+                    <span class="panel-badge">6</span>
+                </div>
+                <div class="panel-content messages-scroll">
+                    <div class="message-list">
+                        <div class="message-item QUESTION">
+                            <div class="message-header">
+                                <span class="message-agent">agent-0</span>
+                                <span class="message-type QUESTION">QUESTION</span>
+                            </div>
+                            <div class="message-content">How should we handle the authentication logic in src/auth.py?</div>
+                            <div class="message-timestamp">just now</div>
+                        </div>
+                        <div class="message-item ACK">
+                            <div class="message-header">
+                                <span class="message-agent">agent-1</span>
+                                <span class="message-type ACK">ACK</span>
+                            </div>
+                            <div class="message-content">I'll review the authentication logic and provide feedback</div>
+                            <div class="message-timestamp">5s ago</div>
+                        </div>
+                        <div class="message-item INFO">
+                            <div class="message-header">
+                                <span class="message-agent">agent-2</span>
+                                <span class="message-type INFO">INFO</span>
+                            </div>
+                            <div class="message-content">Started processing task: Update database schema</div>
+                            <div class="message-timestamp">15s ago</div>
+                        </div>
+                        <div class="message-item REVIEW_REQUEST">
+                            <div class="message-header">
+                                <span class="message-agent">agent-0</span>
+                                <span class="message-type REVIEW_REQUEST">REVIEW_REQUEST</span>
+                            </div>
+                            <div class="message-content">Please review my changes to src/models.py</div>
+                            <div class="message-timestamp">30s ago</div>
+                        </div>
+                        <div class="message-item COMPLETED">
+                            <div class="message-header">
+                                <span class="message-agent">agent-1</span>
+                                <span class="message-type COMPLETED">COMPLETED</span>
+                            </div>
+                            <div class="message-content">Finished implementing user registration endpoint</div>
+                            <div class="message-timestamp">1m ago</div>
+                        </div>
+                        <div class="message-item BLOCKED">
+                            <div class="message-header">
+                                <span class="message-agent">agent-2</span>
+                                <span class="message-type BLOCKED">BLOCKED</span>
+                            </div>
+                            <div class="message-content">Waiting for database migration to complete before proceeding</div>
+                            <div class="message-timestamp">2m ago</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Active Locks Panel -->
+            <section class="panel locks-panel">
+                <div class="panel-header">
+                    <h2>Active Locks</h2>
+                    <span class="panel-badge">2</span>
+                </div>
+                <div class="panel-content">
+                    <div class="lock-list">
+                        <div class="lock-item">
+                            <div class="lock-resource">src/auth.py</div>
+                            <div class="lock-holder">Held by: <strong>agent-1</strong></div>
+                            <div class="lock-timestamp">Acquired 30s ago</div>
+                        </div>
+                        <div class="lock-item">
+                            <div class="lock-resource">src/database/migrations/001_init.sql</div>
+                            <div class="lock-holder">Held by: <strong>agent-2</strong></div>
+                            <div class="lock-timestamp">Acquired 1m ago</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Statistics Panel -->
+            <section class="panel stats-panel">
+                <div class="panel-header">
+                    <h2>Statistics</h2>
+                </div>
+                <div class="panel-content stats-grid">
+                    <div class="stat-card agents">
+                        <div class="stat-value">3</div>
+                        <div class="stat-label">Active Agents</div>
+                    </div>
+                    <div class="stat-card messages">
+                        <div class="stat-value">45</div>
+                        <div class="stat-label">Messages</div>
+                    </div>
+                    <div class="stat-card locks">
+                        <div class="stat-value">2</div>
+                        <div class="stat-label">Active Locks</div>
+                    </div>
+                    <div class="stat-card uptime">
+                        <div class="stat-value">1h 23m</div>
+                        <div class="stat-label">Uptime</div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <p>Claude Swarm v1.0 | Test Mode - Mock Data</p>
+        </footer>
+    </div>
+</body>
+</html>
