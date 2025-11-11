@@ -35,6 +35,7 @@ from typing import Dict, List, Optional
 from .config import get_config
 from .discovery import AgentRegistry, get_registry_path
 from .utils import get_or_create_secret
+from .project import get_messages_log_path
 from .validators import (
     ValidationError,
     validate_agent_id,
@@ -418,13 +419,14 @@ class MessageLogger:
     - Thread-safe writing
     """
 
-    def __init__(self, log_file: Path = None):
+    def __init__(self, log_file: Optional[Path] = None, project_root: Optional[Path] = None):
         """Initialize message logger.
 
         Args:
-            log_file: Path to log file (default: ./agent_messages.log)
+            log_file: Path to log file (default: project_root/agent_messages.log)
+            project_root: Optional project root directory
         """
-        self.log_file = log_file or Path("./agent_messages.log")
+        self.log_file = log_file or get_messages_log_path(project_root)
         self.max_size = 10 * 1024 * 1024  # 10MB
 
         # Create log file if it doesn't exist

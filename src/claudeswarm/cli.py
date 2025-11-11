@@ -25,6 +25,7 @@ from claudeswarm.config import (
     ConfigValidationError,
     _find_config_file,
 )
+from claudeswarm.project import get_project_root, find_project_root
 from claudeswarm.validators import (
     ValidationError,
     validate_agent_id,
@@ -693,6 +694,131 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
+def cmd_init(args: argparse.Namespace) -> None:
+    """Initialize Claude Swarm in current project with guided setup.
+
+    This command helps users set up Claude Swarm by:
+    1. Detecting the project root
+    2. Creating config file if needed
+    3. Showing next steps
+
+    Args:
+        args: Parsed command-line arguments
+
+    Exit Codes:
+        0: Success
+        1: Error during setup
+    """
+    print("=== Claude Swarm Project Setup ===")
+    print()
+
+    # Step 1: Detect project root
+    print("Step 1: Detecting project root...")
+    detected_root = find_project_root()
+    current_dir = Path.cwd()
+
+    if detected_root:
+        print(f"✓ Detected project root: {detected_root}")
+        if detected_root != current_dir:
+            print(f"  (You're currently in: {current_dir})")
+    else:
+        print(f"⚠ No project markers found (e.g., .git, pyproject.toml)")
+        print(f"  Using current directory: {current_dir}")
+        detected_root = current_dir
+
+    project_root = detected_root
+    print()
+
+    # Step 2: Check for existing config
+    print("Step 2: Checking configuration...")
+    config_path = project_root / ".claudeswarm.yaml"
+
+    if config_path.exists():
+        print(f"✓ Configuration already exists: {config_path}")
+    else:
+        print(f"⚠ No configuration file found")
+
+        # Ask user if they want to create config
+        if not args.yes:
+            response = input("  Create default configuration? [Y/n]: ").strip().lower()
+            if response and response not in ['y', 'yes']:
+                print("  Skipping config creation")
+            else:
+                # Create config using existing cmd_config_init
+                init_args = argparse.Namespace(
+                    output=str(config_path),
+                    force=False
+                )
+                try:
+                    cmd_config_init(init_args)
+                except SystemExit:
+                    pass  # cmd_config_init calls sys.exit, catch it
+        else:
+            # Auto-create with --yes flag
+            init_args = argparse.Namespace(
+                output=str(config_path),
+                force=False
+            )
+            try:
+                cmd_config_init(init_args)
+            except SystemExit:
+                pass
+
+    print()
+
+    # Step 3: Check tmux
+    print("Step 3: Checking tmux...")
+    try:
+        result = subprocess.run(
+            ["tmux", "list-sessions"],
+            capture_output=True,
+            timeout=2
+        )
+        if result.returncode == 0:
+            sessions = result.stdout.decode().strip().split('\n')
+            print(f"✓ tmux is running with {len(sessions)} session(s)")
+        else:
+            print("⚠ tmux is installed but no sessions are running")
+            print("  Tip: Start tmux with: tmux new -s myproject")
+    except FileNotFoundError:
+        print("✗ tmux not found - Install it first!")
+        print("  macOS: brew install tmux")
+        print("  Linux: apt install tmux / yum install tmux")
+    except subprocess.TimeoutExpired:
+        print("⚠ tmux command timed out")
+    except Exception as e:
+        print(f"⚠ Error checking tmux: {e}")
+
+    print()
+
+    # Step 4: Show next steps
+    print("=== Next Steps ===")
+    print()
+    print("1. Set up tmux session (if not already):")
+    print("   tmux new -s myproject")
+    print()
+    print("2. Split panes and start Claude Code agents:")
+    print("   Ctrl+b %    # Split vertically")
+    print("   Ctrl+b \"    # Split horizontally")
+    print()
+    print("3. Discover agents:")
+    print("   claudeswarm discover-agents")
+    print()
+    print("4. Onboard agents (send coordination info):")
+    print("   claudeswarm onboard")
+    print()
+    print("5. Start web dashboard:")
+    print("   claudeswarm start-dashboard")
+    print()
+    print(f"📁 Project root: {project_root}")
+    print(f"📋 Files will be created in: {project_root}")
+    print()
+    print("For more help: claudeswarm --help")
+    print("Documentation: https://github.com/borisbanach/claude-swarm")
+
+    sys.exit(0)
+
+
 def main() -> NoReturn:
     """Main entry point for the claudeswarm CLI.
 
@@ -711,6 +837,18 @@ def main() -> NoReturn:
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+
+    # init command
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Initialize Claude Swarm in current project (guided setup)",
+    )
+    init_parser.add_argument(
+        "-y", "--yes",
+        action="store_true",
+        help="Auto-accept all prompts",
+    )
+    init_parser.set_defaults(func=cmd_init)
 
     # discover-agents command
     discover_parser = subparsers.add_parser(

@@ -14,33 +14,98 @@ Claude Swarm enables multiple Claude Code agents to work together on the same co
 
 ## Quick Start
 
-### Installation
+### 🚀 Super Simple Setup (Recommended)
 
-**Option 1: Install as Package (Recommended for Integration)**
+**For new users - just 3 commands:**
 
 ```bash
-# Install directly from GitHub
-pip install git+https://github.com/borisbanach/claude-swarm.git
-
-# Or with uv
+# 1. Install
 uv pip install git+https://github.com/borisbanach/claude-swarm.git
+
+# 2. Go to your project
+cd /path/to/your/project
+
+# 3. Run guided setup
+claudeswarm init
 ```
 
-**Option 2: Clone for Development**
+The `init` command will:
+- ✅ Auto-detect your project root (looks for `.git`, `pyproject.toml`, etc.)
+- ✅ Create configuration if needed
+- ✅ Check if tmux is ready
+- ✅ Show you next steps
+
+**That's it!** No environment variables, no manual setup. Just works™
+
+---
+
+### Advanced Installation Options
+
+<details>
+<summary>Click to expand advanced installation methods</summary>
+
+Claude Swarm can be used in two ways:
+
+#### **Option 1: Development/Testing (Inside Repository)**
+
+Clone and set up for development or testing:
 
 ```bash
-# Clone the repository (outside your project directory)
+# 1. Clone the repository
 git clone https://github.com/borisbanach/claude-swarm.git
 cd claude-swarm
 
-# Install dependencies (using uv)
-uv pip install -e ".[dev]"
+# 2. Install dependencies with uv
+uv sync
 
-# Or using pip
-pip install -e ".[dev]"
+# 3. Activate virtual environment
+source .venv/bin/activate  # On macOS/Linux
+# or
+.venv\Scripts\activate     # On Windows
+
+# 4. Now you can use claudeswarm commands
+claudeswarm --help
+```
+
+**Note:** With `uv sync`, all dependencies are installed and the `claudeswarm` command becomes available in your shell.
+
+#### **Option 2: Use from Any Project (Global Installation)**
+
+Install globally and use from any directory:
+
+```bash
+# Option A: Install with uv (recommended)
+uv pip install git+https://github.com/borisbanach/claude-swarm.git
+
+# Option B: Install with pip
+pip install git+https://github.com/borisbanach/claude-swarm.git
+
+# Verify installation
+claudeswarm --help
+```
+
+**Using from outside the repository:**
+
+When installed globally, set the `CLAUDESWARM_ROOT` environment variable to point to your project:
+
+```bash
+# In your project directory
+cd /path/to/your/project
+
+# Set environment variable (add to ~/.bashrc or ~/.zshrc for persistence)
+export CLAUDESWARM_ROOT=$(pwd)
+
+# Now run claudeswarm commands from anywhere
+claudeswarm discover-agents
+claudeswarm start-dashboard
+
+# Or set it inline
+CLAUDESWARM_ROOT=/path/to/your/project claudeswarm discover-agents
 ```
 
 **⚠️ Important:** If integrating with your project, see [Integration Guide](docs/INTEGRATION_GUIDE.md) for git safety and best practices.
+
+</details>
 
 ### Run the Demo
 
@@ -292,6 +357,7 @@ For detailed integration instructions, git safety guidelines, and best practices
 - **`coordination.py`** - Shared COORDINATION.md file management
 - **`monitoring.py`** - Real-time activity monitoring dashboard
 - **`cli.py`** - Command-line interface
+- **`project.py`** - Project root detection utilities
 
 ### System Files
 
@@ -299,6 +365,41 @@ For detailed integration instructions, git safety guidelines, and best practices
 - **`agent_messages.log`** - Message delivery log
 - **`.agent_locks/*.lock`** - Lock files for file coordination
 - **`COORDINATION.md`** - Shared coordination workspace
+
+### Project Root Detection 🎯
+
+Claude Swarm uses a **smart auto-detection system** to find your project root:
+
+**Priority order:**
+1. `--project-root` CLI argument (explicit override)
+2. `CLAUDESWARM_ROOT` environment variable (manual setting)
+3. **🔍 Auto-detect** by searching for markers (`.git`, `.claudeswarm.yaml`, `ACTIVE_AGENTS.json`, `pyproject.toml`, etc.)
+4. Current working directory (fallback)
+
+**Auto-detection in action:**
+
+```bash
+# Just cd into your project - it finds the root automatically!
+cd /path/to/your/project/src/subfolder
+claudeswarm discover-agents  # Auto-detects /path/to/your/project
+```
+
+**Manual overrides (when needed):**
+
+```bash
+# Use environment variable
+export CLAUDESWARM_ROOT=/path/to/project
+claudeswarm discover-agents
+
+# Use explicit CLI argument
+claudeswarm --project-root /path/to/project discover-agents
+```
+
+**Why this is better:**
+- ✅ No environment variables needed (works like `git`)
+- ✅ Works from any subdirectory of your project
+- ✅ Finds project root intelligently
+- ✅ Manual override available when needed
 
 ## Testing
 
