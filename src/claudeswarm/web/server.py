@@ -18,11 +18,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-# Project root detection - use environment variable or calculate from package root
-PROJECT_ROOT = Path(os.getenv("CLAUDESWARM_ROOT", Path(__file__).parent.parent.parent.parent))
-ACTIVE_AGENTS_FILE = PROJECT_ROOT / "ACTIVE_AGENTS.json"
-AGENT_MESSAGES_LOG = PROJECT_ROOT / "agent_messages.log"
-AGENT_LOCKS_DIR = PROJECT_ROOT / ".agent_locks"
+# Import project utilities
+from ..project import (
+    get_project_root,
+    get_active_agents_path,
+    get_messages_log_path,
+    get_locks_dir_path,
+)
+
+# Project paths
+PROJECT_ROOT = get_project_root()
+ACTIVE_AGENTS_FILE = get_active_agents_path()
+AGENT_MESSAGES_LOG = get_messages_log_path()
+AGENT_LOCKS_DIR = get_locks_dir_path()
 STATIC_DIR = Path(__file__).parent / "static"
 
 # FastAPI app initialization

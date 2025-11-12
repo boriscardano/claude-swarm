@@ -13,6 +13,7 @@ from typing import List, Optional, Dict
 
 from .config import get_config
 from .utils import atomic_write
+from .project import get_active_agents_path
 
 
 @dataclass
@@ -76,13 +77,16 @@ class AgentRegistry:
         )
 
 
-def get_registry_path() -> Path:
+def get_registry_path(project_root: Optional[Path] = None) -> Path:
     """Get the path to the agent registry file.
-    
+
+    Args:
+        project_root: Optional project root directory
+
     Returns:
-        Path to ACTIVE_AGENTS.json in current working directory
+        Path to ACTIVE_AGENTS.json in project root
     """
-    return Path.cwd() / "ACTIVE_AGENTS.json"
+    return get_active_agents_path(project_root)
 
 
 def _parse_tmux_panes() -> List[Dict]:

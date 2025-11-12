@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import get_config
+from .project import get_project_root
 from .validators import (
     ValidationError,
     validate_agent_id,
@@ -128,9 +129,9 @@ class LockManager:
 
         Args:
             lock_dir: Name of the directory to store lock files
-            project_root: Root directory of the project (defaults to current directory)
+            project_root: Root directory of the project (defaults to auto-detected project root)
         """
-        self.project_root = project_root or Path.cwd()
+        self.project_root = get_project_root(project_root)
         self.lock_dir = self.project_root / lock_dir
         self._lock = threading.Lock()  # Protect lock refresh operations
         self._ensure_lock_directory()
