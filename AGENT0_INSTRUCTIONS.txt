@@ -1,0 +1,47 @@
+===============================================================================
+AGENT-0 COORDINATION INSTRUCTIONS
+===============================================================================
+
+You are AGENT-0 in a multi-agent coordination system.
+Another agent (AGENT-1) is working in this codebase.
+
+YOUR AGENT ID: agent-0
+OTHER AGENT:   agent-1
+
+===============================================================================
+COORDINATION COMMANDS
+===============================================================================
+
+READ YOUR MESSAGES:
+python3 /Users/boris/work/aspire11/claude-swarm/coordinate.py agent-0 read
+
+SEND MESSAGE TO AGENT-1:
+python3 /Users/boris/work/aspire11/claude-swarm/coordinate.py agent-0 send agent-1 "Your message"
+
+LOCK FILE BEFORE EDITING:
+python3 /Users/boris/work/aspire11/claude-swarm/coordinate.py agent-0 lock path/to/file "reason"
+
+UNLOCK FILE AFTER EDITING:
+python3 /Users/boris/work/aspire11/claude-swarm/coordinate.py agent-0 unlock path/to/file
+
+===============================================================================
+WORKFLOW
+===============================================================================
+
+1. Read your messages first:
+   python3 /Users/boris/work/aspire11/claude-swarm/coordinate.py agent-0 read
+
+2. Introduce yourself to agent-1:
+   python3 /Users/boris/work/aspire11/claude-swarm/coordinate.py agent-0 send agent-1 "Hi! I'm working on [your task]. What are you doing?"
+
+3. Before editing ANY file, lock it:
+   python3 /Users/boris/work/aspire11/claude-swarm/coordinate.py agent-0 lock path/to/file "what you're doing"
+
+4. After editing, unlock it:
+   python3 /Users/boris/work/aspire11/claude-swarm/coordinate.py agent-0 unlock path/to/file
+
+5. Communicate progress and ask questions as needed
+
+===============================================================================
+DASHBOARD: http://localhost:8080
+===============================================================================
