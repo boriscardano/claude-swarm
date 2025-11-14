@@ -9,7 +9,6 @@
 From anywhere, run:
 
 ```bash
-cd /Users/boris/work/aspire11/claude-swarm
 source .venv/bin/activate
 claudeswarm --project-root /path/to/your/project discover-agents
 ```
@@ -37,16 +36,16 @@ You are in a multi-agent coordination system.
 Your coordination commands (replace YOUR_ID and OTHER_ID):
 
 READ MESSAGES:
-python3 /Users/boris/work/aspire11/claude-swarm/coord.py YOUR_ID read
+python3 coord.py YOUR_ID read
 
 SEND MESSAGE:
-python3 /Users/boris/work/aspire11/claude-swarm/coord.py YOUR_ID send OTHER_ID "message"
+python3 coord.py YOUR_ID send OTHER_ID "message"
 
 LOCK FILE:
-python3 /Users/boris/work/aspire11/claude-swarm/coord.py YOUR_ID lock path/to/file "reason"
+python3 coord.py YOUR_ID lock path/to/file "reason"
 
 UNLOCK FILE:
-python3 /Users/boris/work/aspire11/claude-swarm/coord.py YOUR_ID unlock path/to/file
+python3 coord.py YOUR_ID unlock path/to/file
 
 Dashboard: http://localhost:8080
 ```

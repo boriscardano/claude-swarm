@@ -5,7 +5,14 @@ Import this in your agent code to send messages and manage locks.
 """
 
 import sys
-sys.path.insert(0, '/Users/boris/work/aspire11/claude-swarm/src')
+from pathlib import Path
+
+# Dynamically find project root
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR
+SRC_DIR = PROJECT_ROOT / 'src'
+
+sys.path.insert(0, str(SRC_DIR))
 
 from claudeswarm.messaging import send_message, broadcast_message, MessageType
 from claudeswarm.locking import LockManager

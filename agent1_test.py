@@ -3,10 +3,15 @@
 
 import sys
 import os
+from pathlib import Path
 
-# Critical setup
-sys.path.insert(0, '/Users/boris/work/aspire11/claude-swarm/src')
-os.chdir('/Users/boris/work/aspire11/claude-swarm')
+# Critical setup - dynamically find project root
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR
+SRC_DIR = PROJECT_ROOT / 'src'
+
+sys.path.insert(0, str(SRC_DIR))
+os.chdir(str(PROJECT_ROOT))
 
 print("="*60)
 print("AGENT-1 COMMUNICATION TEST")

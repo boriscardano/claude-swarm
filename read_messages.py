@@ -3,6 +3,8 @@
 
 import json
 import sys
+import os
+from pathlib import Path
 
 def read_messages(agent_id=None, last_n=10):
     """
@@ -18,7 +20,12 @@ def read_messages(agent_id=None, last_n=10):
     messages = []
 
     try:
-        with open('/Users/boris/work/aspire11/claude-swarm/agent_messages.log', 'r') as f:
+        # Find project root dynamically
+        script_dir = Path(__file__).resolve().parent
+        project_root = script_dir
+        log_file = project_root / 'agent_messages.log'
+
+        with open(log_file, 'r') as f:
             # Read each line as a separate JSON object
             for line in f:
                 line = line.strip()

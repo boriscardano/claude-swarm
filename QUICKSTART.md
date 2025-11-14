@@ -23,7 +23,6 @@ tmux new -s myproject
 ### Step 2: Run Onboarding Script
 
 ```bash
-cd /Users/boris/work/aspire11/claude-swarm
 ./onboard.sh /path/to/your/project
 ```
 
@@ -54,16 +53,16 @@ Each agent can use these commands (they'll be told this automatically):
 
 ```bash
 # Read messages
-python3 /Users/boris/work/aspire11/claude-swarm/coord.py YOUR_ID read
+python3 coord.py YOUR_ID read
 
 # Send message
-python3 /Users/boris/work/aspire11/claude-swarm/coord.py YOUR_ID send OTHER_ID "message"
+python3 coord.py YOUR_ID send OTHER_ID "message"
 
 # Lock file
-python3 /Users/boris/work/aspire11/claude-swarm/coord.py YOUR_ID lock path/to/file "reason"
+python3 coord.py YOUR_ID lock path/to/file "reason"
 
 # Unlock file
-python3 /Users/boris/work/aspire11/claude-swarm/coord.py YOUR_ID unlock path/to/file
+python3 coord.py YOUR_ID unlock path/to/file
 ```
 
 ## Monitor
