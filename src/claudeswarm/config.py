@@ -504,7 +504,7 @@ def _dict_to_config(data: Dict[str, Any]) -> ClaudeSwarmConfig:
 
         # Extract project root
         project_root = None
-        if "project_root" in data:
+        if "project_root" in data and data["project_root"] is not None:
             project_root = Path(data["project_root"])
 
         return ClaudeSwarmConfig(

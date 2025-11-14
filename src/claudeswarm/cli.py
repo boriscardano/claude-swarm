@@ -694,6 +694,158 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
+def cmd_reload(args: argparse.Namespace) -> None:
+    """Reload claudeswarm CLI with latest changes.
+
+    This command clears Python caches and reinstalls the package from
+    the specified source (local or github).
+
+    Args:
+        args.source: Source to reload from ('local' or 'github')
+
+    Exit Codes:
+        0: Success
+        1: Error during reload
+    """
+    import os
+
+    source = args.source
+
+    print("🔄 Reloading claudeswarm CLI...")
+    print()
+
+    # Find the claude-swarm installation directory
+    try:
+        import claudeswarm
+        package_path = Path(claudeswarm.__file__)
+
+        # Try to find the source directory (for editable installs)
+        editable_location = None
+
+        # Check if installed via uv tool (look for .pth file)
+        try:
+            tool_dir = Path.home() / ".local/share/uv/tools/claude-swarm"
+            if tool_dir.exists():
+                # Find site-packages directory
+                site_packages = list(tool_dir.glob("lib/python*/site-packages"))
+                if site_packages:
+                    pth_file = site_packages[0] / "_claude_swarm.pth"
+                    if pth_file.exists():
+                        # Read the path from the .pth file
+                        pth_content = pth_file.read_text().strip()
+                        # The path points to src/, we want the parent directory
+                        if pth_content.endswith('/src'):
+                            editable_location = str(Path(pth_content).parent)
+                        else:
+                            editable_location = pth_content
+        except Exception as e:
+            print(f"   Warning: Could not detect editable location: {e}", file=sys.stderr)
+
+        if source == "local" and not editable_location:
+            print("⚠️  No editable installation found.", file=sys.stderr)
+            print("   Run 'uv tool install --editable /path/to/claude-swarm' first", file=sys.stderr)
+            sys.exit(1)
+
+    except Exception as e:
+        print(f"Error: Failed to locate claudeswarm installation: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Step 1: Clear Python caches
+    print("1️⃣  Clearing Python caches...")
+    try:
+        if editable_location:
+            subprocess.run(
+                ["find", editable_location, "-type", "d", "-name", "__pycache__", "-exec", "rm", "-rf", "{}", "+"],
+                capture_output=True,
+                timeout=10
+            )
+            subprocess.run(
+                ["find", editable_location, "-type", "f", "-name", "*.pyc", "-delete"],
+                capture_output=True,
+                timeout=10
+            )
+
+        # Clear site-packages cache
+        subprocess.run(
+            ["find", "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages",
+             "-type", "d", "-name", "__pycache__", "-path", "*/claudeswarm/*", "-exec", "rm", "-rf", "{}", "+"],
+            capture_output=True,
+            timeout=10
+        )
+        print("   ✓ Caches cleared")
+    except Exception as e:
+        print(f"   ⚠️  Warning: Cache clearing incomplete: {e}", file=sys.stderr)
+    print()
+
+    # Step 2: Install from source
+    print(f"2️⃣  Installing from {source}...")
+    try:
+        if source == "local":
+            if not editable_location:
+                print("   ✗ No editable location found", file=sys.stderr)
+                sys.exit(1)
+
+            result = subprocess.run(
+                ["uv", "tool", "install", "--force", "--editable", editable_location],
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode == 0:
+                print(f"   ✓ Installed from {editable_location} (editable mode)")
+            else:
+                print(f"   ✗ Installation failed: {result.stderr}", file=sys.stderr)
+                sys.exit(1)
+        else:  # github
+            result = subprocess.run(
+                ["uv", "tool", "install", "--force", "git+https://github.com/borisbanach/claude-swarm.git"],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+
+            if result.returncode == 0:
+                print("   ✓ Installed from GitHub")
+            else:
+                print(f"   ✗ Installation failed: {result.stderr}", file=sys.stderr)
+                sys.exit(1)
+    except subprocess.TimeoutExpired:
+        print("   ✗ Installation timed out", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"   ✗ Installation failed: {e}", file=sys.stderr)
+        sys.exit(1)
+    print()
+
+    # Step 3: Verify installation
+    print("3️⃣  Verifying installation...")
+    try:
+        result = subprocess.run(
+            ["python3", "-c", "import claudeswarm; print(claudeswarm.__version__)"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        version = result.stdout.strip()
+        print(f"   ✓ Version: {version}")
+    except Exception:
+        print("   ⚠️  Could not verify version", file=sys.stderr)
+    print()
+
+    print("✅ Reload complete!")
+    print()
+    if source == "local":
+        print("You can now use 'claudeswarm' with your latest LOCAL changes in any tmux pane.")
+        print("Future code changes will be immediately available (editable install).")
+    else:
+        print("You can now use 'claudeswarm' with the latest GITHUB version in any tmux pane.")
+    print()
+    print("Quick test: claudeswarm discover-agents")
+
+    sys.exit(0)
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     """Initialize Claude Swarm in current project with guided setup.
 
@@ -849,6 +1001,20 @@ def main() -> NoReturn:
         help="Auto-accept all prompts",
     )
     init_parser.set_defaults(func=cmd_init)
+
+    # reload command
+    reload_parser = subparsers.add_parser(
+        "reload",
+        help="Reload claudeswarm CLI with latest changes",
+    )
+    reload_parser.add_argument(
+        "--source",
+        type=str,
+        choices=["local", "github"],
+        default="local",
+        help="Source to reload from: 'local' for editable install or 'github' for remote (default: local)",
+    )
+    reload_parser.set_defaults(func=cmd_reload)
 
     # discover-agents command
     discover_parser = subparsers.add_parser(
