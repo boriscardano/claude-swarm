@@ -282,6 +282,98 @@ def cmd_list_agents(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_send_message(args: argparse.Namespace) -> None:
+    """Send a message to a specific agent."""
+    from claudeswarm.messaging import send_message, MessageType
+
+    try:
+        # Validate inputs
+        validated_sender = validate_agent_id(args.sender_id)
+        validated_recipient = validate_agent_id(args.recipient_id)
+        validated_content = validate_message_content(args.content)
+
+        # Parse message type
+        try:
+            msg_type = MessageType[args.type.upper().replace("-", "_")]
+        except KeyError:
+            valid_types = [t.name.lower().replace("_", "-") for t in MessageType]
+            print(f"Error: Invalid message type '{args.type}'", file=sys.stderr)
+            print(f"Valid types: {', '.join(valid_types)}", file=sys.stderr)
+            sys.exit(1)
+
+        # Send message
+        message = send_message(
+            sender_id=validated_sender,
+            recipient_id=validated_recipient,
+            message_type=msg_type,
+            content=validated_content
+        )
+
+        if message:
+            print(f"Message sent successfully to {args.recipient_id}")
+            if args.json:
+                print(json.dumps(message.to_dict(), indent=2))
+            sys.exit(0)
+        else:
+            print(f"Failed to send message to {args.recipient_id}", file=sys.stderr)
+            sys.exit(1)
+
+    except ValidationError as e:
+        print(f"Validation error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_broadcast_message(args: argparse.Namespace) -> None:
+    """Broadcast a message to all agents."""
+    from claudeswarm.messaging import broadcast_message, MessageType
+
+    try:
+        # Validate inputs
+        validated_sender = validate_agent_id(args.sender_id)
+        validated_content = validate_message_content(args.content)
+
+        # Parse message type
+        try:
+            msg_type = MessageType[args.type.upper().replace("-", "_")]
+        except KeyError:
+            valid_types = [t.name.lower().replace("_", "-") for t in MessageType]
+            print(f"Error: Invalid message type '{args.type}'", file=sys.stderr)
+            print(f"Valid types: {', '.join(valid_types)}", file=sys.stderr)
+            sys.exit(1)
+
+        # Broadcast message
+        results = broadcast_message(
+            sender_id=validated_sender,
+            message_type=msg_type,
+            content=validated_content,
+            exclude_self=not args.include_self
+        )
+
+        success_count = sum(1 for success in results.values() if success)
+        total_count = len(results)
+
+        print(f"Message broadcast: {success_count}/{total_count} agents reached")
+
+        if args.json:
+            print(json.dumps(results, indent=2))
+        elif args.verbose:
+            for agent_id, success in results.items():
+                status = "✓" if success else "✗"
+                print(f"  {status} {agent_id}")
+
+        sys.exit(0 if success_count > 0 else 1)
+
+    except ValidationError as e:
+        print(f"Validation error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_cleanup_stale_locks(args: argparse.Namespace) -> None:
     """Clean up stale locks."""
     manager = LockManager(project_root=args.project_root)
@@ -1056,6 +1148,37 @@ def main() -> NoReturn:
         help="Output in JSON format",
     )
     list_agents_parser.set_defaults(func=cmd_list_agents)
+
+    # send-message command
+    send_parser = subparsers.add_parser(
+        "send-message",
+        help="Send a message to a specific agent",
+    )
+    send_parser.add_argument("sender_id", help="ID of sending agent")
+    send_parser.add_argument("recipient_id", help="ID of receiving agent")
+    send_parser.add_argument("type", help="Message type (INFO, QUESTION, BLOCKED, etc.)")
+    send_parser.add_argument("content", help="Message content")
+    send_parser.add_argument("--json", action="store_true", help="Output in JSON format")
+    send_parser.set_defaults(func=cmd_send_message)
+
+    # broadcast-message command
+    broadcast_parser = subparsers.add_parser(
+        "broadcast-message",
+        help="Broadcast a message to all agents",
+    )
+    broadcast_parser.add_argument("sender_id", help="ID of sending agent")
+    broadcast_parser.add_argument("type", help="Message type (INFO, QUESTION, BLOCKED, etc.)")
+    broadcast_parser.add_argument("content", help="Message content")
+    broadcast_parser.add_argument(
+        "--include-self",
+        action="store_true",
+        help="Include sender in broadcast (default: exclude)",
+    )
+    broadcast_parser.add_argument("--json", action="store_true", help="Output in JSON format")
+    broadcast_parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Show detailed delivery status"
+    )
+    broadcast_parser.set_defaults(func=cmd_broadcast_message)
 
     # onboard command
     onboard_parser = subparsers.add_parser(

@@ -152,14 +152,22 @@ def _parse_tmux_panes() -> List[Dict]:
     try:
         # Format string for tmux list-panes output
         format_str = "#{session_name}:#{window_index}.#{pane_index}|#{pane_pid}|#{pane_current_command}"
-        
+
+        # Ensure we preserve the TMUX environment variable for proper socket access
+        env = os.environ.copy()
+        env['LC_ALL'] = 'C'
+
+        # If TMUX is not set, try to detect it
+        if 'TMUX' not in env:
+            logger.debug("TMUX environment variable not set, attempting to detect tmux socket")
+
         result = subprocess.run(
             ["tmux", "list-panes", "-a", "-F", format_str],
             capture_output=True,
             text=True,
             check=True,
             timeout=5,
-            env={**os.environ, 'LC_ALL': 'C'}
+            env=env
         )
         
         panes = []
@@ -197,8 +205,17 @@ def _parse_tmux_panes() -> List[Dict]:
     except subprocess.TimeoutExpired:
         raise RuntimeError("tmux command timed out")
     except subprocess.CalledProcessError as e:
-        if e.returncode == 1 and "no server running" in e.stderr.lower():
+        stderr = e.stderr.lower() if e.stderr else ""
+        if e.returncode == 1 and "no server running" in stderr:
             raise RuntimeError("tmux server is not running")
+        elif "operation not permitted" in stderr or "permission denied" in stderr:
+            # This can happen when running from child processes or in restricted environments
+            logger.warning(f"Permission error accessing tmux: {e.stderr}")
+            raise RuntimeError(
+                "Permission denied accessing tmux socket. "
+                "This can happen when running from child processes or sandboxed environments. "
+                "Try running the command directly in a tmux pane instead of through a subprocess."
+            )
         raise RuntimeError(f"Failed to list tmux panes: {e.stderr}")
     except FileNotFoundError:
         raise RuntimeError("tmux is not installed or not in PATH")
