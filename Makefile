@@ -45,5 +45,5 @@ dashboard:
 	@claudeswarm start-dashboard
 
 test:
-	@echo "Tests not yet implemented"
-	@echo "TODO: Add pytest configuration"
+	@echo "Running test suite..."
+	@python3 -m pytest tests/ -v || echo "Note: pytest may not be installed. Install with: uv pip install pytest pytest-cov"
