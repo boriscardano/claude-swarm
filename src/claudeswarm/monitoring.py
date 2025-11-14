@@ -246,8 +246,11 @@ class LogTailer:
     def parse_log_entry(self, line: str) -> Optional[Message]:
         """Parse a JSON log entry into a Message object.
 
+        Uses Message.from_log_dict() to handle the log file format which uses
+        'sender' instead of 'sender_id'.
+
         Args:
-            line: JSON log entry line
+            line: JSON log entry line from agent_messages.log
 
         Returns:
             Message object if parsing succeeds, None otherwise
@@ -255,15 +258,8 @@ class LogTailer:
         try:
             data = json.loads(line)
 
-            # Convert to Message format
-            message = Message(
-                sender_id=data.get('sender', 'unknown'),
-                timestamp=datetime.fromisoformat(data.get('timestamp', datetime.now().isoformat())),
-                msg_type=MessageType(data.get('msg_type', 'INFO')),
-                content=data.get('content', ''),
-                recipients=data.get('recipients', []),
-                msg_id=data.get('msg_id', '')
-            )
+            # Use from_log_dict to handle the log file format
+            message = Message.from_log_dict(data)
 
             return message
 
