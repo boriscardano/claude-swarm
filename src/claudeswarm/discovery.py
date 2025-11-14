@@ -164,9 +164,13 @@ def _has_claude_child_process(pid: int) -> bool:
         pid: Parent process ID to check
 
     Returns:
-        True if any child process contains 'claude' in its command line
+        True if any child process is the actual Claude Code binary
     """
     try:
+        # Get our own PID to exclude from search
+        import os
+        our_pid = os.getpid()
+
         # Use ps to find all child processes
         # Format: PID PPID COMMAND
         result = subprocess.run(
@@ -179,7 +183,7 @@ def _has_claude_child_process(pid: int) -> bool:
         if result.returncode != 0:
             return False
 
-        # Search for processes where PPID matches our PID and command contains 'claude'
+        # Search for processes where PPID matches our PID and command is Claude Code
         for line in result.stdout.strip().split("\n"):
             parts = line.split(None, 2)  # Split into max 3 parts
             if len(parts) < 3:
@@ -190,9 +194,29 @@ def _has_claude_child_process(pid: int) -> bool:
                 ppid = int(parts[1])
                 command = parts[2]
 
+                # Skip our own process and its children
+                if child_pid == our_pid:
+                    continue
+
                 # Check if this is a child of our target PID
-                if ppid == pid and "claude" in command.lower():
-                    return True
+                if ppid == pid:
+                    command_lower = command.lower()
+
+                    # Exclude any Python processes running claudeswarm
+                    if "python" in command_lower and "claudeswarm" in command_lower:
+                        continue
+
+                    # Check for Claude Code specific patterns
+                    # Must match the actual claude binary, not tools named "claude*"
+                    if (
+                        # Match: /path/to/claude or just "claude" at start
+                        (command_lower.startswith("claude ") or "/claude " in command_lower) or
+                        # Match: claude-code
+                        "claude-code" in command_lower
+                    ):
+                        # Exclude claudeswarm and other claude-prefixed tools
+                        if "claudeswarm" not in command_lower:
+                            return True
             except (ValueError, IndexError):
                 continue
 

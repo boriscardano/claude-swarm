@@ -19,8 +19,8 @@ Claude Swarm enables multiple Claude Code agents to work together on the same co
 **For new users - just 3 commands:**
 
 ```bash
-# 1. Install
-uv pip install git+https://github.com/borisbanach/claude-swarm.git
+# 1. Install (one command, works immediately!)
+uv tool install git+https://github.com/borisbanach/claude-swarm.git
 
 # 2. Go to your project
 cd /path/to/your/project
@@ -74,10 +74,13 @@ claudeswarm --help
 Install globally and use from any directory:
 
 ```bash
-# Option A: Install with uv (recommended)
-uv pip install git+https://github.com/borisbanach/claude-swarm.git
+# Option A: Install with uv tool (recommended - works immediately!)
+uv tool install git+https://github.com/borisbanach/claude-swarm.git
 
-# Option B: Install with pip
+# Option B: Install with uv pip (requires PATH setup)
+uv pip install --system git+https://github.com/borisbanach/claude-swarm.git
+
+# Option C: Install with pip
 pip install git+https://github.com/borisbanach/claude-swarm.git
 
 # Verify installation
@@ -318,7 +321,7 @@ For complete configuration reference, see [Configuration Guide](docs/CONFIGURATI
 
 1. **Install Claude Swarm**
    ```bash
-   pip install git+https://github.com/borisbanach/claude-swarm.git
+   uv tool install git+https://github.com/borisbanach/claude-swarm.git
    ```
 
 2. **Update Your .gitignore**

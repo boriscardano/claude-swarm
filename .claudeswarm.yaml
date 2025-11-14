@@ -1,0 +1,50 @@
+# Claude Swarm Configuration
+# Complete reference: docs/CONFIGURATION.md
+
+# Rate limiting for messaging system
+rate_limiting:
+  # Maximum messages an agent can send per window
+  messages_per_minute: 10
+  # Time window for rate limiting in seconds
+  window_seconds: 60
+
+# Distributed file locking settings
+locking:
+  # Seconds after which a lock is considered stale
+  stale_timeout: 300
+  # Automatically clean up stale locks
+  auto_cleanup: false
+  # Default reason when no reason is provided
+  default_reason: "working"
+
+# Agent discovery configuration
+discovery:
+  # Seconds after which an agent is considered stale
+  stale_threshold: 60
+  # Automatic registry refresh interval (null = disabled)
+  auto_refresh_interval: null
+
+# Agent onboarding configuration
+onboarding:
+  # Whether onboarding system is enabled
+  enabled: true
+  # Custom onboarding messages (null = use defaults)
+  custom_messages: null
+  # Automatically onboard new agents when discovered
+  auto_onboard: false
+
+# Web dashboard configuration
+dashboard:
+  # Whether dashboard is available
+  enabled: true
+  # Default port for dashboard server
+  port: 8080
+  # Default host to bind to
+  host: localhost
+  # Whether to open browser automatically
+  auto_open_browser: true
+  # Data refresh interval in seconds
+  refresh_interval: 1
+
+# Project root directory (null = auto-detect from current directory)
+# project_root: null
