@@ -208,21 +208,85 @@ def _has_claude_child_process(pid: int) -> bool:
 
                     # Check for Claude Code specific patterns
                     # Must match the actual claude binary, not tools named "claude*"
-                    if (
-                        # Match: /path/to/claude or just "claude" at start
-                        (command_lower.startswith("claude ") or "/claude " in command_lower) or
+                    # Match patterns:
+                    # - "claude" (bare command)
+                    # - "claude <args>" (command with arguments)
+                    # - "/path/to/claude" or "/path/to/claude <args>"
+                    # - "claude-code"
+                    is_claude_binary = (
+                        # Match: bare "claude" or "claude " with args
+                        command_lower == "claude" or
+                        command_lower.startswith("claude ") or
+                        # Match: /path/to/claude
+                        "/claude" in command_lower and (
+                            command_lower.endswith("/claude") or
+                            "/claude " in command_lower
+                        ) or
                         # Match: claude-code
                         "claude-code" in command_lower
-                    ):
-                        # Exclude claudeswarm and other claude-prefixed tools
-                        if "claudeswarm" not in command_lower:
-                            return True
+                    )
+
+                    if is_claude_binary and "claudeswarm" not in command_lower:
+                        return True
             except (ValueError, IndexError):
                 continue
 
         return False
 
     except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def _get_process_cwd(pid: int) -> Optional[str]:
+    """Get the current working directory of a process.
+
+    Args:
+        pid: Process ID
+
+    Returns:
+        Absolute path to process's working directory, or None if unavailable
+    """
+    try:
+        # On macOS, use lsof to find the cwd
+        result = subprocess.run(
+            ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+
+        if result.returncode == 0:
+            # Parse lsof output (format: "npath")
+            for line in result.stdout.strip().split("\n"):
+                if line.startswith("n"):
+                    return line[1:]  # Remove the 'n' prefix
+
+        return None
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        return None
+
+
+def _is_in_project(pid: int, project_root: Path) -> bool:
+    """Check if a process is working within the project directory.
+
+    Args:
+        pid: Process ID to check
+        project_root: Project root directory path
+
+    Returns:
+        True if process's working directory is within project_root
+    """
+    cwd = _get_process_cwd(pid)
+    if not cwd:
+        return False
+
+    try:
+        cwd_path = Path(cwd).resolve()
+        project_path = project_root.resolve()
+
+        # Check if cwd is project_root or a subdirectory of it
+        return cwd_path == project_path or project_path in cwd_path.parents
+    except (ValueError, OSError):
         return False
 
 
@@ -357,12 +421,20 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
     if session_name:
         panes = [p for p in panes if p["session_name"] == session_name]
     
+    # Get project root for directory filtering
+    from .project import get_project_root
+    project_root = get_project_root()
+
     # Identify Claude Code agents
     discovered_agents = []
     active_pane_indices = set()
 
     for pane in panes:
         if not _is_claude_code_process(pane["command"], pane["pid"]):
+            continue
+
+        # Filter by project directory - only include agents working in this project
+        if not _is_in_project(pane["pid"], project_root):
             continue
 
         pane_index = pane["pane_index"]
