@@ -157,14 +157,63 @@ def _parse_tmux_panes() -> List[Dict]:
         raise RuntimeError("tmux is not installed or not in PATH")
 
 
-def _is_claude_code_process(command: str) -> bool:
-    """Check if a command appears to be Claude Code.
-    
+def _has_claude_child_process(pid: int) -> bool:
+    """Check if a PID has any child processes running Claude Code.
+
+    Args:
+        pid: Parent process ID to check
+
+    Returns:
+        True if any child process contains 'claude' in its command line
+    """
+    try:
+        # Use ps to find all child processes
+        # Format: PID PPID COMMAND
+        result = subprocess.run(
+            ["ps", "-A", "-o", "pid,ppid,command"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode != 0:
+            return False
+
+        # Search for processes where PPID matches our PID and command contains 'claude'
+        for line in result.stdout.strip().split("\n"):
+            parts = line.split(None, 2)  # Split into max 3 parts
+            if len(parts) < 3:
+                continue
+
+            try:
+                child_pid = int(parts[0])
+                ppid = int(parts[1])
+                command = parts[2]
+
+                # Check if this is a child of our target PID
+                if ppid == pid and "claude" in command.lower():
+                    return True
+            except (ValueError, IndexError):
+                continue
+
+        return False
+
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def _is_claude_code_process(command: str, pid: int) -> bool:
+    """Check if a process appears to be Claude Code.
+
+    First checks if the command itself matches Claude Code patterns.
+    If not, searches child processes for Claude Code instances.
+
     Args:
         command: Command string from tmux pane_current_command
-        
+        pid: Process ID of the pane
+
     Returns:
-        True if command matches Claude Code patterns
+        True if command or its children match Claude Code patterns
     """
     # Common patterns for Claude Code invocations
     claude_patterns = [
@@ -172,9 +221,15 @@ def _is_claude_code_process(command: str) -> bool:
         "claude-code",
         "node",  # Claude Code may run as a Node.js process
     ]
-    
+
     command_lower = command.lower()
-    return any(pattern in command_lower for pattern in claude_patterns)
+
+    # First check the pane's current command
+    if any(pattern in command_lower for pattern in claude_patterns):
+        return True
+
+    # If not found in pane command, check child processes
+    return _has_claude_child_process(pid)
 
 
 def _generate_agent_id(pane_index: str, existing_ids: Dict[str, str]) -> str:
@@ -281,9 +336,9 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
     # Identify Claude Code agents
     discovered_agents = []
     active_pane_indices = set()
-    
+
     for pane in panes:
-        if not _is_claude_code_process(pane["command"]):
+        if not _is_claude_code_process(pane["command"], pane["pid"]):
             continue
 
         pane_index = pane["pane_index"]
