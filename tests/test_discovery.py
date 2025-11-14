@@ -240,6 +240,58 @@ class TestClaudeCodeDetection:
         assert _is_claude_code_process("2.0.37", 1234) is False
         mock_has_child.assert_called_once_with(1234)
 
+    @patch("subprocess.run")
+    def test_has_claude_child_process_excludes_claudeswarm(self, mock_run):
+        """Test that claudeswarm processes are not detected as Claude Code."""
+        # Simulate ps output with claudeswarm command
+        ps_output = """  PID  PPID COMMAND
+  100  1234 /usr/bin/python3 -m claudeswarm.cli discover-agents
+  101  1234 uv run claudeswarm discover-agents
+  102  1234 bash"""
+
+        mock_run.return_value = MagicMock(
+            stdout=ps_output,
+            returncode=0
+        )
+
+        # Should NOT detect claudeswarm as Claude Code
+        result = _has_claude_child_process(1234)
+        assert result is False
+
+    @patch("subprocess.run")
+    def test_has_claude_child_process_detects_real_claude(self, mock_run):
+        """Test that actual Claude Code processes are detected."""
+        # Simulate ps output with real claude process
+        ps_output = """  PID  PPID COMMAND
+  100  1234 claude --dangerously-skip-permissions
+  101  1234 bash"""
+
+        mock_run.return_value = MagicMock(
+            stdout=ps_output,
+            returncode=0
+        )
+
+        # Should detect claude as Claude Code
+        result = _has_claude_child_process(1234)
+        assert result is True
+
+    @patch("subprocess.run")
+    def test_has_claude_child_process_detects_claude_with_path(self, mock_run):
+        """Test detection of Claude Code with full path."""
+        # Simulate ps output with claude in a path
+        ps_output = """  PID  PPID COMMAND
+  100  1234 /usr/local/bin/claude --dangerously-skip-permissions
+  101  1234 bash"""
+
+        mock_run.return_value = MagicMock(
+            stdout=ps_output,
+            returncode=0
+        )
+
+        # Should detect /path/to/claude as Claude Code
+        result = _has_claude_child_process(1234)
+        assert result is True
+
 
 class TestAgentIdGeneration:
     """Tests for agent ID generation."""
