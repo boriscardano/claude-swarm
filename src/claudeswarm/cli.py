@@ -36,6 +36,20 @@ from claudeswarm.validators import (
 
 __all__ = ["main"]
 
+# Command-line validation constants
+# Lock reason length limit (enforces concise lock descriptions)
+MAX_LOCK_REASON_LENGTH = 512
+
+# Stale threshold validation bounds (in seconds)
+# These align with DiscoveryConfig validation in config.py
+MIN_STALE_THRESHOLD = 1
+MAX_STALE_THRESHOLD = 3600
+DEFAULT_STALE_THRESHOLD = 60
+
+# Interval validation bounds for watch mode (in seconds)
+MIN_INTERVAL = 1
+MAX_INTERVAL = 3600
+
 
 def format_timestamp(ts: float) -> str:
     """Format a Unix timestamp as a human-readable string."""
@@ -56,8 +70,8 @@ def cmd_acquire_file_lock(args: argparse.Namespace) -> None:
 
         # Validate reason if provided
         reason = args.reason or ""
-        if reason and len(reason) > 512:
-            print("Error: Lock reason too long (max 512 characters)", file=sys.stderr)
+        if reason and len(reason) > MAX_LOCK_REASON_LENGTH:
+            print(f"Error: Lock reason too long (max {MAX_LOCK_REASON_LENGTH} characters)", file=sys.stderr)
             sys.exit(1)
     except ValidationError as e:
         print(f"Validation error: {e}", file=sys.stderr)
@@ -194,11 +208,11 @@ def cmd_discover_agents(args: argparse.Namespace) -> None:
 
     # Validate stale_threshold
     try:
-        if args.stale_threshold < 1 or args.stale_threshold > 3600:
-            print("Error: stale_threshold must be between 1 and 3600 seconds", file=sys.stderr)
+        if args.stale_threshold < MIN_STALE_THRESHOLD or args.stale_threshold > MAX_STALE_THRESHOLD:
+            print(f"Error: stale_threshold must be between {MIN_STALE_THRESHOLD} and {MAX_STALE_THRESHOLD} seconds", file=sys.stderr)
             sys.exit(1)
-        if args.watch and (args.interval < 1 or args.interval > 3600):
-            print("Error: interval must be between 1 and 3600 seconds", file=sys.stderr)
+        if args.watch and (args.interval < MIN_INTERVAL or args.interval > MAX_INTERVAL):
+            print(f"Error: interval must be between {MIN_INTERVAL} and {MAX_INTERVAL} seconds", file=sys.stderr)
             sys.exit(1)
     except (TypeError, AttributeError) as e:
         print(f"Error: Invalid argument type: {e}", file=sys.stderr)
@@ -283,36 +297,62 @@ def cmd_list_agents(args: argparse.Namespace) -> None:
 
 
 def cmd_send_message(args: argparse.Namespace) -> None:
-    """Send a message to a specific agent."""
+    """Send a message to a specific agent.
+
+    Args:
+        args.sender_id: ID of the sending agent
+        args.recipient_id: ID of the receiving agent
+        args.type: Message type (case-insensitive, supports hyphens and underscores)
+        args.content: Message content to send
+        args.json: Whether to output JSON format
+
+    Exit Codes:
+        0: Success - message sent
+        1: Failure - validation error, recipient not found, or send failed
+    """
     from claudeswarm.messaging import send_message, MessageType
+    from claudeswarm.validators import sanitize_message_content
 
     try:
-        # Validate inputs
+        # Validate agent IDs (validators handle all validation including length)
         validated_sender = validate_agent_id(args.sender_id)
         validated_recipient = validate_agent_id(args.recipient_id)
-        validated_content = validate_message_content(args.content)
 
-        # Parse message type
+        # Validate and sanitize message content
+        validated_content = validate_message_content(args.content)
+        sanitized_content = sanitize_message_content(validated_content)
+
+        # Parse message type with case-insensitive handling
+        normalized_type = args.type.upper().replace("-", "_")
         try:
-            msg_type = MessageType[args.type.upper().replace("-", "_")]
+            msg_type = MessageType[normalized_type]
         except KeyError:
-            valid_types = [t.name.lower().replace("_", "-") for t in MessageType]
+            # Show valid types with both enum names and user-friendly formats
+            valid_types = sorted([t.name for t in MessageType])
+            valid_types_display = [t.replace("_", "-").lower() for t in valid_types]
             print(f"Error: Invalid message type '{args.type}'", file=sys.stderr)
-            print(f"Valid types: {', '.join(valid_types)}", file=sys.stderr)
+            print(f"Valid types: {', '.join(valid_types_display)}", file=sys.stderr)
+            print(f"  (case-insensitive, use hyphens or underscores)", file=sys.stderr)
             sys.exit(1)
 
-        # Send message
+        # Send message (messaging layer validates recipient exists via _get_agent_pane)
         message = send_message(
             sender_id=validated_sender,
             recipient_id=validated_recipient,
             message_type=msg_type,
-            content=validated_content
+            content=sanitized_content
         )
 
         if message:
             print(f"Message sent successfully to {args.recipient_id}")
             if args.json:
-                print(json.dumps(message.to_dict(), indent=2))
+                # Serialize JSON and fail hard if serialization fails
+                try:
+                    json_output = json.dumps(message.to_dict(), indent=2)
+                    print(json_output)
+                except (TypeError, ValueError) as e:
+                    print(f"Error: Could not format JSON output: {e}", file=sys.stderr)
+                    sys.exit(1)
             sys.exit(0)
         else:
             print(f"Failed to send message to {args.recipient_id}", file=sys.stderr)
@@ -321,53 +361,106 @@ def cmd_send_message(args: argparse.Namespace) -> None:
     except ValidationError as e:
         print(f"Validation error: {e}", file=sys.stderr)
         sys.exit(1)
+    except FileNotFoundError as e:
+        print(f"Error: Agent registry not found. Run 'claudeswarm discover-agents' first", file=sys.stderr)
+        sys.exit(1)
+    except PermissionError as e:
+        print(f"Error: Permission denied: {e}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
 
 def cmd_broadcast_message(args: argparse.Namespace) -> None:
-    """Broadcast a message to all agents."""
+    """Broadcast a message to all agents.
+
+    Args:
+        args.sender_id: ID of the sending agent
+        args.type: Message type (case-insensitive, supports hyphens and underscores)
+        args.content: Message content to broadcast
+        args.include_self: Whether to include sender in broadcast
+        args.json: Whether to output JSON format
+        args.verbose: Whether to show detailed delivery status
+
+    Exit Codes:
+        0: Success - at least one agent reached
+        1: Failure - validation error, no agents found, or all deliveries failed
+    """
     from claudeswarm.messaging import broadcast_message, MessageType
+    from claudeswarm.validators import sanitize_message_content
 
     try:
-        # Validate inputs
+        # Validate sender ID (validators handle all validation including length)
         validated_sender = validate_agent_id(args.sender_id)
-        validated_content = validate_message_content(args.content)
 
-        # Parse message type
+        # Validate and sanitize message content
+        validated_content = validate_message_content(args.content)
+        sanitized_content = sanitize_message_content(validated_content)
+
+        # Parse message type with case-insensitive handling
+        normalized_type = args.type.upper().replace("-", "_")
         try:
-            msg_type = MessageType[args.type.upper().replace("-", "_")]
+            msg_type = MessageType[normalized_type]
         except KeyError:
-            valid_types = [t.name.lower().replace("_", "-") for t in MessageType]
+            # Show valid types with both enum names and user-friendly formats
+            valid_types = sorted([t.name for t in MessageType])
+            valid_types_display = [t.replace("_", "-").lower() for t in valid_types]
             print(f"Error: Invalid message type '{args.type}'", file=sys.stderr)
-            print(f"Valid types: {', '.join(valid_types)}", file=sys.stderr)
+            print(f"Valid types: {', '.join(valid_types_display)}", file=sys.stderr)
+            print(f"  (case-insensitive, use hyphens or underscores)", file=sys.stderr)
             sys.exit(1)
 
         # Broadcast message
         results = broadcast_message(
             sender_id=validated_sender,
             message_type=msg_type,
-            content=validated_content,
+            content=sanitized_content,
             exclude_self=not args.include_self
         )
 
+        # Check if any agents were found in registry
+        if not results:
+            print("Error: No active agents found for broadcast", file=sys.stderr)
+            print("Run 'claudeswarm discover-agents' to refresh the agent registry", file=sys.stderr)
+            sys.exit(1)
+
+        # Count successful deliveries
         success_count = sum(1 for success in results.values() if success)
         total_count = len(results)
 
         print(f"Message broadcast: {success_count}/{total_count} agents reached")
 
         if args.json:
-            print(json.dumps(results, indent=2))
+            # Serialize JSON and fail hard if serialization fails
+            try:
+                json_output = json.dumps(results, indent=2)
+                print(json_output)
+            except (TypeError, ValueError) as e:
+                print(f"Error: Could not format JSON output: {e}", file=sys.stderr)
+                sys.exit(1)
         elif args.verbose:
-            for agent_id, success in results.items():
+            for agent_id, success in sorted(results.items()):
                 status = "✓" if success else "✗"
                 print(f"  {status} {agent_id}")
 
+        # Exit with 0 if at least one agent was reached successfully
         sys.exit(0 if success_count > 0 else 1)
 
     except ValidationError as e:
         print(f"Validation error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError as e:
+        print(f"Error: Agent registry not found. Run 'claudeswarm discover-agents' first", file=sys.stderr)
+        sys.exit(1)
+    except PermissionError as e:
+        print(f"Error: Permission denied: {e}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -1132,8 +1225,8 @@ def main() -> NoReturn:
     discover_parser.add_argument(
         "--stale-threshold",
         type=int,
-        default=60,
-        help="Seconds after which an agent is considered stale (default: 60)",
+        default=DEFAULT_STALE_THRESHOLD,
+        help=f"Seconds after which an agent is considered stale (default: {DEFAULT_STALE_THRESHOLD})",
     )
     discover_parser.set_defaults(func=cmd_discover_agents)
 

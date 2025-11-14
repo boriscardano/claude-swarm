@@ -32,7 +32,7 @@ from claudeswarm.validators import ValidationError
 class TestSendMessageCommand:
     """Tests for send-message CLI command."""
 
-    @patch("claudeswarm.cli.send_message")
+    @patch("claudeswarm.messaging.send_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
     def test_send_message_success(
@@ -78,7 +78,7 @@ class TestSendMessageCommand:
         captured = capsys.readouterr()
         assert "Message sent successfully to agent-2" in captured.out
 
-    @patch("claudeswarm.cli.send_message")
+    @patch("claudeswarm.messaging.send_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
     def test_send_message_json_output(
@@ -113,12 +113,20 @@ class TestSendMessageCommand:
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
 
-        # Verify JSON output
-        assert "agent-1" in captured.out
-        assert "agent-2" in captured.out
-        assert "QUESTION" in captured.out
+        # Verify JSON output can be parsed and has expected structure
+        # Extract JSON object from output (skip status message)
+        json_start = captured.out.find('{')
+        assert json_start != -1, "JSON output should contain JSON object"
 
-    @patch("claudeswarm.cli.send_message")
+        json_output = captured.out[json_start:]
+        parsed = json.loads(json_output)
+
+        assert isinstance(parsed, dict), "JSON output should be a dictionary"
+        assert parsed.get("sender_id") == "agent-1", "JSON should contain correct sender"
+        assert parsed.get("recipient_id") == "agent-2", "JSON should contain correct recipient"
+        assert parsed.get("type") == "QUESTION", "JSON should contain correct message type"
+
+    @patch("claudeswarm.messaging.send_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
     def test_send_message_failure(
@@ -186,12 +194,13 @@ class TestSendMessageCommand:
 
     def test_send_message_all_message_types(self, capsys):
         """Test all valid message types are accepted."""
-        valid_types = ["INFO", "QUESTION", "BLOCKED", "REVIEW-REQUEST", "PROGRESS-UPDATE"]
+        # Use actual valid types from MessageType enum
+        valid_types = ["INFO", "QUESTION", "BLOCKED", "REVIEW-REQUEST", "COMPLETED", "CHALLENGE", "ACK"]
 
         for msg_type in valid_types:
             with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
                 with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
-                    with patch("claudeswarm.cli.send_message") as mock_send:
+                    with patch("claudeswarm.messaging.send_message") as mock_send:
                         mock_message = Mock()
                         mock_message.to_dict.return_value = {}
                         mock_send.return_value = mock_message
@@ -213,7 +222,7 @@ class TestSendMessageCommand:
 class TestBroadcastMessageCommand:
     """Tests for broadcast-message CLI command."""
 
-    @patch("claudeswarm.cli.broadcast_message")
+    @patch("claudeswarm.messaging.broadcast_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
     def test_broadcast_success(
@@ -244,7 +253,7 @@ class TestBroadcastMessageCommand:
         captured = capsys.readouterr()
         assert "3/3 agents reached" in captured.out
 
-    @patch("claudeswarm.cli.broadcast_message")
+    @patch("claudeswarm.messaging.broadcast_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
     def test_broadcast_partial_success(
@@ -275,7 +284,7 @@ class TestBroadcastMessageCommand:
         captured = capsys.readouterr()
         assert "2/3 agents reached" in captured.out
 
-    @patch("claudeswarm.cli.broadcast_message")
+    @patch("claudeswarm.messaging.broadcast_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
     def test_broadcast_verbose_output(
@@ -308,7 +317,7 @@ class TestBroadcastMessageCommand:
         assert "✗ agent-2" in captured.out
         assert "✓ agent-3" in captured.out
 
-    @patch("claudeswarm.cli.broadcast_message")
+    @patch("claudeswarm.messaging.broadcast_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
     def test_broadcast_json_output(
@@ -338,11 +347,21 @@ class TestBroadcastMessageCommand:
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
 
-        # Verify JSON output can be parsed
-        json_lines = [line for line in captured.out.split('\n') if line.strip() and '{' in line]
-        assert len(json_lines) > 0
+        # Verify JSON output can be parsed and has expected structure
+        # Extract JSON object from output (lines starting with '{' or containing JSON)
+        json_start = captured.out.find('{')
+        assert json_start != -1, "JSON output should contain JSON object"
 
-    @patch("claudeswarm.cli.broadcast_message")
+        json_output = captured.out[json_start:]
+        parsed = json.loads(json_output)
+
+        assert isinstance(parsed, dict), "JSON should parse to dictionary"
+        assert "agent-1" in parsed or "agent-2" in parsed, "JSON should contain agent results"
+        # Verify each agent result is a boolean
+        for agent_id, success in parsed.items():
+            assert isinstance(success, bool), f"Agent result should be boolean, got {type(success)}"
+
+    @patch("claudeswarm.messaging.broadcast_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
     def test_broadcast_no_agents_reached(
@@ -372,7 +391,7 @@ class TestBroadcastMessageCommand:
         captured = capsys.readouterr()
         assert "0/2 agents reached" in captured.out
 
-    @patch("claudeswarm.cli.broadcast_message")
+    @patch("claudeswarm.messaging.broadcast_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
     def test_broadcast_include_self(
@@ -463,9 +482,9 @@ class TestMessagingSubprocessExecution:
             timeout=5
         )
 
-        assert result.returncode == 0
-        assert "sender_id" in result.stdout
-        assert "Broadcast a message" in result.stdout
+        assert result.returncode == 0, "Help command should succeed"
+        assert "sender_id" in result.stdout, "Help should contain sender_id parameter"
+        assert "broadcast-message" in result.stdout, "Help should contain broadcast-message command name"
 
     def test_invalid_message_type_via_subprocess(self):
         """Test error handling for invalid message type via subprocess."""
@@ -487,7 +506,7 @@ class TestMessagingSubprocessExecution:
 class TestMessagingCommandReliability:
     """Tests to ensure messaging commands are reliable for agent use."""
 
-    @patch("claudeswarm.cli.send_message")
+    @patch("claudeswarm.messaging.send_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
     def test_send_message_handles_exceptions_gracefully(
@@ -513,7 +532,7 @@ class TestMessagingCommandReliability:
         captured = capsys.readouterr()
         assert "Error:" in captured.err
 
-    @patch("claudeswarm.cli.broadcast_message")
+    @patch("claudeswarm.messaging.broadcast_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
     def test_broadcast_message_handles_exceptions_gracefully(

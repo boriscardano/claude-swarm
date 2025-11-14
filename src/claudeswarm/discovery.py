@@ -48,12 +48,34 @@ from typing import List, Optional, Dict
 from .config import get_config
 from .utils import atomic_write
 from .project import get_active_agents_path
+from .file_lock import FileLock, FileLockTimeout, FileLockError
 
 # Cache for process CWD lookups within a single discovery run
 _cwd_cache: Dict[int, Optional[str]] = {}
 
 # Set up logging for this module
 logger = logging.getLogger(__name__)
+
+
+# Custom exceptions
+class DiscoveryError(Exception):
+    """Base exception for discovery system errors."""
+    pass
+
+
+class TmuxNotRunningError(DiscoveryError):
+    """Raised when tmux is not running or not accessible."""
+    pass
+
+
+class TmuxPermissionError(DiscoveryError):
+    """Raised when permission denied accessing tmux."""
+    pass
+
+
+class RegistryLockError(DiscoveryError):
+    """Raised when unable to acquire lock on registry file."""
+    pass
 
 
 @dataclass
@@ -202,23 +224,30 @@ def _parse_tmux_panes() -> List[Dict]:
         
         return panes
         
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("tmux command timed out")
+    except subprocess.TimeoutExpired as e:
+        raise TmuxNotRunningError("Tmux command timed out (>5s). Tmux may be unresponsive.") from e
     except subprocess.CalledProcessError as e:
         stderr = e.stderr.lower() if e.stderr else ""
         if e.returncode == 1 and "no server running" in stderr:
-            raise RuntimeError("tmux server is not running")
+            raise TmuxNotRunningError(
+                "Tmux server is not running. Start tmux first with 'tmux' or 'tmux new-session'."
+            ) from e
         elif "operation not permitted" in stderr or "permission denied" in stderr:
             # This can happen when running from child processes or in restricted environments
             logger.warning(f"Permission error accessing tmux: {e.stderr}")
-            raise RuntimeError(
+            raise TmuxPermissionError(
                 "Permission denied accessing tmux socket. "
                 "This can happen when running from child processes or sandboxed environments. "
                 "Try running the command directly in a tmux pane instead of through a subprocess."
-            )
-        raise RuntimeError(f"Failed to list tmux panes: {e.stderr}")
-    except FileNotFoundError:
-        raise RuntimeError("tmux is not installed or not in PATH")
+            ) from e
+        elif "no such file" in stderr or "socket" in stderr:
+            raise TmuxNotRunningError(
+                f"Tmux socket not found or inaccessible: {e.stderr}. "
+                "The tmux server may have crashed or the socket may be stale."
+            ) from e
+        raise DiscoveryError(f"Failed to list tmux panes: {e.stderr}") from e
+    except FileNotFoundError as e:
+        raise TmuxNotRunningError("tmux is not installed or not in PATH") from e
 
 
 def _has_claude_child_process(pid: int) -> bool:
@@ -564,40 +593,85 @@ def _generate_agent_id(pane_index: str, existing_ids: Dict[str, str]) -> str:
 
 
 def _load_existing_registry() -> Optional[AgentRegistry]:
-    """Load existing agent registry from file.
-    
+    """Load existing agent registry from file with file locking.
+
+    Uses shared (read) lock to prevent race conditions when
+    multiple processes access the registry simultaneously.
+
     Returns:
         AgentRegistry if file exists and is valid, None otherwise
+
+    Raises:
+        RegistryLockError: If cannot acquire lock within timeout
     """
     registry_path = get_registry_path()
-    
+
     if not registry_path.exists():
+        logger.debug(f"Registry file does not exist: {registry_path}")
         return None
-    
+
     try:
-        with open(registry_path, "r") as f:
-            data = json.load(f)
-        return AgentRegistry.from_dict(data)
-    except (json.JSONDecodeError, KeyError, ValueError):
+        # Use shared lock for reading (allows multiple readers)
+        with FileLock(registry_path, timeout=5.0, shared=True):
+            with open(registry_path, "r") as f:
+                data = json.load(f)
+            return AgentRegistry.from_dict(data)
+
+    except FileLockTimeout as e:
+        raise RegistryLockError(
+            f"Timeout acquiring read lock on registry {registry_path}. "
+            "Another process may be writing to it."
+        ) from e
+    except json.JSONDecodeError as e:
+        logger.warning(f"Invalid JSON in registry file {registry_path}: {e}")
         # Invalid registry file, will be overwritten
+        return None
+    except (KeyError, ValueError) as e:
+        logger.warning(f"Invalid registry format in {registry_path}: {e}")
+        # Invalid registry file, will be overwritten
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error loading registry: {e}")
         return None
 
 
 def _save_registry(registry: AgentRegistry) -> None:
-    """Save agent registry to file atomically.
+    """Save agent registry to file atomically with file locking.
 
-    Uses atomic write (temp file + rename) to prevent corruption.
+    Uses exclusive (write) lock to prevent race conditions when
+    multiple processes try to write to the registry simultaneously.
+    Also uses atomic write (temp file + rename) to prevent corruption.
 
     Args:
         registry: AgentRegistry to save
+
+    Raises:
+        RegistryLockError: If cannot acquire exclusive lock within timeout
     """
     registry_path = get_registry_path()
+
+    # Ensure parent directory exists
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Convert registry to JSON string
     content = json.dumps(registry.to_dict(), indent=2)
 
-    # Use atomic_write from utils for consistent, safe writing
-    atomic_write(registry_path, content)
+    try:
+        # Use exclusive lock for writing (blocks all other access)
+        with FileLock(registry_path, timeout=5.0, shared=False):
+            # Use atomic_write from utils for consistent, safe writing
+            # This writes to a temp file and renames it atomically
+            atomic_write(registry_path, content)
+            logger.debug(f"Registry saved to {registry_path}")
+
+    except FileLockTimeout as e:
+        raise RegistryLockError(
+            f"Timeout acquiring write lock on registry {registry_path}. "
+            "Another process may be accessing it."
+        ) from e
+    except Exception as e:
+        logger.error(f"Error saving registry to {registry_path}: {e}")
+        raise DiscoveryError(f"Failed to save registry: {e}") from e
 
 
 def discover_agents(session_name: Optional[str] = None, stale_threshold: Optional[int] = None) -> AgentRegistry:
@@ -612,7 +686,10 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
         AgentRegistry containing all discovered agents
 
     Raises:
-        RuntimeError: If tmux is not running or discovery fails
+        TmuxNotRunningError: If tmux is not running or not accessible
+        TmuxPermissionError: If permission denied accessing tmux
+        RegistryLockError: If cannot acquire lock on registry file
+        DiscoveryError: For other discovery-related errors
     """
     # Clear the CWD cache at the start of each discovery run
     _clear_cwd_cache()
@@ -723,57 +800,85 @@ def refresh_registry(stale_threshold: Optional[int] = None) -> AgentRegistry:
         Updated AgentRegistry
 
     Raises:
-        RuntimeError: If tmux is not running or discovery fails
+        TmuxNotRunningError: If tmux is not running or not accessible
+        TmuxPermissionError: If permission denied accessing tmux
+        RegistryLockError: If cannot acquire lock on registry file
+        DiscoveryError: For other discovery-related errors
     """
     registry = discover_agents(stale_threshold=stale_threshold)
     _save_registry(registry)
+    logger.info(f"Registry refreshed with {len(registry.agents)} agents")
     return registry
 
 
 def get_agent_by_id(agent_id: str) -> Optional[Agent]:
-    """Look up an agent by ID from the registry.
-    
+    """Look up an agent by ID from the registry with file locking.
+
     Args:
         agent_id: Agent identifier (e.g., "agent-0")
-        
+
     Returns:
         Agent if found, None otherwise
     """
     registry_path = get_registry_path()
-    
+
     if not registry_path.exists():
+        logger.debug(f"Registry not found at {registry_path}")
         return None
-    
+
     try:
-        with open(registry_path, "r") as f:
-            data = json.load(f)
-        registry = AgentRegistry.from_dict(data)
-        
+        # Use shared lock for reading
+        with FileLock(registry_path, timeout=5.0, shared=True):
+            with open(registry_path, "r") as f:
+                data = json.load(f)
+            registry = AgentRegistry.from_dict(data)
+
         for agent in registry.agents:
             if agent.id == agent_id:
                 return agent
-        
+
         return None
-    except (json.JSONDecodeError, KeyError, ValueError):
+
+    except FileLockTimeout:
+        logger.error(f"Timeout acquiring lock on registry for get_agent_by_id({agent_id})")
+        return None
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        logger.warning(f"Invalid registry format: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error reading registry: {e}")
         return None
 
 
 def list_active_agents() -> List[Agent]:
-    """Get list of all active agents from the registry.
-    
+    """Get list of all active agents from the registry with file locking.
+
     Returns:
         List of agents with status "active"
     """
     registry_path = get_registry_path()
-    
+
     if not registry_path.exists():
+        logger.debug(f"Registry not found at {registry_path}")
         return []
-    
+
     try:
-        with open(registry_path, "r") as f:
-            data = json.load(f)
-        registry = AgentRegistry.from_dict(data)
-        
-        return [agent for agent in registry.agents if agent.status == "active"]
-    except (json.JSONDecodeError, KeyError, ValueError):
+        # Use shared lock for reading
+        with FileLock(registry_path, timeout=5.0, shared=True):
+            with open(registry_path, "r") as f:
+                data = json.load(f)
+            registry = AgentRegistry.from_dict(data)
+
+        active_agents = [agent for agent in registry.agents if agent.status == "active"]
+        logger.debug(f"Found {len(active_agents)} active agents")
+        return active_agents
+
+    except FileLockTimeout:
+        logger.error("Timeout acquiring lock on registry for list_active_agents()")
+        return []
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        logger.warning(f"Invalid registry format: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Error reading registry: {e}")
         return []
