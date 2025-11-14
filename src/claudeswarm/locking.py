@@ -365,7 +365,7 @@ class LockManager:
                             raise
                         return True, None
                     else:
-                        # Someone else acquired the lock between our checks
+                        # Someone else acquired or deleted the lock between our checks
                         existing_lock_new = self._read_lock(lock_path)
                         if existing_lock_new and existing_lock_new.agent_id != agent_id:
                             conflict = LockConflict(
@@ -377,12 +377,20 @@ class LockManager:
                                 reason=existing_lock_new.reason,
                             )
                             return False, conflict
+                        # If lock was deleted, treat as if it didn't exist and continue
+                        # to re-acquire it below
+                        if existing_lock_new is None:
+                            existing_lock = None
 
-            # Check if the lock is stale
-            if existing_lock.is_stale(timeout):
+            # Check if the lock is stale (only if it still exists)
+            if existing_lock and existing_lock.is_stale(timeout):
                 # Auto-release stale lock
-                lock_path.unlink()
-            else:
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    # Lock was already deleted by another process
+                    pass
+            elif existing_lock:
                 # Active lock held by another agent
                 conflict = LockConflict(
                     filepath=existing_lock.filepath,
@@ -452,6 +460,9 @@ class LockManager:
         try:
             lock_path.unlink()
             return True
+        except FileNotFoundError:
+            # Lock was already deleted - consider this successful
+            return True
         except OSError:
             return False
 
@@ -472,6 +483,9 @@ class LockManager:
             # Clean up stale lock
             try:
                 lock_path.unlink()
+            except FileNotFoundError:
+                # Lock was already deleted by another process
+                pass
             except OSError:
                 pass
             return None
@@ -498,6 +512,9 @@ class LockManager:
                     # Clean up stale lock
                     try:
                         lock_file.unlink()
+                    except FileNotFoundError:
+                        # Lock was already deleted by another process
+                        pass
                     except OSError:
                         pass
 
@@ -524,6 +541,9 @@ class LockManager:
                 try:
                     lock_file.unlink()
                     count += 1
+                except FileNotFoundError:
+                    # Lock was already deleted by another process
+                    pass
                 except OSError:
                     pass
 
@@ -548,6 +568,9 @@ class LockManager:
                 try:
                     lock_file.unlink()
                     count += 1
+                except FileNotFoundError:
+                    # Lock was already deleted by another process
+                    pass
                 except OSError:
                     pass
 

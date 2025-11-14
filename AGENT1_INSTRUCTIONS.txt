@@ -1,0 +1,47 @@
+===============================================================================
+AGENT-1 COORDINATION INSTRUCTIONS
+===============================================================================
+
+You are AGENT-1 in a multi-agent coordination system.
+Another agent (AGENT-0) is working in this codebase.
+
+YOUR AGENT ID: agent-1
+OTHER AGENT:   agent-0
+
+===============================================================================
+COORDINATION COMMANDS
+===============================================================================
+
+READ YOUR MESSAGES:
+python3 coord.py agent-1 read
+
+SEND MESSAGE TO AGENT-0:
+python3 coord.py agent-1 send agent-0 "Your message"
+
+LOCK FILE BEFORE EDITING:
+python3 coord.py agent-1 lock path/to/file "reason"
+
+UNLOCK FILE AFTER EDITING:
+python3 coord.py agent-1 unlock path/to/file
+
+===============================================================================
+WORKFLOW
+===============================================================================
+
+1. Read your messages first:
+   python3 coord.py agent-1 read
+
+2. Introduce yourself to agent-0:
+   python3 coord.py agent-1 send agent-0 "Hi! I'm working on [your task]. What are you doing?"
+
+3. Before editing ANY file, lock it:
+   python3 coord.py agent-1 lock path/to/file "what you're doing"
+
+4. After editing, unlock it:
+   python3 coord.py agent-1 unlock path/to/file
+
+5. Communicate progress and ask questions as needed
+
+===============================================================================
+DASHBOARD: http://localhost:8080
+===============================================================================

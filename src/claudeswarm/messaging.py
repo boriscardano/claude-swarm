@@ -164,7 +164,12 @@ class Message:
         return hmac.compare_digest(self.signature, expected_signature.hexdigest())
 
     def to_dict(self) -> dict:
-        """Convert message to dictionary for serialization."""
+        """Convert message to dictionary for serialization.
+
+        This format includes all message fields including signature and is used
+        for internal serialization (e.g., ACK system, message reconstruction).
+        For log file format, use to_log_dict() instead.
+        """
         return {
             'sender_id': self.sender_id,
             'timestamp': self.timestamp.isoformat(),
@@ -175,9 +180,29 @@ class Message:
             'signature': self.signature
         }
 
+    def to_log_dict(self) -> dict:
+        """Convert message to log file dictionary format.
+
+        This format uses 'sender' instead of 'sender_id' and excludes the signature
+        field. It's the format written to agent_messages.log and expected by
+        read_messages.py, coord.py, and monitoring.py.
+        """
+        return {
+            'sender': self.sender_id,
+            'timestamp': self.timestamp.isoformat(),
+            'msg_type': self.msg_type.value,
+            'content': self.content,
+            'recipients': self.recipients,
+            'msg_id': self.msg_id
+        }
+
     @classmethod
     def from_dict(cls, data: dict) -> 'Message':
-        """Create message from dictionary."""
+        """Create message from dictionary (internal format with sender_id).
+
+        This expects the format from to_dict() which includes 'sender_id' and
+        'signature' fields. For parsing log file entries, use from_log_dict() instead.
+        """
         return cls(
             sender_id=data['sender_id'],
             timestamp=datetime.fromisoformat(data['timestamp']),
@@ -186,6 +211,25 @@ class Message:
             recipients=data['recipients'],
             msg_id=data.get('msg_id', str(uuid.uuid4())),
             signature=data.get('signature', '')
+        )
+
+    @classmethod
+    def from_log_dict(cls, data: dict) -> 'Message':
+        """Create message from log file dictionary format.
+
+        This expects the format from agent_messages.log which uses 'sender'
+        instead of 'sender_id' and may not have a 'signature' field.
+        Extra fields like 'delivery_status', 'success_count', and 'failure_count'
+        are ignored.
+        """
+        return cls(
+            sender_id=data['sender'],  # Note: log format uses 'sender'
+            timestamp=datetime.fromisoformat(data['timestamp']),
+            msg_type=MessageType(data['msg_type']),
+            content=data['content'],
+            recipients=data['recipients'],
+            msg_id=data.get('msg_id', str(uuid.uuid4())),
+            signature=''  # Log format doesn't include signature
         )
 
     def format_for_display(self) -> str:
@@ -436,21 +480,35 @@ class MessageLogger:
     def log_message(self, message: Message, delivery_status: Dict[str, bool]):
         """Log a message with delivery status.
 
+        Writes entries to agent_messages.log in a standardized JSON format.
+        Each line is a separate JSON object with the following fields:
+        - sender: agent ID (string)
+        - timestamp: ISO format timestamp (string)
+        - msg_type: message type enum value (string)
+        - content: message content (string)
+        - recipients: list of recipient agent IDs (list)
+        - msg_id: unique message identifier (string)
+        - delivery_status: dict of recipient -> success (dict)
+        - success_count: number of successful deliveries (int)
+        - failure_count: number of failed deliveries (int)
+
+        Note: Uses 'sender' field (not 'sender_id') to maintain backward
+        compatibility with existing parsing code.
+
         Args:
             message: Message that was sent
             delivery_status: Dict mapping recipient_id -> success/failure
         """
-        log_entry = {
-            'timestamp': datetime.now().isoformat(),
-            'msg_id': message.msg_id,
-            'sender': message.sender_id,
-            'recipients': message.recipients,
-            'msg_type': message.msg_type.value,
-            'content': message.content,
-            'delivery_status': delivery_status,
-            'success_count': sum(1 for success in delivery_status.values() if success),
-            'failure_count': sum(1 for success in delivery_status.values() if not success)
-        }
+        # Start with base message fields in log format
+        log_entry = message.to_log_dict()
+
+        # Add delivery-specific fields
+        log_entry['delivery_status'] = delivery_status
+        log_entry['success_count'] = sum(1 for success in delivery_status.values() if success)
+        log_entry['failure_count'] = sum(1 for success in delivery_status.values() if not success)
+
+        # Update timestamp to current time (log time, not message creation time)
+        log_entry['timestamp'] = datetime.now().isoformat()
 
         # Check if we need to rotate
         self._rotate_if_needed()
