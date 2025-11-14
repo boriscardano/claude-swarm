@@ -374,12 +374,14 @@ class TestRegistryPersistence:
 class TestDiscoverAgents:
     """Tests for agent discovery functionality."""
     
+    @patch("claudeswarm.discovery._is_in_project")
     @patch("claudeswarm.discovery._parse_tmux_panes")
     @patch("claudeswarm.discovery._load_existing_registry")
-    def test_discover_agents_basic(self, mock_load, mock_parse, tmp_path, monkeypatch):
+    def test_discover_agents_basic(self, mock_load, mock_parse, mock_is_in_project, tmp_path, monkeypatch):
         """Test basic agent discovery."""
         monkeypatch.chdir(tmp_path)
         mock_load.return_value = None
+        mock_is_in_project.return_value = True
         mock_parse.return_value = [
             {
                 "session_name": "main",
@@ -400,20 +402,22 @@ class TestDiscoverAgents:
                 "command": "claude-code"
             }
         ]
-        
+
         registry = discover_agents()
-        
+
         assert len(registry.agents) == 2  # Only claude and claude-code
         assert registry.agents[0].id == "agent-0"
         assert registry.agents[1].id == "agent-1"
         assert all(a.status == "active" for a in registry.agents)
     
+    @patch("claudeswarm.discovery._is_in_project")
     @patch("claudeswarm.discovery._parse_tmux_panes")
     @patch("claudeswarm.discovery._load_existing_registry")
-    def test_discover_agents_preserve_ids(self, mock_load, mock_parse, tmp_path, monkeypatch):
+    def test_discover_agents_preserve_ids(self, mock_load, mock_parse, mock_is_in_project, tmp_path, monkeypatch):
         """Test that agent IDs are preserved across discoveries."""
         monkeypatch.chdir(tmp_path)
-        
+        mock_is_in_project.return_value = True
+
         # Existing registry
         existing_agents = [
             Agent("agent-5", "main:0.0", 1234, "active", "2025-11-07T12:00:00+00:00", "main"),
@@ -423,7 +427,7 @@ class TestDiscoverAgents:
             updated_at="2025-11-07T12:00:00+00:00",
             agents=existing_agents
         )
-        
+
         # Current panes
         mock_parse.return_value = [
             {
@@ -433,22 +437,24 @@ class TestDiscoverAgents:
                 "command": "claude"
             }
         ]
-        
+
         registry = discover_agents()
-        
+
         # Should reuse agent-5
         assert len(registry.agents) == 1
         assert registry.agents[0].id == "agent-5"
     
+    @patch("claudeswarm.discovery._is_in_project")
     @patch("claudeswarm.discovery._parse_tmux_panes")
     @patch("claudeswarm.discovery._load_existing_registry")
-    def test_discover_agents_stale_detection(self, mock_load, mock_parse, tmp_path, monkeypatch):
+    def test_discover_agents_stale_detection(self, mock_load, mock_parse, mock_is_in_project, tmp_path, monkeypatch):
         """Test detection of stale agents."""
         monkeypatch.chdir(tmp_path)
-        
+        mock_is_in_project.return_value = True
+
         # Old timestamp (2 minutes ago)
         old_time = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
-        
+
         existing_agents = [
             Agent("agent-0", "main:0.0", 1234, "active", old_time, "main"),
             Agent("agent-1", "main:0.1", 1235, "active", old_time, "main"),
@@ -458,7 +464,7 @@ class TestDiscoverAgents:
             updated_at=old_time,
             agents=existing_agents
         )
-        
+
         # Only one pane still active
         mock_parse.return_value = [
             {
@@ -468,9 +474,9 @@ class TestDiscoverAgents:
                 "command": "claude"
             }
         ]
-        
+
         registry = discover_agents(stale_threshold=60)
-        
+
         # agent-0 active, agent-1 should be removed (too old)
         assert len(registry.agents) == 1
         assert registry.agents[0].id == "agent-0"

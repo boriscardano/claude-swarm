@@ -2,9 +2,43 @@
 
 This module provides functionality to discover active Claude Code agents running
 in tmux panes and maintain a registry of their status.
+
+Platform Support:
+    - macOS: Full support using lsof for process CWD detection
+    - Linux: Partial support (process CWD detection not yet implemented)
+    - Windows: Not supported (requires tmux)
+
+Security Considerations:
+    - Uses subprocess calls to tmux, ps, pgrep, and lsof with controlled arguments
+    - Process scanning excludes the claudeswarm process itself to prevent self-detection
+    - All file I/O uses atomic writes to prevent corruption
+    - Registry files are stored in .claudeswarm/ directory
+
+Performance Optimizations:
+    - Uses pgrep -P instead of ps -A for child process detection (much faster)
+    - Caches process CWD lookups within a single discovery run
+    - Forces LC_ALL=C for consistent subprocess output parsing
+    - Early termination when Claude is found
+    - Limits child process scanning to first 50 processes
+
+Performance Optimizations:
+    - Uses pgrep -P instead of ps -A for child process detection (much faster)
+    - Caches process CWD lookups within a single discovery run
+    - Forces LC_ALL=C for consistent subprocess output parsing
+    - Early termination when Claude is found
+    - Limits child process scanning to first 50 processes
+
+Limitations:
+    - Requires tmux to be installed and running
+    - Process CWD detection requires platform-specific tools (lsof on macOS)
+    - Agents must be running in tmux panes to be discovered
+    - Project filtering only works on platforms with CWD detection support
 """
 
 import json
+import logging
+import os
+import platform
 import subprocess
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
@@ -14,6 +48,12 @@ from typing import List, Optional, Dict
 from .config import get_config
 from .utils import atomic_write
 from .project import get_active_agents_path
+
+# Cache for process CWD lookups within a single discovery run
+_cwd_cache: Dict[int, Optional[str]] = {}
+
+# Set up logging for this module
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -89,6 +129,12 @@ def get_registry_path(project_root: Optional[Path] = None) -> Path:
     return get_active_agents_path(project_root)
 
 
+def _clear_cwd_cache() -> None:
+    """Clear the CWD cache. Called at the start of each discovery run."""
+    global _cwd_cache
+    _cwd_cache = {}
+
+
 def _parse_tmux_panes() -> List[Dict]:
     """Parse tmux pane information.
     
@@ -112,7 +158,8 @@ def _parse_tmux_panes() -> List[Dict]:
             capture_output=True,
             text=True,
             check=True,
-            timeout=5
+            timeout=5,
+            env={**os.environ, 'LC_ALL': 'C'}
         )
         
         panes = []
@@ -160,6 +207,9 @@ def _parse_tmux_panes() -> List[Dict]:
 def _has_claude_child_process(pid: int) -> bool:
     """Check if a PID has any child processes running Claude Code.
 
+    Uses pgrep for efficient child process detection instead of scanning all processes.
+    This is significantly faster than ps -A on systems with many processes.
+
     Args:
         pid: Parent process ID to check
 
@@ -167,62 +217,275 @@ def _has_claude_child_process(pid: int) -> bool:
         True if any child process is the actual Claude Code binary
     """
     try:
-        # Get our own PID to exclude from search
-        import os
         our_pid = os.getpid()
 
-        # Use ps to find all child processes
-        # Format: PID PPID COMMAND
+        # Use pgrep -P to only get child processes of the target PID
+        # This is MUCH faster than ps -A on systems with many processes
         result = subprocess.run(
-            ["ps", "-A", "-o", "pid,ppid,command"],
+            ["pgrep", "-P", str(pid)],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=2,
+            env={**os.environ, 'LC_ALL': 'C'}
         )
 
-        if result.returncode != 0:
+        # pgrep returns exit code 1 if no processes found (not an error)
+        if result.returncode not in (0, 1):
             return False
 
-        # Search for processes where PPID matches our PID and command is Claude Code
-        for line in result.stdout.strip().split("\n"):
-            parts = line.split(None, 2)  # Split into max 3 parts
-            if len(parts) < 3:
-                continue
+        # No child processes found
+        if not result.stdout.strip():
+            return False
 
+        # Get command line for each child process using ps
+        child_pids = result.stdout.strip().split("\n")
+
+        # Early termination: limit to first 50 child processes to avoid hanging
+        for child_pid_str in child_pids[:50]:
             try:
-                child_pid = int(parts[0])
-                ppid = int(parts[1])
-                command = parts[2]
+                child_pid = int(child_pid_str)
 
-                # Skip our own process and its children
+                # Skip our own process
                 if child_pid == our_pid:
                     continue
 
-                # Check if this is a child of our target PID
-                if ppid == pid:
-                    command_lower = command.lower()
+                # Get command for this specific PID using ps
+                ps_result = subprocess.run(
+                    ["ps", "-p", str(child_pid), "-o", "command="],
+                    capture_output=True,
+                    text=True,
+                    timeout=1,
+                    env={**os.environ, 'LC_ALL': 'C'}
+                )
 
-                    # Exclude any Python processes running claudeswarm
-                    if "python" in command_lower and "claudeswarm" in command_lower:
-                        continue
+                if ps_result.returncode != 0:
+                    continue
 
-                    # Check for Claude Code specific patterns
-                    # Must match the actual claude binary, not tools named "claude*"
-                    if (
-                        # Match: /path/to/claude or just "claude" at start
-                        (command_lower.startswith("claude ") or "/claude " in command_lower) or
-                        # Match: claude-code
-                        "claude-code" in command_lower
-                    ):
-                        # Exclude claudeswarm and other claude-prefixed tools
-                        if "claudeswarm" not in command_lower:
-                            return True
+                command = ps_result.stdout.strip()
+                if not command:
+                    continue
+
+                command_lower = command.lower()
+
+                # Exclude any Python processes running claudeswarm
+                if "python" in command_lower and "claudeswarm" in command_lower:
+                    continue
+
+                # Check for Claude Code specific patterns
+                # Must match the actual claude binary, not tools named "claude*"
+                # Match patterns:
+                # - "claude" (bare command)
+                # - "claude <args>" (command with arguments)
+                # - "/path/to/claude" or "/path/to/claude <args>"
+                # - "claude-code"
+                is_claude_binary = (
+                    # Match: bare "claude" or "claude " with args
+                    command_lower == "claude" or
+                    command_lower.startswith("claude ") or
+                    # Match: /path/to/claude
+                    "/claude" in command_lower and (
+                        command_lower.endswith("/claude") or
+                        "/claude " in command_lower
+                    ) or
+                    # Match: claude-code
+                    "claude-code" in command_lower
+                )
+
+                if is_claude_binary and "claudeswarm" not in command_lower:
+                    return True  # Early exit when Claude is found
+
             except (ValueError, IndexError):
                 continue
 
         return False
 
     except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def _get_process_cwd(pid: int) -> Optional[str]:
+    """Get the current working directory of a process.
+
+    This function provides cross-platform support for retrieving a process's
+    current working directory:
+    - Linux: Uses /proc/{pid}/cwd symlink (fast and reliable)
+    - macOS: Uses lsof command (requires lsof to be installed)
+    - Windows: Not supported, returns None
+
+    Platform Support:
+        - Linux: Full support via /proc filesystem
+        - macOS: Full support via lsof command
+        - Windows: Not supported (would require pywin32 or ctypes)
+
+    Limitations:
+        - Requires lsof to be installed on macOS
+        - May fail if process has terminated or doesn't have a CWD
+        - Requires sufficient permissions to query process information
+        - 0.5-second timeout on macOS to prevent blocking on slow systems
+
+    Edge Cases:
+        - Returns None if platform is Windows or unsupported
+        - Returns None if PID is invalid or out of range
+        - Returns None if lsof is not installed on macOS
+        - Returns None if lsof command times out (> 0.5 seconds)
+        - Returns None if process has no current working directory
+        - Returns None if permission denied accessing process info
+
+    Example:
+        >>> cwd = _get_process_cwd(12345)
+        >>> if cwd:
+        ...     print(f"Process working directory: {cwd}")
+        ... else:
+        ...     print("Could not determine process CWD")
+
+    Args:
+        pid: Process ID (must be a positive integer)
+
+    Returns:
+        Absolute path to process's working directory, or None if unavailable
+
+    Raises:
+        ValueError: If pid is not a positive integer
+    """
+    # Check cache first
+    if pid in _cwd_cache:
+        return _cwd_cache[pid]
+
+    # Input validation
+    if not isinstance(pid, int) or pid <= 0:
+        raise ValueError(f"PID must be a positive integer, got: {pid}")
+
+    # Check for valid PID range (system-dependent, but general sanity check)
+    # Most systems have a maximum PID value, typically 32768 or higher
+    # We use a conservative upper bound of 2^22 (4194304)
+    MAX_PID = 4194304
+    if pid > MAX_PID:
+        logger.warning(f"PID {pid} exceeds reasonable maximum ({MAX_PID})")
+        _cwd_cache[pid] = None
+        return None
+
+    system = platform.system()
+    logger.debug(f"Getting CWD for PID {pid} on platform: {system}")
+
+    cwd = None
+    if system == "Linux":
+        cwd = _get_process_cwd_linux(pid)
+    elif system == "Darwin":  # macOS
+        cwd = _get_process_cwd_macos(pid)
+    elif system == "Windows":
+        # Windows is not currently supported for CWD detection
+        # Would require pywin32 or ctypes with Windows API calls
+        logger.debug(f"Windows platform detected - CWD detection not supported for PID {pid}")
+        cwd = None
+    else:
+        logger.warning(f"Unsupported platform '{system}' for CWD detection")
+        cwd = None
+
+    # Cache the result (even if None)
+    _cwd_cache[pid] = cwd
+    return cwd
+
+
+def _get_process_cwd_linux(pid: int) -> Optional[str]:
+    """Get process CWD on Linux using /proc filesystem.
+
+    Args:
+        pid: Process ID
+
+    Returns:
+        Absolute path to process's working directory, or None if unavailable
+    """
+    try:
+        # On Linux, /proc/{pid}/cwd is a symlink to the process's CWD
+        proc_cwd = Path(f"/proc/{pid}/cwd")
+
+        if not proc_cwd.exists():
+            logger.debug(f"Process {pid} does not exist (no /proc/{pid}/cwd)")
+            return None
+
+        # Resolve the symlink to get the actual path
+        cwd = proc_cwd.resolve(strict=True)
+        logger.debug(f"PID {pid} CWD: {cwd}")
+        return str(cwd)
+
+    except PermissionError:
+        logger.debug(f"Permission denied accessing /proc/{pid}/cwd")
+        return None
+    except FileNotFoundError:
+        logger.debug(f"Process {pid} not found or terminated")
+        return None
+    except OSError as e:
+        logger.debug(f"OS error reading /proc/{pid}/cwd: {e}")
+        return None
+
+
+def _get_process_cwd_macos(pid: int) -> Optional[str]:
+    """Get process CWD on macOS using lsof command.
+
+    Args:
+        pid: Process ID
+
+    Returns:
+        Absolute path to process's working directory, or None if unavailable
+    """
+    try:
+        # On macOS, use lsof to find the cwd
+        # -a: AND the selection criteria
+        # -p: select by PID
+        # -d cwd: select the current working directory
+        # -Fn: output in parseable format with names only
+        result = subprocess.run(
+            ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+            capture_output=True,
+            text=True,
+            timeout=0.5  # Reduced from 2 seconds for better performance
+        )
+
+        if result.returncode == 0:
+            # Parse lsof output (format: "npath")
+            for line in result.stdout.strip().split("\n"):
+                if line.startswith("n"):
+                    cwd = line[1:]  # Remove the 'n' prefix
+                    logger.debug(f"PID {pid} CWD: {cwd}")
+                    return cwd
+        else:
+            # lsof returns non-zero if process doesn't exist or permission denied
+            logger.debug(f"lsof returned code {result.returncode} for PID {pid}")
+
+        return None
+
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Timeout getting CWD for PID {pid} using lsof")
+        return None
+    except FileNotFoundError:
+        logger.warning("lsof command not found - install lsof for CWD detection on macOS")
+        return None
+    except subprocess.SubprocessError as e:
+        logger.debug(f"Subprocess error running lsof for PID {pid}: {e}")
+        return None
+
+
+def _is_in_project(pid: int, project_root: Path) -> bool:
+    """Check if a process is working within the project directory.
+
+    Args:
+        pid: Process ID to check
+        project_root: Project root directory path
+
+    Returns:
+        True if process's working directory is within project_root
+    """
+    cwd = _get_process_cwd(pid)
+    if not cwd:
+        return False
+
+    try:
+        cwd_path = Path(cwd).resolve()
+        project_path = project_root.resolve()
+
+        # Check if cwd is project_root or a subdirectory of it
+        return cwd_path == project_path or project_path in cwd_path.parents
+    except (ValueError, OSError):
         return False
 
 
@@ -334,6 +597,9 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
     Raises:
         RuntimeError: If tmux is not running or discovery fails
     """
+    # Clear the CWD cache at the start of each discovery run
+    _clear_cwd_cache()
+
     # Use config default if not specified
     if stale_threshold is None:
         stale_threshold = get_config().discovery.stale_threshold
@@ -357,12 +623,20 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
     if session_name:
         panes = [p for p in panes if p["session_name"] == session_name]
     
+    # Get project root for directory filtering
+    from .project import get_project_root
+    project_root = get_project_root()
+
     # Identify Claude Code agents
     discovered_agents = []
     active_pane_indices = set()
 
     for pane in panes:
         if not _is_claude_code_process(pane["command"], pane["pid"]):
+            continue
+
+        # Filter by project directory - only include agents working in this project
+        if not _is_in_project(pane["pid"], project_root):
             continue
 
         pane_index = pane["pane_index"]
