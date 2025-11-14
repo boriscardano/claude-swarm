@@ -18,6 +18,7 @@ from claudeswarm.discovery import (
     list_active_agents,
     _parse_tmux_panes,
     _is_claude_code_process,
+    _has_claude_child_process,
     _generate_agent_id,
     _load_existing_registry,
     _save_registry,
@@ -197,26 +198,47 @@ class TestTmuxParsing:
 
 class TestClaudeCodeDetection:
     """Tests for Claude Code process identification."""
-    
+
     def test_is_claude_code_process_claude(self):
         """Test detection of 'claude' command."""
-        assert _is_claude_code_process("claude") is True
-        assert _is_claude_code_process("CLAUDE") is True
-    
+        assert _is_claude_code_process("claude", 1234) is True
+        assert _is_claude_code_process("CLAUDE", 1234) is True
+
     def test_is_claude_code_process_claude_code(self):
         """Test detection of 'claude-code' command."""
-        assert _is_claude_code_process("claude-code") is True
-        assert _is_claude_code_process("CLAUDE-CODE") is True
-    
+        assert _is_claude_code_process("claude-code", 1234) is True
+        assert _is_claude_code_process("CLAUDE-CODE", 1234) is True
+
     def test_is_claude_code_process_node(self):
         """Test detection of 'node' command (may be Claude Code)."""
-        assert _is_claude_code_process("node") is True
-    
-    def test_is_claude_code_process_negative(self):
-        """Test non-Claude Code commands."""
-        assert _is_claude_code_process("bash") is False
-        assert _is_claude_code_process("vim") is False
-        assert _is_claude_code_process("python") is False
+        assert _is_claude_code_process("node", 1234) is True
+
+    @patch("claudeswarm.discovery._has_claude_child_process")
+    def test_is_claude_code_process_negative(self, mock_has_child):
+        """Test non-Claude Code commands without child processes."""
+        mock_has_child.return_value = False
+
+        assert _is_claude_code_process("bash", 1234) is False
+        assert _is_claude_code_process("vim", 1234) is False
+        assert _is_claude_code_process("python", 1234) is False
+
+    @patch("claudeswarm.discovery._has_claude_child_process")
+    def test_is_claude_code_process_child_detection(self, mock_has_child):
+        """Test detection via child processes when pane command doesn't match."""
+        mock_has_child.return_value = True
+
+        # Pane shows "2.0.37" but has claude child process
+        assert _is_claude_code_process("2.0.37", 1234) is True
+        mock_has_child.assert_called_once_with(1234)
+
+    @patch("claudeswarm.discovery._has_claude_child_process")
+    def test_is_claude_code_process_no_child(self, mock_has_child):
+        """Test negative case when no child processes match."""
+        mock_has_child.return_value = False
+
+        # Pane shows version number and no claude child
+        assert _is_claude_code_process("2.0.37", 1234) is False
+        mock_has_child.assert_called_once_with(1234)
 
 
 class TestAgentIdGeneration:
