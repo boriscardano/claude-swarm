@@ -821,6 +821,7 @@ class MessagingSystem:
         # Track delivery success for logging
         success = False
         error_msg = None
+        tmux_unavailable = False
 
         try:
             self.delivery.send_to_pane(pane_id, formatted_msg)
@@ -828,9 +829,11 @@ class MessagingSystem:
             logger.info(f"Message {message.msg_id} delivered to {recipient_id}")
 
         except (TmuxError, TmuxSocketError, TmuxPaneNotFoundError, TmuxTimeoutError) as e:
+            # Tmux errors are expected in sandboxed environments
+            # Don't raise - just log to file and continue
             error_msg = str(e)
-            logger.error(f"Failed to deliver message {message.msg_id} to {recipient_id}: {e}")
-            raise  # Re-raise tmux errors
+            tmux_unavailable = True
+            logger.debug(f"Tmux delivery unavailable for message {message.msg_id} to {recipient_id}: {e}")
 
         except Exception as e:
             error_msg = str(e)
@@ -842,7 +845,7 @@ class MessagingSystem:
             # (even if delivery failed, we attempted to send)
             self.rate_limiter.record_message(sender_id)
 
-            # Always log the message attempt
+            # Always log the message attempt (inbox delivery)
             delivery_status = {recipient_id: success}
             try:
                 self.message_logger.log_message(message, delivery_status)
