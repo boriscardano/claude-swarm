@@ -797,30 +797,34 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     # Step 2: Send onboarding messages
     print("Step 2: Broadcasting onboarding messages...")
 
+    # Consolidate into fewer, comprehensive messages to avoid rate limiting
+    agent_list = ', '.join(a.id for a in agents)
+
     messages = [
-        "=== CLAUDE SWARM COORDINATION ACTIVE ===",
-        "Multi-agent coordination is now available in this session.",
-        "",
-        "KEY PROTOCOL RULES:",
-        "1. ALWAYS acquire file locks before editing (claudeswarm acquire-file-lock <path> <agent-id> <reason>)",
-        "2. ALWAYS release locks immediately after editing (claudeswarm release-file-lock <path> <agent-id>)",
-        "3. Use specific message types when communicating (INFO, QUESTION, REVIEW-REQUEST, BLOCKED, etc.)",
-        "4. Check COORDINATION.md for sprint goals and current work",
-        "",
-        "QUICK COMMAND REFERENCE:",
-        "Discovery: claudeswarm discover-agents",
-        "List locks: claudeswarm list-all-locks",
-        "Clean up stale locks: claudeswarm cleanup-stale-locks",
-        "",
-        f"ACTIVE AGENTS: {', '.join(a.id for a in agents)}",
-        "",
-        "DOCUMENTATION: See docs/AGENT_PROTOCOL.md, docs/TUTORIAL.md, or docs/INTEGRATION_GUIDE.md",
-        "",
-        "Ready to coordinate! Use 'claudeswarm --help' for full command list.",
+        # Message 1: Header + Protocol Rules + Active Agents
+        f"""=== CLAUDE SWARM COORDINATION ACTIVE ===
+Multi-agent coordination is now available in this session.
+
+KEY PROTOCOL RULES:
+1. ALWAYS acquire file locks before editing (claudeswarm acquire-file-lock <path> <agent-id> <reason>)
+2. ALWAYS release locks immediately after editing (claudeswarm release-file-lock <path> <agent-id>)
+3. Use specific message types when communicating (INFO, QUESTION, REVIEW-REQUEST, BLOCKED, etc.)
+4. Check COORDINATION.md for sprint goals and current work
+
+ACTIVE AGENTS: {agent_list}""",
+
+        # Message 2: Quick Command Reference + Documentation
+        """QUICK COMMAND REFERENCE:
+• Discovery: claudeswarm discover-agents
+• List locks: claudeswarm list-all-locks
+• Clean up stale locks: claudeswarm cleanup-stale-locks
+
+DOCUMENTATION: See docs/AGENT_PROTOCOL.md, docs/TUTORIAL.md, or docs/INTEGRATION_GUIDE.md
+
+Ready to coordinate! Use 'claudeswarm --help' for full command list.""",
     ]
 
-    # Filter out empty messages
-    messages_to_send = [m for m in messages if m.strip()]
+    messages_to_send = messages
 
     messages_sent = 0
     failed_messages = 0
