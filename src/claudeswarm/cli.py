@@ -60,8 +60,19 @@ def format_timestamp(ts: float) -> str:
 def cmd_acquire_file_lock(args: argparse.Namespace) -> None:
     """Acquire a lock on a file."""
     try:
+        # Auto-detect agent_id if not provided
+        agent_id = args.agent_id
+        if not agent_id:
+            detected_id, _ = _detect_current_agent()
+            if detected_id:
+                agent_id = detected_id
+            else:
+                print("Error: Could not auto-detect agent identity", file=sys.stderr)
+                print("Please provide agent_id or run 'claudeswarm whoami' to verify registration", file=sys.stderr)
+                sys.exit(1)
+
         # Validate inputs
-        validated_agent_id = validate_agent_id(args.agent_id)
+        validated_agent_id = validate_agent_id(agent_id)
         validated_filepath = validate_file_path(
             args.filepath,
             must_be_relative=False,
@@ -87,7 +98,7 @@ def cmd_acquire_file_lock(args: argparse.Namespace) -> None:
 
     if success:
         print(f"Lock acquired on: {args.filepath}")
-        print(f"  Agent: {args.agent_id}")
+        print(f"  Agent: {validated_agent_id}")
         if args.reason:
             print(f"  Reason: {args.reason}")
         sys.exit(0)
@@ -108,8 +119,19 @@ def cmd_acquire_file_lock(args: argparse.Namespace) -> None:
 def cmd_release_file_lock(args: argparse.Namespace) -> None:
     """Release a lock on a file."""
     try:
+        # Auto-detect agent_id if not provided
+        agent_id = args.agent_id
+        if not agent_id:
+            detected_id, _ = _detect_current_agent()
+            if detected_id:
+                agent_id = detected_id
+            else:
+                print("Error: Could not auto-detect agent identity", file=sys.stderr)
+                print("Please provide agent_id or run 'claudeswarm whoami' to verify registration", file=sys.stderr)
+                sys.exit(1)
+
         # Validate inputs
-        validated_agent_id = validate_agent_id(args.agent_id)
+        validated_agent_id = validate_agent_id(agent_id)
         validated_filepath = validate_file_path(
             args.filepath,
             must_be_relative=False,
@@ -296,11 +318,63 @@ def cmd_list_agents(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _detect_current_agent() -> tuple[Optional[str], Optional[dict]]:
+    """Detect the current agent from TMUX_PANE environment variable.
+
+    Returns:
+        Tuple of (agent_id, agent_dict) if found, (None, None) otherwise
+    """
+    import os
+    from claudeswarm.project import get_active_agents_path
+
+    # Check if running in tmux
+    tmux_pane_id = os.environ.get('TMUX_PANE')
+    if not tmux_pane_id:
+        return None, None
+
+    # Load registry
+    registry_path = get_active_agents_path()
+    if not registry_path.exists():
+        return None, None
+
+    try:
+        with open(registry_path, 'r', encoding='utf-8') as f:
+            registry = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None, None
+
+    agents = registry.get('agents', [])
+
+    # Try matching by TMUX_PANE env var (works in sandboxed environments!)
+    for agent in agents:
+        if agent.get('tmux_pane_id') == tmux_pane_id:
+            return agent.get('id'), agent
+
+    # Fallback: Try converting TMUX_PANE to pane index format
+    try:
+        result = subprocess.run(
+            ['tmux', 'display-message', '-p', '-t', tmux_pane_id,
+             '#{session_name}:#{window_index}.#{pane_index}'],
+            capture_output=True,
+            text=True,
+            timeout=2.0
+        )
+        if result.returncode == 0:
+            current_pane = result.stdout.strip()
+            for agent in agents:
+                if agent.get('pane_index') == current_pane:
+                    return agent.get('id'), agent
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    return None, None
+
+
 def cmd_send_message(args: argparse.Namespace) -> None:
     """Send a message to a specific agent.
 
     Args:
-        args.sender_id: ID of the sending agent
+        args.sender_id: ID of the sending agent (optional, auto-detected if in tmux)
         args.recipient_id: ID of the receiving agent
         args.type: Message type (case-insensitive, supports hyphens and underscores)
         args.content: Message content to send
@@ -314,8 +388,19 @@ def cmd_send_message(args: argparse.Namespace) -> None:
     from claudeswarm.validators import sanitize_message_content
 
     try:
+        # Auto-detect sender if not provided
+        sender_id = args.sender_id
+        if not sender_id:
+            detected_id, _ = _detect_current_agent()
+            if detected_id:
+                sender_id = detected_id
+            else:
+                print("Error: Could not auto-detect agent identity", file=sys.stderr)
+                print("Please provide sender_id or run 'claudeswarm whoami' to verify registration", file=sys.stderr)
+                sys.exit(1)
+
         # Validate agent IDs (validators handle all validation including length)
-        validated_sender = validate_agent_id(args.sender_id)
+        validated_sender = validate_agent_id(sender_id)
         validated_recipient = validate_agent_id(args.recipient_id)
 
         # Validate and sanitize message content
@@ -379,7 +464,7 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
     """Broadcast a message to all agents.
 
     Args:
-        args.sender_id: ID of the sending agent
+        args.sender_id: ID of the sending agent (optional, auto-detected if in tmux)
         args.type: Message type (case-insensitive, supports hyphens and underscores)
         args.content: Message content to broadcast
         args.include_self: Whether to include sender in broadcast
@@ -394,8 +479,19 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
     from claudeswarm.validators import sanitize_message_content
 
     try:
+        # Auto-detect sender if not provided
+        sender_id = args.sender_id
+        if not sender_id:
+            detected_id, _ = _detect_current_agent()
+            if detected_id:
+                sender_id = detected_id
+            else:
+                print("Error: Could not auto-detect agent identity", file=sys.stderr)
+                print("Please provide sender_id or run 'claudeswarm whoami' to verify registration", file=sys.stderr)
+                sys.exit(1)
+
         # Validate sender ID (validators handle all validation including length)
-        validated_sender = validate_agent_id(args.sender_id)
+        validated_sender = validate_agent_id(sender_id)
 
         # Validate and sanitize message content
         validated_content = validate_message_content(args.content)
@@ -1384,10 +1480,15 @@ def main() -> NoReturn:
         "send-message",
         help="Send a message to a specific agent",
     )
-    send_parser.add_argument("sender_id", help="ID of sending agent")
     send_parser.add_argument("recipient_id", help="ID of receiving agent")
     send_parser.add_argument("type", help="Message type (INFO, QUESTION, BLOCKED, etc.)")
     send_parser.add_argument("content", help="Message content")
+    send_parser.add_argument(
+        "--sender-id",
+        dest="sender_id",
+        default=None,
+        help="ID of sending agent (auto-detected if omitted)",
+    )
     send_parser.add_argument("--json", action="store_true", help="Output in JSON format")
     send_parser.set_defaults(func=cmd_send_message)
 
@@ -1396,9 +1497,14 @@ def main() -> NoReturn:
         "broadcast-message",
         help="Broadcast a message to all agents",
     )
-    broadcast_parser.add_argument("sender_id", help="ID of sending agent")
     broadcast_parser.add_argument("type", help="Message type (INFO, QUESTION, BLOCKED, etc.)")
     broadcast_parser.add_argument("content", help="Message content")
+    broadcast_parser.add_argument(
+        "--sender-id",
+        dest="sender_id",
+        default=None,
+        help="ID of sending agent (auto-detected if omitted)",
+    )
     broadcast_parser.add_argument(
         "--include-self",
         action="store_true",
@@ -1430,9 +1536,14 @@ def main() -> NoReturn:
         help="Acquire a lock on a file",
     )
     acquire_parser.add_argument("filepath", help="Path to the file to lock")
-    acquire_parser.add_argument("agent_id", help="Agent ID acquiring the lock")
     acquire_parser.add_argument(
         "reason", nargs="?", default="", help="Reason for the lock"
+    )
+    acquire_parser.add_argument(
+        "--agent-id",
+        dest="agent_id",
+        default=None,
+        help="Agent ID acquiring the lock (auto-detected if omitted)",
     )
     acquire_parser.set_defaults(func=cmd_acquire_file_lock)
 
@@ -1442,7 +1553,12 @@ def main() -> NoReturn:
         help="Release a lock on a file",
     )
     release_parser.add_argument("filepath", help="Path to the file to unlock")
-    release_parser.add_argument("agent_id", help="Agent ID releasing the lock")
+    release_parser.add_argument(
+        "--agent-id",
+        dest="agent_id",
+        default=None,
+        help="Agent ID releasing the lock (auto-detected if omitted)",
+    )
     release_parser.set_defaults(func=cmd_release_file_lock)
 
     # who-has-lock command
