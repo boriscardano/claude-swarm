@@ -815,9 +815,10 @@ ACTIVE AGENTS: {agent_list}""",
 
         # Message 2: Quick Command Reference + Documentation
         """QUICK COMMAND REFERENCE:
+• Identity: claudeswarm whoami (find out which agent you are)
 • Discovery: claudeswarm discover-agents
-• List locks: claudeswarm list-all-locks
-• Clean up stale locks: claudeswarm cleanup-stale-locks
+• Messaging: claudeswarm send-message / broadcast-message
+• Locks: claudeswarm list-all-locks / cleanup-stale-locks
 
 DOCUMENTATION: See docs/AGENT_PROTOCOL.md, docs/TUTORIAL.md, or docs/INTEGRATION_GUIDE.md
 
