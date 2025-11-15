@@ -135,6 +135,7 @@ class Message:
         recipients: List of recipient agent IDs
         msg_id: Unique identifier for tracking (UUID)
         signature: HMAC signature for message authentication (optional, auto-generated)
+        delivery_status: Dict mapping recipient_id -> delivery success (populated after sending)
     """
 
     sender_id: str
@@ -144,6 +145,7 @@ class Message:
     recipients: List[str]
     msg_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     signature: str = field(default="")
+    delivery_status: Dict[str, bool] = field(default_factory=dict)
 
     def __post_init__(self):
         """Validate message fields."""
@@ -227,7 +229,8 @@ class Message:
             'content': self.content,
             'recipients': self.recipients,
             'msg_id': self.msg_id,
-            'signature': self.signature
+            'signature': self.signature,
+            'delivery_status': self.delivery_status
         }
 
     def to_log_dict(self) -> dict:
@@ -847,6 +850,10 @@ class MessagingSystem:
 
             # Always log the message attempt (inbox delivery)
             delivery_status = {recipient_id: success}
+
+            # Store delivery status in message for CLI access
+            message.delivery_status = delivery_status
+
             try:
                 self.message_logger.log_message(message, delivery_status)
             except Exception as log_error:
@@ -983,6 +990,9 @@ class MessagingSystem:
 
         # Always record rate limit (we attempted the broadcast)
         self.rate_limiter.record_message(sender_id)
+
+        # Store delivery status in message for CLI access
+        message.delivery_status = delivery_status
 
         # Log the message
         try:

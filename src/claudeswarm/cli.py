@@ -429,9 +429,11 @@ def cmd_send_message(args: argparse.Namespace) -> None:
         )
 
         if message:
-            print(f"Message sent to inbox: {args.recipient_id}")
             delivered = message.to_dict().get('delivery_status', {}).get(validated_recipient, False)
-            if not delivered:
+            if delivered:
+                print(f"✓ Message delivered to {args.recipient_id} (real-time)")
+            else:
+                print(f"Message sent to inbox: {args.recipient_id}")
                 print(f"  ℹ️  Real-time delivery unavailable (tmux unavailable in sandbox)")
                 print(f"  ℹ️  Recipient can read message with: claudeswarm check-messages")
             if args.json:
@@ -529,11 +531,14 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
         success_count = sum(1 for success in results.values() if success)
         total_count = len(results)
 
-        # Message is ALWAYS logged to inbox, even if tmux delivery fails
-        print(f"Message sent to inbox: {total_count}/{total_count} agents")
-
-        if success_count < total_count:
-            print(f"  ℹ️  Real-time delivery: {success_count}/{total_count} (tmux unavailable in sandbox)")
+        # Show delivery status
+        if success_count == total_count:
+            print(f"✓ Broadcast delivered to {total_count}/{total_count} agents (real-time)")
+        elif success_count > 0:
+            print(f"Message broadcast: {success_count}/{total_count} real-time, {total_count - success_count}/{total_count} inbox")
+        else:
+            print(f"Message sent to inbox: {total_count}/{total_count} agents")
+            print(f"  ℹ️  Real-time delivery unavailable (tmux unavailable in sandbox)")
             print(f"  ℹ️  Recipients can read messages with: claudeswarm check-messages")
 
         if args.json:
