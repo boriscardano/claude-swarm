@@ -895,17 +895,26 @@ def cmd_whoami(args: argparse.Namespace) -> None:
     """
     from claudeswarm.project import get_active_agents_path
 
-    # Check if running in tmux
+    # Check if running in tmux by checking TMUX_PANE environment variable
+    import os
+    tmux_pane_id = os.environ.get('TMUX_PANE')
+
+    if not tmux_pane_id:
+        print("Not running in a tmux session.", file=sys.stderr)
+        print("The 'whoami' command only works within tmux panes.", file=sys.stderr)
+        sys.exit(1)
+
+    # Convert tmux pane ID (like %2) to session:window.pane format (like 0:1.1)
     try:
         result = subprocess.run(
-            ['tmux', 'display-message', '-p', '#{session_name}:#{window_index}.#{pane_index}'],
+            ['tmux', 'display-message', '-p', '-t', tmux_pane_id,
+             '#{session_name}:#{window_index}.#{pane_index}'],
             capture_output=True,
             text=True,
             timeout=2.0
         )
         if result.returncode != 0:
-            print("Not running in a tmux session.", file=sys.stderr)
-            print("The 'whoami' command only works within tmux panes.", file=sys.stderr)
+            print(f"Error: Unable to query tmux pane information: {result.stderr}", file=sys.stderr)
             sys.exit(1)
 
         current_pane = result.stdout.strip()
