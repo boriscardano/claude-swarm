@@ -1312,8 +1312,28 @@ def cmd_reload(args: argparse.Namespace) -> None:
             if result.returncode == 0:
                 print(f"   ✓ Installed from {editable_location} (editable mode)")
             else:
-                print(f"   ✗ Installation failed: {result.stderr}", file=sys.stderr)
-                sys.exit(1)
+                # Check for uv cache permission errors
+                if "Operation not permitted" in result.stderr and ".cache/uv" in result.stderr:
+                    print(f"   ⚠️  uv cache permission error detected", file=sys.stderr)
+                    print(f"   Attempting to clear cache and retry...", file=sys.stderr)
+                    # Clear the problematic cache directory
+                    subprocess.run(["rm", "-rf", os.path.expanduser("~/.cache/uv/sdists-v9/.git")],
+                                   capture_output=True, timeout=5)
+                    # Retry installation
+                    result = subprocess.run(
+                        ["uv", "tool", "install", "--force", "--editable", editable_location],
+                        capture_output=True,
+                        text=True,
+                        timeout=60
+                    )
+                    if result.returncode == 0:
+                        print(f"   ✓ Installed from {editable_location} (editable mode) after cache clear")
+                    else:
+                        print(f"   ✗ Installation failed: {result.stderr}", file=sys.stderr)
+                        sys.exit(1)
+                else:
+                    print(f"   ✗ Installation failed: {result.stderr}", file=sys.stderr)
+                    sys.exit(1)
         else:  # github
             result = subprocess.run(
                 ["uv", "tool", "install", "--force", "git+https://github.com/borisbanach/claude-swarm.git"],
