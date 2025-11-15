@@ -906,6 +906,7 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Convert tmux pane ID (like %2) to session:window.pane format (like 0:1.1)
+    current_pane = None
     try:
         result = subprocess.run(
             ['tmux', 'display-message', '-p', '-t', tmux_pane_id,
@@ -914,11 +915,18 @@ def cmd_whoami(args: argparse.Namespace) -> None:
             text=True,
             timeout=2.0
         )
-        if result.returncode != 0:
-            print(f"Error: Unable to query tmux pane information: {result.stderr}", file=sys.stderr)
-            sys.exit(1)
-
-        current_pane = result.stdout.strip()
+        if result.returncode == 0:
+            current_pane = result.stdout.strip()
+        else:
+            # Permission error or other issue - try fallback method
+            stderr = result.stderr.strip()
+            if 'permission' in stderr.lower() or 'not permitted' in stderr.lower():
+                # In sandboxed environments (like Claude Code Bash tool),
+                # we can't access tmux socket. Fallback to PID matching.
+                pass
+            else:
+                print(f"Error: Unable to query tmux pane information: {stderr}", file=sys.stderr)
+                sys.exit(1)
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
         print(f"Error: Unable to detect tmux environment: {e}", file=sys.stderr)
         sys.exit(1)
@@ -944,10 +952,27 @@ def cmd_whoami(args: argparse.Namespace) -> None:
     # Search for current pane in registry
     agents = registry.get('agents', [])
     current_agent = None
-    for agent in agents:
-        if agent.get('pane_index') == current_pane:
-            current_agent = agent
-            break
+
+    # Try matching by pane index first (if we have it)
+    if current_pane:
+        for agent in agents:
+            if agent.get('pane_index') == current_pane:
+                current_agent = agent
+                break
+
+    # Fallback: try matching by PID (for sandboxed environments)
+    if not current_agent:
+        # Get current process and check if it's a Claude Code agent
+        # Claude Code agents spawn bash as child processes, so check parent
+        current_pid = os.getpid()
+        parent_pid = os.getppid()
+
+        # Try both current PID and parent PID
+        for agent in agents:
+            agent_pid = agent.get('pid')
+            if agent_pid and agent_pid in (current_pid, parent_pid):
+                current_agent = agent
+                break
 
     # Display results
     if current_agent:
