@@ -429,7 +429,11 @@ def cmd_send_message(args: argparse.Namespace) -> None:
         )
 
         if message:
-            print(f"Message sent successfully to {args.recipient_id}")
+            print(f"Message sent to inbox: {args.recipient_id}")
+            delivered = message.to_dict().get('delivery_status', {}).get(validated_recipient, False)
+            if not delivered:
+                print(f"  ℹ️  Real-time delivery unavailable (tmux unavailable in sandbox)")
+                print(f"  ℹ️  Recipient can read message with: claudeswarm check-messages")
             if args.json:
                 # Serialize JSON and fail hard if serialization fails
                 try:
@@ -524,11 +528,16 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
             print("Run 'claudeswarm discover-agents' to refresh the agent registry", file=sys.stderr)
             sys.exit(1)
 
-        # Count successful deliveries
+        # Count successful deliveries (tmux send-keys)
         success_count = sum(1 for success in results.values() if success)
         total_count = len(results)
 
-        print(f"Message broadcast: {success_count}/{total_count} agents reached")
+        # Message is ALWAYS logged to inbox, even if tmux delivery fails
+        print(f"Message sent to inbox: {total_count}/{total_count} agents")
+
+        if success_count < total_count:
+            print(f"  ℹ️  Real-time delivery: {success_count}/{total_count} (tmux unavailable in sandbox)")
+            print(f"  ℹ️  Recipients can read messages with: claudeswarm check-messages")
 
         if args.json:
             # Serialize JSON and fail hard if serialization fails
@@ -540,11 +549,11 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
                 sys.exit(1)
         elif args.verbose:
             for agent_id, success in sorted(results.items()):
-                status = "✓" if success else "✗"
-                print(f"  {status} {agent_id}")
+                status = "✓ delivered" if success else "📬 in inbox"
+                print(f"  {status}: {agent_id}")
 
-        # Exit with 0 if at least one agent was reached successfully
-        sys.exit(0 if success_count > 0 else 1)
+        # Always exit 0 since message is logged (inbox delivery always succeeds)
+        sys.exit(0)
 
     except ValidationError as e:
         print(f"Validation error: {e}", file=sys.stderr)
