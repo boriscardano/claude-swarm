@@ -25,6 +25,7 @@ from ..project import (
     get_messages_log_path,
     get_locks_dir_path,
 )
+from ..file_lock import FileLock, FileLockTimeout, FileLockError
 
 # Project paths
 PROJECT_ROOT = get_project_root()
@@ -58,6 +59,9 @@ if STATIC_DIR.exists():
 def safe_load_json(file_path: Path) -> dict[str, Any] | None:
     """Safely load JSON file with error handling.
 
+    For ACTIVE_AGENTS.json, uses shared file lock to prevent reading
+    partial/corrupted data during concurrent writes by agents.
+
     Args:
         file_path: Path to JSON file
 
@@ -67,8 +71,26 @@ def safe_load_json(file_path: Path) -> dict[str, Any] | None:
     try:
         if not file_path.exists():
             return None
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+
+        # Use shared lock for ACTIVE_AGENTS.json to prevent reading corrupted data
+        # during concurrent writes by multiple agents
+        if file_path.name == "ACTIVE_AGENTS.json":
+            try:
+                with FileLock(file_path, timeout=2.0, shared=True):
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        return json.load(f)
+            except FileLockTimeout:
+                # If we can't get the lock, return None gracefully
+                # Dashboard will retry on next poll
+                return None
+            except (FileLockError, OSError, IOError):
+                # Other locking or I/O errors - return None gracefully
+                return None
+        else:
+            # For other JSON files, read without locking
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+
     except (json.JSONDecodeError, IOError, OSError):
         return None
 
