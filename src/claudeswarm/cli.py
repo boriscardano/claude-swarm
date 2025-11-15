@@ -907,6 +907,8 @@ def cmd_whoami(args: argparse.Namespace) -> None:
 
     # Convert tmux pane ID (like %2) to session:window.pane format (like 0:1.1)
     current_pane = None
+    pane_lookup_error = None
+
     try:
         result = subprocess.run(
             ['tmux', 'display-message', '-p', '-t', tmux_pane_id,
@@ -918,18 +920,10 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         if result.returncode == 0:
             current_pane = result.stdout.strip()
         else:
-            # Permission error or other issue - try fallback method
-            stderr = result.stderr.strip()
-            if 'permission' in stderr.lower() or 'not permitted' in stderr.lower():
-                # In sandboxed environments (like Claude Code Bash tool),
-                # we can't access tmux socket. Fallback to PID matching.
-                pass
-            else:
-                print(f"Error: Unable to query tmux pane information: {stderr}", file=sys.stderr)
-                sys.exit(1)
+            # Store error for optional display (permission errors are expected in sandboxed environments)
+            pane_lookup_error = result.stderr.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        print(f"Error: Unable to detect tmux environment: {e}", file=sys.stderr)
-        sys.exit(1)
+        pane_lookup_error = str(e)
 
     # Load active agents registry
     registry_path = get_active_agents_path()
@@ -953,14 +947,20 @@ def cmd_whoami(args: argparse.Namespace) -> None:
     agents = registry.get('agents', [])
     current_agent = None
 
-    # Try matching by pane index first (if we have it)
-    if current_pane:
+    # Try matching by TMUX_PANE env var first (works in sandboxed environments!)
+    for agent in agents:
+        if agent.get('tmux_pane_id') == tmux_pane_id:
+            current_agent = agent
+            break
+
+    # Fallback 1: Try matching by pane index (if we successfully converted it)
+    if not current_agent and current_pane:
         for agent in agents:
             if agent.get('pane_index') == current_pane:
                 current_agent = agent
                 break
 
-    # Fallback: try matching by PID (for sandboxed environments)
+    # Fallback 2: Try matching by PID (last resort for old registries without tmux_pane_id)
     if not current_agent:
         # Get current process and check if it's a Claude Code agent
         # Claude Code agents spawn bash as child processes, so check parent
@@ -999,14 +999,14 @@ def cmd_whoami(args: argparse.Namespace) -> None:
     else:
         print("=== Current Pane ===")
         print()
-        print(f"  Pane: {current_pane}")
+        print(f"  Pane: {current_pane if current_pane else tmux_pane_id}")
         print()
         print("You are NOT registered as an agent.")
         print()
         print("Registered agents in this session:")
         if agents:
             for agent in agents:
-                print(f"  - {agent.get('id', 'unknown')} (pane: {agent.get('pane_index', 'unknown')})")
+                print(f"  - {agent.get('id', 'unknown')} (pane: {agent.get('pane_index', 'unknown')}, PID: {agent.get('pid', 'unknown')})")
         else:
             print("  (none)")
         print()
