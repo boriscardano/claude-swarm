@@ -883,6 +883,104 @@ Ready to coordinate! Use 'claudeswarm --help' for full command list.""",
     sys.exit(0)
 
 
+def cmd_whoami(args: argparse.Namespace) -> None:
+    """Display information about the current agent.
+
+    Checks if the current tmux pane is registered as an agent and displays
+    agent information if found, or indicates if not running as an agent.
+
+    Exit Codes:
+        0: Success (agent found or not)
+        1: Error (not in tmux, registry not found, etc.)
+    """
+    from claudeswarm.project import get_active_agents_path
+
+    # Check if running in tmux
+    try:
+        result = subprocess.run(
+            ['tmux', 'display-message', '-p', '#{session_name}:#{window_index}.#{pane_index}'],
+            capture_output=True,
+            text=True,
+            timeout=2.0
+        )
+        if result.returncode != 0:
+            print("Not running in a tmux session.", file=sys.stderr)
+            print("The 'whoami' command only works within tmux panes.", file=sys.stderr)
+            sys.exit(1)
+
+        current_pane = result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        print(f"Error: Unable to detect tmux environment: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Load active agents registry
+    registry_path = get_active_agents_path()
+    if not registry_path.exists():
+        print("No active agents registry found.")
+        print()
+        print("You are NOT registered as an agent.")
+        print()
+        print("To discover and register agents, run:")
+        print("  claudeswarm discover-agents")
+        sys.exit(0)
+
+    try:
+        with open(registry_path, 'r', encoding='utf-8') as f:
+            registry = json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"Error reading agent registry: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Search for current pane in registry
+    agents = registry.get('agents', [])
+    current_agent = None
+    for agent in agents:
+        if agent.get('pane_index') == current_pane:
+            current_agent = agent
+            break
+
+    # Display results
+    if current_agent:
+        print("=== Agent Identity ===")
+        print()
+        print(f"  Agent ID: {current_agent.get('id', 'unknown')}")
+        print(f"  Pane: {current_agent.get('pane_index', 'unknown')}")
+        print(f"  PID: {current_agent.get('pid', 'unknown')}")
+        print(f"  Status: {current_agent.get('status', 'unknown')}")
+        print(f"  Session: {current_agent.get('session_name', 'unknown')}")
+
+        last_seen = current_agent.get('last_seen')
+        if last_seen:
+            print(f"  Last Seen: {last_seen}")
+
+        print()
+        print("You ARE registered as an active agent.")
+        print()
+        print("Commands available:")
+        print("  claudeswarm send-message <recipient> <type> <message>")
+        print("  claudeswarm broadcast-message <type> <message>")
+        print("  claudeswarm acquire-file-lock <path> <agent-id> <reason>")
+        print("  claudeswarm release-file-lock <path> <agent-id>")
+    else:
+        print("=== Current Pane ===")
+        print()
+        print(f"  Pane: {current_pane}")
+        print()
+        print("You are NOT registered as an agent.")
+        print()
+        print("Registered agents in this session:")
+        if agents:
+            for agent in agents:
+                print(f"  - {agent.get('id', 'unknown')} (pane: {agent.get('pane_index', 'unknown')})")
+        else:
+            print("  (none)")
+        print()
+        print("To discover and register agents, run:")
+        print("  claudeswarm discover-agents")
+
+    sys.exit(0)
+
+
 def cmd_reload(args: argparse.Namespace) -> None:
     """Reload claudeswarm CLI with latest changes.
 
@@ -1283,6 +1381,13 @@ def main() -> NoReturn:
         help="Onboard all discovered agents to the coordination system",
     )
     onboard_parser.set_defaults(func=cmd_onboard)
+
+    # whoami command
+    whoami_parser = subparsers.add_parser(
+        "whoami",
+        help="Display information about the current agent (if registered)",
+    )
+    whoami_parser.set_defaults(func=cmd_whoami)
 
     # acquire-file-lock command
     acquire_parser = subparsers.add_parser(
