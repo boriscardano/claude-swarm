@@ -980,6 +980,90 @@ Ready to coordinate! Use 'claudeswarm --help' for full command list.""",
     sys.exit(0)
 
 
+def cmd_check_messages(args: argparse.Namespace) -> None:
+    """Check messages for the current agent.
+
+    Reads messages from the agent_messages.log file and filters for messages
+    sent to this agent. Works in sandboxed environments by reading from file
+    instead of relying on tmux delivery.
+
+    Exit Codes:
+        0: Success
+        1: Error (not an agent, file not found, etc.)
+    """
+    from claudeswarm.project import get_messages_log_path
+
+    # Auto-detect current agent (or use explicit agent-id for testing)
+    agent_id = getattr(args, 'agent_id', None)
+    if not agent_id:
+        detected_id, _ = _detect_current_agent()
+        if detected_id:
+            agent_id = detected_id
+        else:
+            print("Error: Could not auto-detect agent identity", file=sys.stderr)
+            print("Please run 'claudeswarm whoami' to verify registration", file=sys.stderr)
+            sys.exit(1)
+
+    # Read messages log
+    messages_log = get_messages_log_path()
+    if not messages_log.exists():
+        print(f"No messages found (log file doesn't exist)")
+        sys.exit(0)
+
+    try:
+        with open(messages_log, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+    except (IOError, OSError) as e:
+        print(f"Error reading messages: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse and filter messages for this agent
+    my_messages = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            msg = json.loads(line)
+
+            # Check if this message is for us
+            recipients = msg.get('recipients', [])
+            if agent_id in recipients or 'all' in recipients:
+                my_messages.append(msg)
+        except json.JSONDecodeError:
+            continue
+
+    # Display messages
+    if not my_messages:
+        print(f"No messages for {agent_id}")
+        sys.exit(0)
+
+    # Show last N messages (default 10)
+    limit = args.limit if hasattr(args, 'limit') and args.limit else 10
+    recent_messages = my_messages[-limit:]
+
+    print(f"=== Messages for {agent_id} ({len(recent_messages)} recent) ===")
+    print()
+
+    for msg in recent_messages:
+        sender = msg.get('sender', 'unknown')
+        timestamp = msg.get('timestamp', 'unknown')
+        msg_type = msg.get('msg_type', 'INFO')
+        content = msg.get('content', '')
+        msg_id = msg.get('msg_id', '')[:8]  # Short ID
+
+        print(f"[{timestamp}] From: {sender} ({msg_type})")
+        print(f"  {content}")
+        print(f"  (ID: {msg_id})")
+        print()
+
+    if len(my_messages) > limit:
+        print(f"({len(my_messages) - limit} older messages not shown. Use --limit to see more)")
+
+    sys.exit(0)
+
+
 def cmd_whoami(args: argparse.Namespace) -> None:
     """Display information about the current agent.
 
@@ -1088,6 +1172,7 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         print("You ARE registered as an active agent.")
         print()
         print("Commands available (agent ID auto-detected):")
+        print("  claudeswarm check-messages              # Check your inbox")
         print("  claudeswarm send-message <recipient> <type> <message>")
         print("  claudeswarm broadcast-message <type> <message>")
         print("  claudeswarm acquire-file-lock <path> <reason>")
@@ -1532,6 +1617,25 @@ def main() -> NoReturn:
         help="Display information about the current agent (if registered)",
     )
     whoami_parser.set_defaults(func=cmd_whoami)
+
+    # check-messages command
+    check_messages_parser = subparsers.add_parser(
+        "check-messages",
+        help="Check messages sent to this agent (inbox)",
+    )
+    check_messages_parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Number of recent messages to show (default: 10)",
+    )
+    check_messages_parser.add_argument(
+        "--agent-id",
+        dest="agent_id",
+        default=None,
+        help="Agent ID to check messages for (auto-detected if omitted)",
+    )
+    check_messages_parser.set_defaults(func=cmd_check_messages)
 
     # acquire-file-lock command
     acquire_parser = subparsers.add_parser(
