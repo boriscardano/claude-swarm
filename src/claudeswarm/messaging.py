@@ -524,7 +524,7 @@ class TmuxMessageDelivery:
         """
         try:
             result = subprocess.run(
-                ['tmux', 'list-panes', '-a', '-F', '#{pane_id}'],
+                ['tmux', 'list-panes', '-a', '-F', '#{session_name}:#{window_index}.#{pane_index}'],
                 capture_output=True,
                 text=True,
                 timeout=timeout
