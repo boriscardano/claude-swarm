@@ -37,6 +37,21 @@ The `init` command will:
 
 **That's it!** No environment variables, no manual setup. Just works™
 
+### Claude Code Settings (Optional)
+
+For an enhanced experience with Claude Code, you can configure auto-approval and message hooks:
+
+```bash
+# Copy the example settings file
+cp .claude/settings.json.example .claude/settings.json
+```
+
+This enables:
+- **Auto-approval** for `claudeswarm` commands (no manual confirmation needed)
+- **Automatic message checking** on every prompt submission (agents will be notified of messages)
+
+The settings file is gitignored to avoid conflicts between users.
+
 ---
 
 ### Advanced Installation Options
@@ -362,6 +377,25 @@ For detailed integration instructions, git safety guidelines, and best practices
 - **`cli.py`** - Command-line interface
 - **`project.py`** - Project root detection utilities
 
+### Helper Scripts
+
+The repository includes convenience scripts in the root directory:
+
+- **`coord.py`** - Quick COORDINATION.md manipulation script for development/testing
+  - **Note:** This is a development convenience script, NOT part of the installed package
+  - **For production use:** Use the `claudeswarm` CLI commands or Python API instead
+  - **Example:** `python coord.py` (requires being in the repository directory)
+  - **Equivalent:** `claudeswarm` commands work from anywhere after installation
+
+**When to use what:**
+
+| Use Case | Recommended Approach |
+|----------|---------------------|
+| Production usage | `claudeswarm` CLI commands |
+| Programmatic access | Import from `claudeswarm` package |
+| Quick testing in repo | `coord.py` helper script |
+| Integration with your project | Install package + use API/CLI |
+
 ### System Files
 
 - **`ACTIVE_AGENTS.json`** - Registry of discovered agents
@@ -421,13 +455,15 @@ pytest --cov=src/claudeswarm --cov-report=html
 
 ### Test Coverage
 
+Current test statistics (as of 2025-11-18):
+
 - **29 integration tests** covering 4 major scenarios
 - **83% pass rate** (24/29 passing)
 - **86% coverage** on locking module
 - **75% coverage** on discovery module
 - **70% coverage** on messaging module
 
-See [TEST_REPORT.md](TEST_REPORT.md) for detailed test analysis.
+See [TEST_COVERAGE_SUMMARY.md](TEST_COVERAGE_SUMMARY.md) for the latest test coverage report and [TEST_REPORT.md](TEST_REPORT.md) for detailed test analysis.
 
 ## Development
 
@@ -576,6 +612,70 @@ claudeswarm start-monitoring --filter-type BLOCKED
 ```
 
 For complete API documentation, see [docs/api-reference.md](docs/api-reference.md).
+
+## Common Issues
+
+Quick reference for common problems and solutions:
+
+### Discovery Issues
+
+**Problem:** `TmuxNotRunningError: Tmux server is not running`
+- **Solution:** Start tmux with `tmux new-session` or `tmux`
+- **Details:** Claude Swarm requires tmux to discover and communicate with agents
+
+**Problem:** No agents discovered even though Claude Code is running
+- **Solution:** Ensure Claude Code is running inside a tmux pane, not a regular terminal
+- **Check:** Run `tmux list-panes -a` to verify panes exist
+
+**Problem:** Agents from other projects are visible (or vice versa)
+- **Solution:** Check `enable_cross_project_coordination` in `.claudeswarm.yaml`
+- **Default:** `false` (project-isolated for security)
+- **Details:** See [Configuration Guide](docs/CONFIGURATION.md)
+
+### Messaging Issues
+
+**Problem:** Messages not being received
+- **Solution:** Check rate limits - max 10 messages per minute per agent by default
+- **Check:** Look for "Rate limit exceeded" in logs
+- **Fix:** Adjust `messages_per_minute` in `.claudeswarm.yaml`
+
+**Problem:** `TmuxPermissionError` when sending messages
+- **Solution:** Run commands directly in tmux panes, not through subprocesses
+- **Details:** Sandboxed environments may restrict tmux socket access
+
+### Locking Issues
+
+**Problem:** Lock conflicts preventing file access
+- **Solution:** Check who has the lock with `claudeswarm who-has-lock <filepath>`
+- **Action:** Contact the lock holder or wait for stale timeout (default 5 minutes)
+
+**Problem:** Stale locks not being cleaned up
+- **Solution:** Run `claudeswarm cleanup-stale-locks` manually
+- **Auto-cleanup:** Enable with `auto_cleanup: true` in `.claudeswarm.yaml`
+
+**Problem:** Lock acquisition failing with `ValidationError`
+- **Solution:** Check filepath is within project root (path traversal protection)
+- **Details:** Locks are restricted to project directory for security
+
+### Configuration Issues
+
+**Problem:** Configuration not being loaded
+- **Solution:** Ensure `.claudeswarm.yaml` is in project root
+- **Check:** Run `claudeswarm config show` to see active configuration
+- **Validate:** Run `claudeswarm config validate` to check for errors
+
+**Problem:** Changes to config file not taking effect
+- **Solution:** Configuration is loaded at startup - restart processes or reload config
+- **Details:** Some modules cache config values for performance
+
+### Installation Issues
+
+**Problem:** `claudeswarm: command not found` after installation
+- **Solution:** Ensure `~/.local/bin` is in PATH (for `uv tool install`)
+- **Check:** Run `echo $PATH | grep .local/bin`
+- **Fix:** Add to `~/.bashrc` or `~/.zshrc`: `export PATH="$HOME/.local/bin:$PATH"`
+
+For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Documentation
 

@@ -47,8 +47,10 @@ __all__ = [
 LOCK_DIR = ".agent_locks"
 
 # Stale lock timeout in seconds (5 minutes)
-# NOTE: This constant is kept for backward compatibility.
-# Default timeout now comes from configuration (config.locking.stale_timeout)
+# DEPRECATED: This constant is kept for backward compatibility only.
+# New code should use configuration instead: get_config().locking.stale_timeout
+# This constant will be removed in version 1.0.0
+# Migration: Replace `STALE_LOCK_TIMEOUT` with `get_config().locking.stale_timeout`
 STALE_LOCK_TIMEOUT = 300
 
 
@@ -143,39 +145,88 @@ class LockManager:
     def _validate_filepath(self, filepath: str) -> None:
         """Validate that filepath is within the project root to prevent path traversal.
 
+        This method implements comprehensive path validation to prevent:
+        - Path traversal attacks using .. or /../
+        - Symlink attacks that escape the project root
+        - Null byte injection
+        - URL-encoded path traversal attempts
+        - Absolute paths outside project root
+
         Args:
             filepath: Path to validate
 
         Raises:
-            ValueError: If filepath is outside the project root
+            ValueError: If filepath is outside the project root or contains malicious patterns
         """
-        # Resolve the filepath to its absolute path
-        try:
-            # Handle both absolute and relative paths
-            if Path(filepath).is_absolute():
-                resolved_path = Path(filepath).resolve()
-            else:
-                resolved_path = (self.project_root / filepath).resolve()
+        # 1. Check for null bytes (common injection technique)
+        if '\x00' in filepath:
+            raise ValueError(
+                f"Path contains null bytes: '{filepath}'"
+            )
 
-            # Check if resolved path starts with project root
-            # This prevents path traversal attacks using .. or symlinks
-            if not str(resolved_path).startswith(str(self.project_root.resolve())):
+        # 2. Check for URL-encoded path traversal attempts
+        import urllib.parse
+        decoded_path = urllib.parse.unquote(filepath)
+        if decoded_path != filepath and ('..' in decoded_path or '\x00' in decoded_path):
+            raise ValueError(
+                f"URL-encoded path traversal detected: '{filepath}'"
+            )
+
+        # 3. Resolve the project root once (for performance and consistency)
+        try:
+            project_root_resolved = self.project_root.resolve(strict=False)
+        except (OSError, RuntimeError) as e:
+            raise ValueError(f"Cannot resolve project root: {e}")
+
+        # 4. Handle the filepath based on whether it's absolute or relative
+        try:
+            path_obj = Path(filepath)
+
+            # Determine the full path to validate
+            if path_obj.is_absolute():
+                # Absolute path: resolve it directly
+                resolved_path = path_obj.resolve(strict=False)
+            else:
+                # Relative path: resolve it relative to project root
+                resolved_path = (self.project_root / path_obj).resolve(strict=False)
+
+            # 5. Verify the resolved path is within project root using relative_to()
+            # This is the most secure method as it handles symlinks, .., and edge cases
+            try:
+                resolved_path.relative_to(project_root_resolved)
+            except ValueError:
                 raise ValueError(
                     f"Path traversal detected: '{filepath}' resolves to '{resolved_path}' "
-                    f"which is outside project root '{self.project_root.resolve()}'"
+                    f"which is outside project root '{project_root_resolved}'"
                 )
+
         except (OSError, RuntimeError) as e:
-            # Handle cases where path doesn't exist or has symlink loops
-            # For glob patterns or non-existent files, we still want to validate the base path
-            # Just check that the path doesn't contain obvious traversal attempts
-            if '..' in filepath or filepath.startswith('/'):
-                # For absolute paths, just ensure they're under project root
-                if filepath.startswith('/'):
-                    if not filepath.startswith(str(self.project_root.resolve())):
-                        raise ValueError(
-                            f"Absolute path '{filepath}' is outside project root '{self.project_root.resolve()}'"
-                        )
-            # For other paths, allow them as they'll be treated as patterns or relative paths
+            # If path resolution fails (e.g., broken symlinks, permission errors),
+            # fall back to string-based validation for glob patterns
+
+            # For glob patterns and non-existent paths, validate the string representation
+            path_str = str(filepath)
+
+            # Check for obvious traversal patterns
+            if '..' in Path(path_str).parts:
+                raise ValueError(
+                    f"Path contains parent directory references (..): '{filepath}'"
+                )
+
+            # For absolute paths, verify they start with project root
+            if path_obj.is_absolute():
+                if not path_str.startswith(str(project_root_resolved)):
+                    raise ValueError(
+                        f"Absolute path '{filepath}' is outside project root '{project_root_resolved}'"
+                    )
+
+            # For relative paths with special characters, be conservative
+            # Only allow alphanumeric, hyphens, underscores, dots (not ..), slashes, and glob chars
+            import re
+            if not re.match(r'^[a-zA-Z0-9/_.\-*?\[\]]+$', path_str):
+                raise ValueError(
+                    f"Path contains potentially unsafe characters: '{filepath}'"
+                )
 
     def _get_lock_filename(self, filepath: str) -> str:
         """Generate a unique lock filename for a given filepath.
@@ -336,7 +387,54 @@ class LockManager:
         if existing_lock:
             # Check if it's our own lock
             if existing_lock.agent_id == agent_id:
-                # Refresh the lock timestamp with proper locking to prevent TOCTOU
+                # ========================================================================
+                # LOCK REFRESH WITH TOCTOU PREVENTION
+                # ========================================================================
+                # This implements a thread-safe lock refresh pattern using atomic writes
+                # to prevent Time-of-Check-Time-of-Use (TOCTOU) race conditions.
+                #
+                # WHY THIS PATTERN IS NECESSARY:
+                # Without atomic operations, there's a dangerous race window between:
+                # 1. Reading the lock file to verify ownership
+                # 2. Deleting the old lock file
+                # 3. Writing the new lock file
+                #
+                # During this window, another process could:
+                # - Steal the lock if the file is deleted first
+                # - Corrupt the lock state if writes overlap
+                # - Create an inconsistent lock state
+                #
+                # SOLUTION - THREE LAYERS OF PROTECTION:
+                #
+                # Layer 1: Thread-level locking (self._lock)
+                # Prevents race conditions between threads in the same process.
+                # This is fast but only protects within one Python process.
+                #
+                # Layer 2: Double-check pattern (re-read after acquiring lock)
+                # After acquiring thread lock, we re-read the file to catch any changes
+                # made by other processes while we were waiting for the thread lock.
+                # This prevents acting on stale data.
+                #
+                # Layer 3: Atomic write via temp file + rename
+                # Instead of delete-then-write (which has a race window), we:
+                # 1. Write updated lock to .lock.tmp file
+                # 2. Use os.replace() to atomically rename temp file over original
+                #
+                # os.replace() is atomic on both POSIX and Windows, meaning:
+                # - The operation either fully succeeds or fully fails
+                # - No other process can observe a half-completed state
+                # - No window exists where the lock file is missing
+                # - The file is never empty or partially written
+                #
+                # This guarantees that other processes always see either:
+                # - The old valid lock, OR
+                # - The new valid lock
+                # Never an inconsistent or missing state.
+                #
+                # FAILURE HANDLING:
+                # If any operation fails, we clean up the temp file to avoid leaving
+                # stale .lock.tmp files that could cause confusion.
+                # ========================================================================
                 with self._lock:
                     # Re-read to ensure no one else modified it
                     existing_lock = self._read_lock(lock_path)

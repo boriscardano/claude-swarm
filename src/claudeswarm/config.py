@@ -27,6 +27,7 @@ Example configuration (.claudeswarm.yaml):
     discovery:
       stale_threshold: 60
       auto_refresh_interval: 30
+      enable_cross_project_coordination: false
 
     onboarding:
       enabled: true
@@ -45,6 +46,7 @@ Example configuration (.claudeswarm.toml):
     [discovery]
     stale_threshold = 60
     auto_refresh_interval = 30
+    enable_cross_project_coordination = false
 
     [onboarding]
     enabled = true
@@ -175,9 +177,14 @@ class DiscoveryConfig:
     Attributes:
         stale_threshold: Seconds after which an agent is considered stale
         auto_refresh_interval: Automatic refresh interval in seconds (None = disabled)
+        enable_cross_project_coordination: Whether to enable cross-project agent discovery.
+            When False (default), only agents in the same project directory are discovered.
+            When True, agents from all projects are visible, which may have security
+            implications in multi-tenant or shared environments. Use with caution.
     """
     stale_threshold: int = 60
     auto_refresh_interval: Optional[int] = None
+    enable_cross_project_coordination: bool = False
 
     def validate(self) -> None:
         """Validate discovery configuration.
@@ -482,6 +489,7 @@ def _dict_to_config(data: Dict[str, Any]) -> ClaudeSwarmConfig:
         discovery = DiscoveryConfig(
             stale_threshold=discovery_data.get("stale_threshold", 60),
             auto_refresh_interval=discovery_data.get("auto_refresh_interval"),
+            enable_cross_project_coordination=discovery_data.get("enable_cross_project_coordination", False),
         )
 
         # Extract onboarding config

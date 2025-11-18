@@ -30,6 +30,7 @@ __all__ = [
     "validate_retry_count",
     "validate_rate_limit_config",
     "validate_recipient_list",
+    "validate_tmux_pane_id",
     "sanitize_message_content",
     "normalize_path",
 ]
@@ -48,6 +49,9 @@ MAX_RATE_LIMIT_WINDOW = 3600
 
 # Pattern for valid agent IDs: alphanumeric + hyphens + underscores
 AGENT_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+# Pattern for valid tmux pane IDs: must match ^%\d+$ format
+TMUX_PANE_ID_PATTERN = re.compile(r'^%\d+$')
 
 
 class ValidationError(ValueError):
@@ -547,3 +551,53 @@ def validate_recipient_list(recipients: Any) -> list[str]:
         validated_recipients.append(validated_id)
 
     return validated_recipients
+
+
+def validate_tmux_pane_id(pane_id: Any) -> str:
+    """Validate a tmux pane ID.
+
+    Tmux pane IDs must:
+    - Be non-empty strings
+    - Match the format: %<number> (e.g., %0, %1, %123)
+    - Contain only a percent sign followed by digits
+
+    This validation prevents command injection attacks when using tmux pane IDs
+    in subprocess calls.
+
+    Args:
+        pane_id: Value to validate
+
+    Returns:
+        The validated pane ID as a string
+
+    Raises:
+        ValidationError: If validation fails with specific reason
+
+    Examples:
+        >>> validate_tmux_pane_id("%0")
+        '%0'
+        >>> validate_tmux_pane_id("%123")
+        '%123'
+        >>> validate_tmux_pane_id("%1; rm -rf /")
+        ValidationError: Invalid tmux pane ID format
+        >>> validate_tmux_pane_id("invalid")
+        ValidationError: Invalid tmux pane ID format
+    """
+    # Type check
+    if not isinstance(pane_id, str):
+        raise ValidationError(
+            f"Tmux pane ID must be a string, got {type(pane_id).__name__}"
+        )
+
+    # Empty check
+    if not pane_id:
+        raise ValidationError("Tmux pane ID cannot be empty")
+
+    # Pattern check - must match ^%\d+$ format
+    if not TMUX_PANE_ID_PATTERN.match(pane_id):
+        raise ValidationError(
+            f"Invalid tmux pane ID format. Expected format: %<number> (e.g., %0, %1), "
+            f"got: '{pane_id}'"
+        )
+
+    return pane_id

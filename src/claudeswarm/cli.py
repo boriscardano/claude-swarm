@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import NoReturn
+from typing import List, NoReturn, Optional
 
 from claudeswarm.locking import LockManager
 from claudeswarm.discovery import refresh_registry, list_active_agents
@@ -32,9 +33,13 @@ from claudeswarm.validators import (
     validate_file_path,
     validate_timeout,
     validate_message_content,
+    validate_tmux_pane_id,
 )
 
 __all__ = ["main"]
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Command-line validation constants
 # Lock reason length limit (enforces concise lock descriptions)
@@ -49,6 +54,9 @@ DEFAULT_STALE_THRESHOLD = 60
 # Interval validation bounds for watch mode (in seconds)
 MIN_INTERVAL = 1
 MAX_INTERVAL = 3600
+
+# Message preview limit for whoami command
+WHOAMI_MESSAGE_PREVIEW_LIMIT = 3
 
 
 def format_timestamp(ts: float) -> str:
@@ -330,6 +338,13 @@ def _detect_current_agent() -> tuple[Optional[str], Optional[dict]]:
     # Check if running in tmux
     tmux_pane_id = os.environ.get('TMUX_PANE')
     if not tmux_pane_id:
+        return None, None
+
+    # Validate tmux pane ID to prevent command injection
+    try:
+        tmux_pane_id = validate_tmux_pane_id(tmux_pane_id)
+    except ValidationError:
+        # Invalid pane ID format - cannot proceed safely
         return None, None
 
     # Load registry
@@ -876,18 +891,19 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     print("=== Claude Swarm Agent Onboarding ===")
     print()
 
-    # Step 1: Discover agents
-    print("Step 1: Discovering active agents...")
+    # Step 1: Discover agents (project-filtered)
+    print("Step 1: Discovering active agents in current project...")
     try:
+        # refresh_registry() discovers agents filtered by current project
         registry = refresh_registry()
-        agents = list_active_agents()
+        agents = registry.agents
 
         if not agents:
-            print("No agents discovered.")
+            print("No agents discovered in this project.")
             print("Make sure Claude Code instances are running in tmux panes.")
             sys.exit(1)
 
-        print(f"Found {len(agents)} active agent(s): {', '.join(a.id for a in agents)}")
+        print(f"Found {len(agents)} agent(s) in current project: {', '.join(a.id for a in agents)}")
         print()
 
     except subprocess.CalledProcessError as e:
@@ -902,34 +918,73 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Step 2: Send onboarding messages
-    print("Step 2: Broadcasting onboarding messages...")
+    print("Step 2: Broadcasting onboarding messages to project agents...")
 
     # Consolidate into fewer, comprehensive messages to avoid rate limiting
     agent_list = ', '.join(a.id for a in agents)
 
     messages = [
-        # Message 1: Header + Protocol Rules + Active Agents
+        # Single comprehensive onboarding message
         f"""=== CLAUDE SWARM COORDINATION ACTIVE ===
 Multi-agent coordination is now available in this session.
 
-KEY PROTOCOL RULES:
-1. ALWAYS acquire file locks before editing (claudeswarm acquire-file-lock <path> <agent-id> <reason>)
-2. ALWAYS release locks immediately after editing (claudeswarm release-file-lock <path> <agent-id>)
-3. Use specific message types when communicating (INFO, QUESTION, REVIEW-REQUEST, BLOCKED, etc.)
-4. Check COORDINATION.md for sprint goals and current work
+ACTIVE AGENTS: {agent_list}
 
-ACTIVE AGENTS: {agent_list}""",
+═══════════════════════════════════════════════════════════════════
+HOW TO SEND MESSAGES TO OTHER AGENTS:
+═══════════════════════════════════════════════════════════════════
 
-        # Message 2: Quick Command Reference + Documentation
-        """QUICK COMMAND REFERENCE:
-• Identity: claudeswarm whoami (find out which agent you are)
-• Discovery: claudeswarm discover-agents
-• Messaging: claudeswarm send-message / broadcast-message
-• Locks: claudeswarm list-all-locks / cleanup-stale-locks
+IMPORTANT: When sending messages, your AI assistant will automatically handle tmux access.
+Just use the commands naturally and messages will be delivered in real-time!
 
-DOCUMENTATION: See docs/AGENT_PROTOCOL.md, docs/TUTORIAL.md, or docs/INTEGRATION_GUIDE.md
+• Send direct message:
+  claudeswarm send-message <agent-id> INFO "your message here"
+  Example: claudeswarm send-message agent-1 INFO "Ready to start!"
 
-Ready to coordinate! Use 'claudeswarm --help' for full command list.""",
+• Broadcast to all agents:
+  claudeswarm broadcast-message INFO "your message here"
+  Example: claudeswarm broadcast-message TASK-UPDATE "Starting work on API"
+
+• Find out who you are:
+  claudeswarm whoami
+
+• See all active agents:
+  claudeswarm list-agents
+
+Messages appear AUTOMATICALLY in recipient conversations - no manual checking needed!
+
+Message types: INFO, QUESTION, REVIEW-REQUEST, BLOCKED, TASK-UPDATE, URGENT
+
+═══════════════════════════════════════════════════════════════════
+FILE LOCKING PROTOCOL (CRITICAL):
+═══════════════════════════════════════════════════════════════════
+
+BEFORE editing ANY file, you MUST acquire a lock:
+  claudeswarm acquire-file-lock <filepath> "reason for editing"
+  Example: claudeswarm acquire-file-lock src/main.py "refactoring auth"
+
+AFTER editing, ALWAYS release the lock immediately:
+  claudeswarm release-file-lock <filepath>
+  Example: claudeswarm release-file-lock src/main.py
+
+Check if file is locked:
+  claudeswarm who-has-lock <filepath>
+
+List all locks:
+  claudeswarm list-all-locks
+
+NEVER skip file locks - they prevent conflicts between agents!
+
+═══════════════════════════════════════════════════════════════════
+DOCUMENTATION & HELP:
+═══════════════════════════════════════════════════════════════════
+
+• docs/AGENT_PROTOCOL.md - Full protocol documentation
+• docs/AGENT_QUICK_REFERENCE.md - Quick command reference
+• claudeswarm --help - All available commands
+• COORDINATION.md - Sprint goals and current work assignments
+
+COORDINATION READY! 🎉""",
     ]
 
     messages_to_send = messages
@@ -1096,6 +1151,13 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         print("The 'whoami' command only works within tmux panes.", file=sys.stderr)
         sys.exit(1)
 
+    # Validate tmux pane ID to prevent command injection
+    try:
+        tmux_pane_id = validate_tmux_pane_id(tmux_pane_id)
+    except ValidationError as e:
+        print(f"Error: Invalid TMUX_PANE environment variable: {e}", file=sys.stderr)
+        sys.exit(1)
+
     # Convert tmux pane ID (like %2) to session:window.pane format (like 0:1.1)
     current_pane = None
     pane_lookup_error = None
@@ -1191,6 +1253,32 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         print("  claudeswarm who-has-lock <path>")
         print("  claudeswarm list-agents")
         print("  claudeswarm list-all-locks")
+
+        # Auto-check for pending messages (shows recent 3)
+        print()
+        print("=" * 68)
+        print("📬 RECENT MESSAGES (auto-checked)")
+        print("=" * 68)
+        try:
+            from claudeswarm.messaging import MessageLogger
+            msg_logger: MessageLogger = MessageLogger()
+            messages: List[dict] = msg_logger.get_messages_for_agent(
+                current_agent['id'],
+                limit=WHOAMI_MESSAGE_PREVIEW_LIMIT
+            )
+            if messages:
+                for msg in messages:
+                    timestamp = msg['timestamp'][:19]  # Trim to YYYY-MM-DDTHH:MM:SS
+                    print(f"\n[{timestamp}] From: {msg['sender']} ({msg['msg_type']})")
+                    print(f"  {msg['content']}")
+                if len(messages) >= WHOAMI_MESSAGE_PREVIEW_LIMIT:
+                    print(f"\n(Showing {WHOAMI_MESSAGE_PREVIEW_LIMIT} most recent. Use 'claudeswarm check-messages' for more)")
+            else:
+                print("\n  No messages.")
+        except Exception as e:
+            logger.debug(f"Failed to check messages for agent {current_agent.get('id', 'unknown')}: {e}", exc_info=True)
+            print(f"\n  (Could not check messages: {e})")
+        print()
     else:
         print("=== Current Pane ===")
         print()

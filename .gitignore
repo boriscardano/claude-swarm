@@ -38,3 +38,6 @@ ACTIVE_AGENTS.json
 PENDING_ACKS.json
 agent_messages.log
 COORDINATION.md
+
+# Claude Code settings (user-specific)
+.claude/settings.json

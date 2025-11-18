@@ -137,6 +137,70 @@ class TestAcquireFileLock:
                 filepath="test.txt", agent_id="agent-1", reason=""
             )
 
+    def test_acquire_lock_with_auto_detect(self, capsys, tmp_path):
+        """Test lock acquisition with auto-detected agent ID."""
+        import json
+        import os
+
+        # Create mock registry
+        registry_data = {
+            "session_name": "test",
+            "updated_at": "2025-11-18T10:00:00Z",
+            "agents": [{
+                "id": "agent-auto",
+                "pane_index": "test:0.0",
+                "pid": 12345,
+                "status": "active",
+                "last_seen": "2025-11-18T10:00:00Z",
+                "session_name": "test",
+                "tmux_pane_id": "%99"
+            }]
+        }
+
+        registry_path = tmp_path / "ACTIVE_AGENTS.json"
+        registry_path.write_text(json.dumps(registry_data))
+
+        args = argparse.Namespace(
+            project_root=tmp_path,
+            filepath="test.txt",
+            agent_id=None,  # Auto-detect
+            reason="testing"
+        )
+
+        with patch.dict(os.environ, {'TMUX_PANE': '%99'}):
+            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
+                with patch("claudeswarm.cli.LockManager") as mock_manager_class:
+                    mock_manager = Mock()
+                    mock_manager.acquire_lock.return_value = (True, None)
+                    mock_manager_class.return_value = mock_manager
+
+                    with pytest.raises(SystemExit) as exc_info:
+                        cmd_acquire_file_lock(args)
+
+                    assert exc_info.value.code == 0
+                    # Verify auto-detected agent ID was used
+                    call_kwargs = mock_manager.acquire_lock.call_args[1]
+                    assert call_kwargs['agent_id'] == "agent-auto"
+
+    def test_acquire_lock_auto_detect_fails(self, capsys):
+        """Test lock acquisition fails when auto-detect fails."""
+        import os
+
+        args = argparse.Namespace(
+            project_root=Path("/test/root"),
+            filepath="test.txt",
+            agent_id=None,  # Auto-detect
+            reason="testing"
+        )
+
+        with patch.dict(os.environ, {}, clear=True):  # No TMUX_PANE
+            with pytest.raises(SystemExit) as exc_info:
+                cmd_acquire_file_lock(args)
+
+            assert exc_info.value.code == 1
+            captured = capsys.readouterr()
+            assert "Could not auto-detect agent identity" in captured.err
+
 
 class TestReleaseFileLock:
     """Tests for release-file-lock command."""
@@ -180,6 +244,68 @@ class TestReleaseFileLock:
             assert exc_info.value.code == 1
             captured = capsys.readouterr()
             assert "Failed to release lock" in captured.err
+
+    def test_release_lock_with_auto_detect(self, capsys, tmp_path):
+        """Test lock release with auto-detected agent ID."""
+        import json
+        import os
+
+        # Create mock registry
+        registry_data = {
+            "session_name": "test",
+            "updated_at": "2025-11-18T10:00:00Z",
+            "agents": [{
+                "id": "agent-auto",
+                "pane_index": "test:0.0",
+                "pid": 12345,
+                "status": "active",
+                "last_seen": "2025-11-18T10:00:00Z",
+                "session_name": "test",
+                "tmux_pane_id": "%99"
+            }]
+        }
+
+        registry_path = tmp_path / "ACTIVE_AGENTS.json"
+        registry_path.write_text(json.dumps(registry_data))
+
+        args = argparse.Namespace(
+            project_root=tmp_path,
+            filepath="test.txt",
+            agent_id=None  # Auto-detect
+        )
+
+        with patch.dict(os.environ, {'TMUX_PANE': '%99'}):
+            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
+                with patch("claudeswarm.cli.LockManager") as mock_manager_class:
+                    mock_manager = Mock()
+                    mock_manager.release_lock.return_value = True
+                    mock_manager_class.return_value = mock_manager
+
+                    with pytest.raises(SystemExit) as exc_info:
+                        cmd_release_file_lock(args)
+
+                    assert exc_info.value.code == 0
+                    # Verify auto-detected agent ID was used
+                    call_kwargs = mock_manager.release_lock.call_args[1]
+                    assert call_kwargs['agent_id'] == "agent-auto"
+
+    def test_release_lock_auto_detect_fails(self, capsys):
+        """Test lock release fails when auto-detect fails."""
+        import os
+
+        args = argparse.Namespace(
+            project_root=Path("/test/root"),
+            filepath="test.txt",
+            agent_id=None  # Auto-detect
+        )
+
+        with patch.dict(os.environ, {}, clear=True):  # No TMUX_PANE
+            with pytest.raises(SystemExit) as exc_info:
+                cmd_release_file_lock(args)
+
+            assert exc_info.value.code == 1
+            captured = capsys.readouterr()
+            assert "Could not auto-detect agent identity" in captured.err
 
 
 class TestWhoHasLock:

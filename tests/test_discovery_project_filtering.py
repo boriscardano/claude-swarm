@@ -675,3 +675,208 @@ class TestDiscoverAgentsProjectFiltering:
         # Verify the agent was included (subdir is part of project)
         assert len(registry.agents) == 1
         assert registry.agents[0].pid == 1234
+
+
+class TestCrossProjectCoordination:
+    """Tests for enable_cross_project_coordination configuration."""
+
+    @patch("claudeswarm.discovery._get_process_cwd")
+    @patch("claudeswarm.discovery._parse_tmux_panes")
+    @patch("claudeswarm.discovery._load_existing_registry")
+    @patch("claudeswarm.discovery.get_config")
+    def test_cross_project_disabled_filters_agents(
+        self, mock_get_config, mock_load, mock_parse, mock_get_cwd, tmp_path, monkeypatch
+    ):
+        """Test with enable_cross_project_coordination=False (default) - agents filtered by project."""
+        from claudeswarm.config import ClaudeSwarmConfig, DiscoveryConfig
+
+        project_root = tmp_path / "my_project"
+        project_root.mkdir()
+        other_project = tmp_path / "other_project"
+        other_project.mkdir()
+
+        monkeypatch.chdir(project_root)
+        mock_load.return_value = None
+
+        # Configure discovery with cross-project disabled
+        config = ClaudeSwarmConfig()
+        config.discovery = DiscoveryConfig(enable_cross_project_coordination=False)
+        mock_get_config.return_value = config
+
+        # Two panes: one in current project, one in other project
+        mock_parse.return_value = [
+            {"session_name": "main", "pane_index": "main:0.0", "pid": 1234, "command": "claude"},
+            {"session_name": "main", "pane_index": "main:0.1", "pid": 1235, "command": "claude"}
+        ]
+
+        def get_cwd_side_effect(pid):
+            if pid == 1234:
+                return str(project_root)
+            elif pid == 1235:
+                return str(other_project)
+            return None
+
+        mock_get_cwd.side_effect = get_cwd_side_effect
+
+        registry = discover_agents()
+
+        # Should only have agent from current project (1234)
+        assert len(registry.agents) == 1
+        assert registry.agents[0].pid == 1234
+
+    @patch("claudeswarm.discovery._get_process_cwd")
+    @patch("claudeswarm.discovery._parse_tmux_panes")
+    @patch("claudeswarm.discovery._load_existing_registry")
+    @patch("claudeswarm.discovery.get_config")
+    def test_cross_project_enabled_includes_all_agents(
+        self, mock_get_config, mock_load, mock_parse, mock_get_cwd, tmp_path, monkeypatch
+    ):
+        """Test with enable_cross_project_coordination=True - all agents visible."""
+        from claudeswarm.config import ClaudeSwarmConfig, DiscoveryConfig
+
+        project_root = tmp_path / "my_project"
+        project_root.mkdir()
+        other_project = tmp_path / "other_project"
+        other_project.mkdir()
+
+        monkeypatch.chdir(project_root)
+        mock_load.return_value = None
+
+        # Configure discovery with cross-project enabled
+        config = ClaudeSwarmConfig()
+        config.discovery = DiscoveryConfig(enable_cross_project_coordination=True)
+        mock_get_config.return_value = config
+
+        # Two panes: one in current project, one in other project
+        mock_parse.return_value = [
+            {"session_name": "main", "pane_index": "main:0.0", "pid": 1234, "command": "claude"},
+            {"session_name": "main", "pane_index": "main:0.1", "pid": 1235, "command": "claude"}
+        ]
+
+        def get_cwd_side_effect(pid):
+            if pid == 1234:
+                return str(project_root)
+            elif pid == 1235:
+                return str(other_project)
+            return None
+
+        mock_get_cwd.side_effect = get_cwd_side_effect
+
+        registry = discover_agents()
+
+        # Should have both agents (cross-project enabled)
+        assert len(registry.agents) == 2
+        pids = {agent.pid for agent in registry.agents}
+        assert pids == {1234, 1235}
+
+    @patch("claudeswarm.discovery._parse_tmux_panes")
+    @patch("claudeswarm.discovery._load_existing_registry")
+    @patch("claudeswarm.discovery.get_config")
+    def test_cross_project_config_from_yaml(
+        self, mock_get_config, mock_load, mock_parse, tmp_path, monkeypatch
+    ):
+        """Test configuration loading from YAML."""
+        from claudeswarm.config import ClaudeSwarmConfig, DiscoveryConfig
+
+        monkeypatch.chdir(tmp_path)
+        mock_load.return_value = None
+        mock_parse.return_value = []
+
+        # Test with cross-project enabled via config
+        config = ClaudeSwarmConfig()
+        config.discovery = DiscoveryConfig(enable_cross_project_coordination=True)
+        mock_get_config.return_value = config
+
+        # Verify config is loaded correctly
+        assert config.discovery.enable_cross_project_coordination is True
+
+        # Test with cross-project disabled via config
+        config2 = ClaudeSwarmConfig()
+        config2.discovery = DiscoveryConfig(enable_cross_project_coordination=False)
+        mock_get_config.return_value = config2
+
+        assert config2.discovery.enable_cross_project_coordination is False
+
+    @patch("claudeswarm.discovery._parse_tmux_panes")
+    @patch("claudeswarm.discovery._load_existing_registry")
+    @patch("claudeswarm.discovery.get_config")
+    def test_cross_project_default_is_false(
+        self, mock_get_config, mock_load, mock_parse, tmp_path, monkeypatch
+    ):
+        """Test that default value is False (security-safe default)."""
+        from claudeswarm.config import ClaudeSwarmConfig, DiscoveryConfig
+
+        monkeypatch.chdir(tmp_path)
+        mock_load.return_value = None
+        mock_parse.return_value = []
+
+        # Use default config
+        config = ClaudeSwarmConfig()
+        mock_get_config.return_value = config
+
+        # Default should be False for security
+        assert config.discovery.enable_cross_project_coordination is False
+
+    @patch("claudeswarm.discovery._get_process_cwd")
+    @patch("claudeswarm.discovery._parse_tmux_panes")
+    @patch("claudeswarm.discovery._load_existing_registry")
+    @patch("claudeswarm.discovery.get_config")
+    def test_cross_project_with_mixed_scenarios(
+        self, mock_get_config, mock_load, mock_parse, mock_get_cwd, tmp_path, monkeypatch
+    ):
+        """Test cross-project coordination with various agent locations."""
+        from claudeswarm.config import ClaudeSwarmConfig, DiscoveryConfig
+
+        project1 = tmp_path / "project1"
+        project1.mkdir()
+        project2 = tmp_path / "project2"
+        project2.mkdir()
+        project3 = tmp_path / "project3"
+        project3.mkdir()
+
+        monkeypatch.chdir(project1)
+        mock_load.return_value = None
+
+        # Four agents in different projects
+        mock_parse.return_value = [
+            {"session_name": "main", "pane_index": "main:0.0", "pid": 1000, "command": "claude"},  # project1
+            {"session_name": "main", "pane_index": "main:0.1", "pid": 1001, "command": "claude"},  # project1
+            {"session_name": "main", "pane_index": "main:0.2", "pid": 1002, "command": "claude"},  # project2
+            {"session_name": "main", "pane_index": "main:0.3", "pid": 1003, "command": "claude"},  # project3
+        ]
+
+        def get_cwd_side_effect(pid):
+            if pid in [1000, 1001]:
+                return str(project1)
+            elif pid == 1002:
+                return str(project2)
+            elif pid == 1003:
+                return str(project3)
+            return None
+
+        mock_get_cwd.side_effect = get_cwd_side_effect
+
+        # Test with cross-project disabled
+        config_disabled = ClaudeSwarmConfig()
+        config_disabled.discovery = DiscoveryConfig(enable_cross_project_coordination=False)
+        mock_get_config.return_value = config_disabled
+
+        registry_filtered = discover_agents()
+        # Should only see agents from project1
+        assert len(registry_filtered.agents) == 2
+        pids_filtered = {agent.pid for agent in registry_filtered.agents}
+        assert pids_filtered == {1000, 1001}
+
+        # Reset mock
+        mock_get_cwd.side_effect = get_cwd_side_effect
+
+        # Test with cross-project enabled
+        config_enabled = ClaudeSwarmConfig()
+        config_enabled.discovery = DiscoveryConfig(enable_cross_project_coordination=True)
+        mock_get_config.return_value = config_enabled
+
+        registry_all = discover_agents()
+        # Should see all agents
+        assert len(registry_all.agents) == 4
+        pids_all = {agent.pid for agent in registry_all.agents}
+        assert pids_all == {1000, 1001, 1002, 1003}
