@@ -43,8 +43,8 @@ class TestTmuxPaneIdParsing:
         panes = _parse_tmux_panes()
 
         assert len(panes) == 2
-        assert panes[0]['pane_id'] == "%2"
-        assert panes[1]['pane_id'] == "%3"
+        assert panes[0]['tmux_pane_id'] == "%2"
+        assert panes[1]['tmux_pane_id'] == "%3"
 
     @patch('subprocess.run')
     def test_parse_tmux_panes_pane_id_format(self, mock_run):
@@ -57,7 +57,7 @@ class TestTmuxPaneIdParsing:
         panes = _parse_tmux_panes()
 
         assert len(panes) == 1
-        pane_id = panes[0]['pane_id']
+        pane_id = panes[0]['tmux_pane_id']
         assert pane_id.startswith('%')
         assert pane_id[1:].isdigit()
 
@@ -77,7 +77,7 @@ class TestTmuxPaneIdParsing:
         panes = _parse_tmux_panes()
 
         assert len(panes) == 4
-        assert [p['pane_id'] for p in panes] == ["%1", "%2", "%3", "%4"]
+        assert [p['tmux_pane_id'] for p in panes] == ["%1", "%2", "%3", "%4"]
 
     @patch('subprocess.run')
     def test_parse_tmux_panes_empty_output(self, mock_run):
@@ -219,10 +219,10 @@ class TestRegistryWithTmuxPaneId:
 
     @patch('subprocess.run')
     @patch('claudeswarm.discovery._get_process_cwd')
-    @patch('claudeswarm.discovery._find_claude_in_children')
+    @patch('claudeswarm.discovery._has_claude_child_process')
     @patch('claudeswarm.discovery.get_active_agents_path')
     def test_refresh_registry_saves_tmux_pane_id(
-        self, mock_get_path, mock_find_claude, mock_get_cwd, mock_run, tmp_path
+        self, mock_get_path, mock_has_claude, mock_get_cwd, mock_run, tmp_path
     ):
         """Test that refresh_registry saves tmux_pane_id to registry."""
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
@@ -240,9 +240,9 @@ class TestRegistryWithTmuxPaneId:
 
         mock_run.side_effect = [mock_tmux_result, mock_session_result]
         mock_get_cwd.return_value = str(tmp_path)
-        mock_find_claude.return_value = True
+        mock_has_claude.return_value = True
 
-        with patch('claudeswarm.discovery.find_project_root', return_value=tmp_path):
+        with patch('claudeswarm.project.get_project_root', return_value=tmp_path):
             registry = refresh_registry()
 
         # Read saved registry
@@ -255,10 +255,10 @@ class TestRegistryWithTmuxPaneId:
 
     @patch('subprocess.run')
     @patch('claudeswarm.discovery._get_process_cwd')
-    @patch('claudeswarm.discovery._find_claude_in_children')
+    @patch('claudeswarm.discovery._has_claude_child_process')
     @patch('claudeswarm.discovery.get_active_agents_path')
     def test_refresh_registry_multiple_agents_tmux_pane_id(
-        self, mock_get_path, mock_find_claude, mock_get_cwd, mock_run, tmp_path
+        self, mock_get_path, mock_has_claude, mock_get_cwd, mock_run, tmp_path
     ):
         """Test that all agents get unique tmux_pane_id values."""
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
@@ -279,9 +279,9 @@ class TestRegistryWithTmuxPaneId:
 
         mock_run.side_effect = [mock_tmux_result, mock_session_result]
         mock_get_cwd.return_value = str(tmp_path)
-        mock_find_claude.return_value = True
+        mock_has_claude.return_value = True
 
-        with patch('claudeswarm.discovery.find_project_root', return_value=tmp_path):
+        with patch('claudeswarm.project.get_project_root', return_value=tmp_path):
             registry = refresh_registry()
 
         # Verify all agents have unique pane IDs

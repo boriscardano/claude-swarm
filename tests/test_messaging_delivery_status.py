@@ -118,7 +118,9 @@ class TestSingleMessageDeliveryStatus:
     ):
         """Test delivery_status when tmux delivery fails."""
         mock_get_pane.return_value = "test:0.1"
-        mock_send_to_pane.return_value = False  # Failure
+        # send_to_pane doesn't return False, it raises an exception on failure
+        # The implementation catches TmuxError exceptions and sets success=False
+        mock_send_to_pane.side_effect = TmuxSocketError("Tmux unavailable")
 
         log_file = tmp_path / "messages.log"
         system = MessagingSystem(log_file=log_file)
@@ -208,8 +210,9 @@ class TestBroadcastDeliveryStatus:
         mock_registry.agents = [mock_agent1, mock_agent2, mock_agent3]
         mock_load_registry.return_value = mock_registry
 
-        # First call succeeds, second fails, third succeeds
-        mock_send_to_pane.side_effect = [True, False, True]
+        # First call succeeds, second fails (raises exception), third succeeds
+        # The implementation catches exceptions and marks as failed
+        mock_send_to_pane.side_effect = [None, TmuxPaneNotFoundError("Pane not found"), None]
 
         log_file = tmp_path / "messages.log"
         system = MessagingSystem(log_file=log_file)
@@ -240,7 +243,8 @@ class TestBroadcastDeliveryStatus:
         mock_registry.agents = [mock_agent1, mock_agent2]
         mock_load_registry.return_value = mock_registry
 
-        mock_send_to_pane.return_value = False  # All fail
+        # All fail by raising exceptions
+        mock_send_to_pane.side_effect = TmuxSocketError("Tmux unavailable")
 
         log_file = tmp_path / "messages.log"
         system = MessagingSystem(log_file=log_file)
@@ -400,8 +404,8 @@ class TestDeliveryStatusPersistence:
         mock_registry.agents = [mock_agent1, mock_agent2, mock_agent3]
         mock_load_registry.return_value = mock_registry
 
-        # Partial success
-        mock_send_to_pane.side_effect = [True, False, True]
+        # Partial success - use exceptions for failures
+        mock_send_to_pane.side_effect = [None, TmuxPaneNotFoundError("Pane not found"), None]
 
         log_file = tmp_path / "messages.log"
         system = MessagingSystem(log_file=log_file)
@@ -471,8 +475,14 @@ class TestDeliveryStatusPersistence:
         mock_registry.agents = agents
         mock_load_registry.return_value = mock_registry
 
-        # 3 succeed, 2 fail
-        mock_send_to_pane.side_effect = [True, False, True, False, True]
+        # 3 succeed, 2 fail (using exceptions for failures)
+        mock_send_to_pane.side_effect = [
+            None,  # Success
+            TmuxPaneNotFoundError("Pane not found"),  # Fail
+            None,  # Success
+            TmuxSocketError("Socket error"),  # Fail
+            None   # Success
+        ]
 
         log_file = tmp_path / "messages.log"
         system = MessagingSystem(log_file=log_file)
