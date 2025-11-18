@@ -908,32 +908,67 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     agent_list = ', '.join(a.id for a in agents)
 
     messages = [
-        # Message 1: Header + Protocol Rules + Active Agents
+        # Single comprehensive onboarding message
         f"""=== CLAUDE SWARM COORDINATION ACTIVE ===
 Multi-agent coordination is now available in this session.
 
-KEY PROTOCOL RULES:
-1. ALWAYS acquire file locks before editing (claudeswarm acquire-file-lock <path> <agent-id> <reason>)
-2. ALWAYS release locks immediately after editing (claudeswarm release-file-lock <path> <agent-id>)
-3. Use specific message types when communicating (INFO, QUESTION, REVIEW-REQUEST, BLOCKED, etc.)
-4. Check COORDINATION.md for sprint goals and current work
+ACTIVE AGENTS: {agent_list}
 
-ACTIVE AGENTS: {agent_list}""",
+═══════════════════════════════════════════════════════════════════
+HOW TO SEND MESSAGES TO OTHER AGENTS:
+═══════════════════════════════════════════════════════════════════
 
-        # Message 2: Quick Command Reference + Documentation
-        """QUICK COMMAND REFERENCE (all work in sandboxed environments):
-• Identity: claudeswarm whoami (find out which agent you are)
-• List agents: claudeswarm list-agents (see all active agents)
-• Messaging: claudeswarm send-message <agent-id> <type> <message>
-• Broadcast: claudeswarm broadcast-message <type> <message>
-• File locks: claudeswarm acquire-file-lock / release-file-lock
-• Check locks: claudeswarm list-all-locks
+IMPORTANT: When sending messages, your AI assistant will automatically handle tmux access.
+Just use the commands naturally and messages will be delivered in real-time!
 
-NOTE: Messages are delivered automatically via hook - no need to check inbox manually!
+• Send direct message:
+  claudeswarm send-message <agent-id> INFO "your message here"
+  Example: claudeswarm send-message agent-1 INFO "Ready to start!"
 
-DOCUMENTATION: See docs/AGENT_PROTOCOL.md, docs/TUTORIAL.md, or docs/INTEGRATION_GUIDE.md
+• Broadcast to all agents:
+  claudeswarm broadcast-message INFO "your message here"
+  Example: claudeswarm broadcast-message TASK-UPDATE "Starting work on API"
 
-Ready to coordinate! Use 'claudeswarm --help' for full command list.""",
+• Find out who you are:
+  claudeswarm whoami
+
+• See all active agents:
+  claudeswarm list-agents
+
+Messages appear AUTOMATICALLY in recipient conversations - no manual checking needed!
+
+Message types: INFO, QUESTION, REVIEW-REQUEST, BLOCKED, TASK-UPDATE, URGENT
+
+═══════════════════════════════════════════════════════════════════
+FILE LOCKING PROTOCOL (CRITICAL):
+═══════════════════════════════════════════════════════════════════
+
+BEFORE editing ANY file, you MUST acquire a lock:
+  claudeswarm acquire-file-lock <filepath> "reason for editing"
+  Example: claudeswarm acquire-file-lock src/main.py "refactoring auth"
+
+AFTER editing, ALWAYS release the lock immediately:
+  claudeswarm release-file-lock <filepath>
+  Example: claudeswarm release-file-lock src/main.py
+
+Check if file is locked:
+  claudeswarm who-has-lock <filepath>
+
+List all locks:
+  claudeswarm list-all-locks
+
+NEVER skip file locks - they prevent conflicts between agents!
+
+═══════════════════════════════════════════════════════════════════
+DOCUMENTATION & HELP:
+═══════════════════════════════════════════════════════════════════
+
+• docs/AGENT_PROTOCOL.md - Full protocol documentation
+• docs/AGENT_QUICK_REFERENCE.md - Quick command reference
+• claudeswarm --help - All available commands
+• COORDINATION.md - Sprint goals and current work assignments
+
+COORDINATION READY! 🎉""",
     ]
 
     messages_to_send = messages
@@ -1195,6 +1230,28 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         print("  claudeswarm who-has-lock <path>")
         print("  claudeswarm list-agents")
         print("  claudeswarm list-all-locks")
+
+        # Auto-check for pending messages (shows recent 3)
+        print()
+        print("=" * 68)
+        print("📬 RECENT MESSAGES (auto-checked)")
+        print("=" * 68)
+        try:
+            from claudeswarm.messaging import MessageLogger
+            logger = MessageLogger()
+            messages = logger.get_messages_for_agent(current_agent['id'], limit=3)
+            if messages:
+                for msg in messages:
+                    timestamp = msg['timestamp'][:19]  # Trim to YYYY-MM-DDTHH:MM:SS
+                    print(f"\n[{timestamp}] From: {msg['sender_id']} ({msg['type']})")
+                    print(f"  {msg['content']}")
+                if len(messages) >= 3:
+                    print(f"\n(Showing 3 most recent. Use 'claudeswarm check-messages' for more)")
+            else:
+                print("\n  No messages.")
+        except Exception as e:
+            print(f"\n  (Could not check messages: {e})")
+        print()
     else:
         print("=== Current Pane ===")
         print()
