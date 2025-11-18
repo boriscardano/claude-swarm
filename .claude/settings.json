@@ -3,5 +3,13 @@
     "bash": [
       "claudeswarm *"
     ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "./.claude/hooks/check-for-messages.sh"
+      }
+    ]
   }
 }
