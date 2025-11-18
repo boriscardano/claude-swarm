@@ -921,11 +921,15 @@ KEY PROTOCOL RULES:
 ACTIVE AGENTS: {agent_list}""",
 
         # Message 2: Quick Command Reference + Documentation
-        """QUICK COMMAND REFERENCE:
+        """QUICK COMMAND REFERENCE (all work in sandboxed environments):
 • Identity: claudeswarm whoami (find out which agent you are)
-• Discovery: claudeswarm discover-agents
-• Messaging: claudeswarm send-message / broadcast-message
-• Locks: claudeswarm list-all-locks / cleanup-stale-locks
+• List agents: claudeswarm list-agents (see all active agents)
+• Messaging: claudeswarm send-message <agent-id> <type> <message>
+• Broadcast: claudeswarm broadcast-message <type> <message>
+• File locks: claudeswarm acquire-file-lock / release-file-lock
+• Check locks: claudeswarm list-all-locks
+
+NOTE: Messages are delivered automatically via hook - no need to check inbox manually!
 
 DOCUMENTATION: See docs/AGENT_PROTOCOL.md, docs/TUTORIAL.md, or docs/INTEGRATION_GUIDE.md
 
