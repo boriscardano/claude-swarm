@@ -81,7 +81,7 @@ class RegistryLockError(DiscoveryError):
 @dataclass
 class Agent:
     """Represents a discovered Claude Code agent.
-    
+
     Attributes:
         id: Unique agent identifier (e.g., "agent-0", "agent-1")
         pane_index: tmux pane identifier (format: "session:window.pane")
@@ -89,6 +89,7 @@ class Agent:
         status: Current status ("active", "stale", "dead")
         last_seen: Timestamp when agent was last detected
         session_name: Name of the tmux session
+        tmux_pane_id: Internal tmux pane ID (format: "%N") for direct TMUX_PANE matching
     """
     id: str
     pane_index: str
@@ -96,6 +97,7 @@ class Agent:
     status: str
     last_seen: str  # ISO 8601 format
     session_name: str
+    tmux_pane_id: Optional[str] = None  # Internal %N format for TMUX_PANE env var matching
 
     def to_dict(self) -> Dict:
         """Convert agent to dictionary for JSON serialization."""
@@ -173,7 +175,8 @@ def _parse_tmux_panes() -> List[Dict]:
     """
     try:
         # Format string for tmux list-panes output
-        format_str = "#{session_name}:#{window_index}.#{pane_index}|#{pane_pid}|#{pane_current_command}"
+        # Include #{pane_id} for TMUX_PANE env var matching (enables whoami in sandboxed environments)
+        format_str = "#{session_name}:#{window_index}.#{pane_index}|#{pane_pid}|#{pane_current_command}|#{pane_id}"
 
         # Ensure we preserve the TMUX environment variable for proper socket access
         env = os.environ.copy()
@@ -191,18 +194,18 @@ def _parse_tmux_panes() -> List[Dict]:
             timeout=5,
             env=env
         )
-        
+
         panes = []
         for line in result.stdout.strip().split("\n"):
             if not line:
                 continue
-                
+
             parts = line.split("|")
-            if len(parts) != 3:
+            if len(parts) != 4:  # Now expecting 4 parts: pane_index, pid, command, pane_id
                 continue
                 
-            pane_index, pid_str, command = parts
-            
+            pane_index, pid_str, command, tmux_pane_id = parts
+
             # Parse pane_index (format: "session:window.pane")
             try:
                 session_window, pane = pane_index.rsplit(".", 1)
@@ -219,7 +222,8 @@ def _parse_tmux_panes() -> List[Dict]:
                 "session_name": session_name,
                 "pane_index": pane_index,
                 "pid": pid,
-                "command": command
+                "command": command,
+                "tmux_pane_id": tmux_pane_id  # Store %N format for TMUX_PANE matching
             })
         
         return panes
@@ -746,7 +750,8 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
             pid=pane["pid"],
             status="active",
             last_seen=current_time.isoformat(),
-            session_name=pane["session_name"]
+            session_name=pane["session_name"],
+            tmux_pane_id=pane.get("tmux_pane_id")  # Internal %N format for TMUX_PANE matching
         )
         discovered_agents.append(agent)
     
