@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import NoReturn
+from typing import List, NoReturn, Optional
 
 from claudeswarm.locking import LockManager
 from claudeswarm.discovery import refresh_registry, list_active_agents
@@ -36,6 +37,9 @@ from claudeswarm.validators import (
 
 __all__ = ["main"]
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
 # Command-line validation constants
 # Lock reason length limit (enforces concise lock descriptions)
 MAX_LOCK_REASON_LENGTH = 512
@@ -49,6 +53,9 @@ DEFAULT_STALE_THRESHOLD = 60
 # Interval validation bounds for watch mode (in seconds)
 MIN_INTERVAL = 1
 MAX_INTERVAL = 3600
+
+# Message preview limit for whoami command
+WHOAMI_MESSAGE_PREVIEW_LIMIT = 3
 
 
 def format_timestamp(ts: float) -> str:
@@ -1239,18 +1246,22 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         print("=" * 68)
         try:
             from claudeswarm.messaging import MessageLogger
-            logger = MessageLogger()
-            messages = logger.get_messages_for_agent(current_agent['id'], limit=3)
+            msg_logger: MessageLogger = MessageLogger()
+            messages: List[dict] = msg_logger.get_messages_for_agent(
+                current_agent['id'],
+                limit=WHOAMI_MESSAGE_PREVIEW_LIMIT
+            )
             if messages:
                 for msg in messages:
                     timestamp = msg['timestamp'][:19]  # Trim to YYYY-MM-DDTHH:MM:SS
-                    print(f"\n[{timestamp}] From: {msg['sender_id']} ({msg['type']})")
+                    print(f"\n[{timestamp}] From: {msg['sender']} ({msg['msg_type']})")
                     print(f"  {msg['content']}")
-                if len(messages) >= 3:
-                    print(f"\n(Showing 3 most recent. Use 'claudeswarm check-messages' for more)")
+                if len(messages) >= WHOAMI_MESSAGE_PREVIEW_LIMIT:
+                    print(f"\n(Showing {WHOAMI_MESSAGE_PREVIEW_LIMIT} most recent. Use 'claudeswarm check-messages' for more)")
             else:
                 print("\n  No messages.")
         except Exception as e:
+            logger.debug(f"Failed to check messages for agent {current_agent.get('id', 'unknown')}: {e}", exc_info=True)
             print(f"\n  (Could not check messages: {e})")
         print()
     else:

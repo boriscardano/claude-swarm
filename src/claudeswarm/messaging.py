@@ -654,6 +654,55 @@ class MessageLogger:
             self.log_file.touch()
             logger.info(f"Rotated log file to {old_log}")
 
+    def get_messages_for_agent(self, agent_id: str, limit: Optional[int] = None) -> List[dict]:
+        """Get messages for a specific agent from the log file.
+
+        Reads messages from agent_messages.log and filters for messages
+        sent to the specified agent. Returns the most recent messages
+        up to the limit.
+
+        Args:
+            agent_id: ID of the agent to get messages for
+            limit: Maximum number of messages to return (most recent first)
+
+        Returns:
+            List of message dictionaries, ordered by timestamp (most recent last)
+
+        Note:
+            Returns empty list if log file doesn't exist or no messages found.
+            Silently skips invalid JSON lines in the log file.
+        """
+        if not self.log_file.exists():
+            return []
+
+        messages = []
+        try:
+            with open(self.log_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    try:
+                        msg = json.loads(line)
+
+                        # Check if this message is for the specified agent
+                        recipients = msg.get('recipients', [])
+                        if agent_id in recipients or 'all' in recipients:
+                            messages.append(msg)
+                    except json.JSONDecodeError:
+                        # Skip invalid JSON lines
+                        continue
+
+        except (IOError, OSError) as e:
+            logger.warning(f"Error reading messages from {self.log_file}: {e}")
+            return []
+
+        # Return the most recent messages up to limit
+        if limit and limit > 0:
+            return messages[-limit:]
+        return messages
+
 
 class MessagingSystem:
     """Main messaging system for Claude Swarm.

@@ -733,10 +733,13 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
         if not _is_claude_code_process(pane["command"], pane["pid"]):
             continue
 
-        # Filter by project directory - only include agents working in this project
-        # This creates project-isolated swarms
-        if not _is_in_project(pane["pid"], project_root):
-            continue
+        # Filter by project directory based on configuration
+        # When enable_cross_project_coordination is False (default), only include agents
+        # working in this project. This creates project-isolated swarms for security.
+        # When True, agents from all projects are visible for cross-project coordination.
+        if not get_config().discovery.enable_cross_project_coordination:
+            if not _is_in_project(pane["pid"], project_root):
+                continue
 
         pane_index = pane["pane_index"]
         active_pane_indices.add(pane_index)

@@ -37,6 +37,21 @@ The `init` command will:
 
 **That's it!** No environment variables, no manual setup. Just works™
 
+### Claude Code Settings (Optional)
+
+For an enhanced experience with Claude Code, you can configure auto-approval and message hooks:
+
+```bash
+# Copy the example settings file
+cp .claude/settings.json.example .claude/settings.json
+```
+
+This enables:
+- **Auto-approval** for `claudeswarm` commands (no manual confirmation needed)
+- **Automatic message checking** on every prompt submission (agents will be notified of messages)
+
+The settings file is gitignored to avoid conflicts between users.
+
 ---
 
 ### Advanced Installation Options

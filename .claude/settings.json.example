@@ -1,0 +1,25 @@
+{
+  // Copy this file to .claude/settings.json to enable auto-approval and hooks
+  // This example configuration:
+  // 1. Auto-approves claudeswarm CLI commands (no manual approval needed)
+  // 2. Checks for messages from other agents on every prompt submission
+  //
+  // Usage:
+  //   cp .claude/settings.json.example .claude/settings.json
+  //
+  // Note: .claude/settings.json is gitignored to avoid user conflicts
+
+  "autoApprove": {
+    "bash": [
+      "claudeswarm *"
+    ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "./.claude/hooks/check-for-messages.sh"
+      }
+    ]
+  }
+}
