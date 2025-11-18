@@ -103,7 +103,7 @@ class TestSingleMessageDeliveryStatus:
         message = system.send_message(
             sender_id="agent-1",
             recipient_id="agent-2",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Test message"
         )
 
@@ -126,7 +126,7 @@ class TestSingleMessageDeliveryStatus:
         message = system.send_message(
             sender_id="agent-1",
             recipient_id="agent-2",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Test message"
         )
 
@@ -149,7 +149,7 @@ class TestSingleMessageDeliveryStatus:
         message = system.send_message(
             sender_id="agent-1",
             recipient_id="agent-2",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Test message"
         )
 
@@ -183,7 +183,7 @@ class TestBroadcastDeliveryStatus:
 
         results = system.broadcast_message(
             sender_id="system",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Broadcast test",
             exclude_self=True
         )
@@ -216,7 +216,7 @@ class TestBroadcastDeliveryStatus:
 
         results = system.broadcast_message(
             sender_id="system",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Broadcast test",
             exclude_self=True
         )
@@ -247,7 +247,7 @@ class TestBroadcastDeliveryStatus:
 
         results = system.broadcast_message(
             sender_id="system",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Broadcast test",
             exclude_self=True
         )
@@ -283,7 +283,7 @@ class TestBroadcastDeliveryStatus:
 
         results = system.broadcast_message(
             sender_id="system",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Broadcast test",
             exclude_self=True
         )
@@ -313,7 +313,7 @@ class TestDeliveryStatusSandboxedEnvironment:
         message = system.send_message(
             sender_id="agent-1",
             recipient_id="agent-2",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Test message"
         )
 
@@ -342,7 +342,7 @@ class TestDeliveryStatusSandboxedEnvironment:
 
         results = system.broadcast_message(
             sender_id="system",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Broadcast test",
             exclude_self=True
         )
@@ -372,7 +372,7 @@ class TestDeliveryStatusPersistence:
         system.send_message(
             sender_id="agent-1",
             recipient_id="agent-2",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Test message"
         )
 
@@ -408,7 +408,7 @@ class TestDeliveryStatusPersistence:
 
         system.broadcast_message(
             sender_id="system",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Broadcast test",
             exclude_self=True
         )
@@ -441,7 +441,7 @@ class TestDeliveryStatusPersistence:
         system.send_message(
             sender_id="agent-1",
             recipient_id="agent-2",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Test message"
         )
 
@@ -479,7 +479,7 @@ class TestDeliveryStatusPersistence:
 
         system.broadcast_message(
             sender_id="system",
-            message_type=MessageType.INFO,
+            msg_type=MessageType.INFO,
             content="Broadcast test",
             exclude_self=True
         )
