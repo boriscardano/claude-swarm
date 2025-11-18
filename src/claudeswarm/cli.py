@@ -879,15 +879,33 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     # Step 1: Discover agents
     print("Step 1: Discovering active agents...")
     try:
-        registry = refresh_registry()
-        agents = list_active_agents()
+        from claudeswarm.project import get_project_root
+        from claudeswarm.discovery import _is_in_project
 
-        if not agents:
+        registry = refresh_registry()
+        all_agents = list_active_agents()
+
+        if not all_agents:
             print("No agents discovered.")
             print("Make sure Claude Code instances are running in tmux panes.")
             sys.exit(1)
 
-        print(f"Found {len(agents)} active agent(s): {', '.join(a.id for a in agents)}")
+        # Filter agents to only those in the current project
+        project_root = get_project_root()
+        agents = []
+        for agent in all_agents:
+            if _is_in_project(agent.pid, project_root):
+                agents.append(agent)
+
+        if not agents:
+            print(f"No agents found in current project ({project_root}).")
+            print(f"Total agents discovered: {len(all_agents)}")
+            print("Onboarding will not proceed for agents outside this project.")
+            sys.exit(0)
+
+        print(f"Found {len(agents)} agent(s) in current project: {', '.join(a.id for a in agents)}")
+        if len(all_agents) > len(agents):
+            print(f"  (Skipping {len(all_agents) - len(agents)} agent(s) from other projects)")
         print()
 
     except subprocess.CalledProcessError as e:
@@ -902,7 +920,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Step 2: Send onboarding messages
-    print("Step 2: Broadcasting onboarding messages...")
+    print("Step 2: Broadcasting onboarding messages to project agents...")
 
     # Consolidate into fewer, comprehensive messages to avoid rate limiting
     agent_list = ', '.join(a.id for a in agents)

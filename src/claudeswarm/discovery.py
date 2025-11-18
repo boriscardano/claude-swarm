@@ -734,9 +734,9 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
             continue
 
         # Filter by project directory - only include agents working in this project
-        # DISABLED: Allow agents from all projects in same tmux session to coordinate
-        # if not _is_in_project(pane["pid"], project_root):
-        #     continue
+        # This creates project-isolated swarms
+        if not _is_in_project(pane["pid"], project_root):
+            continue
 
         pane_index = pane["pane_index"]
         active_pane_indices.add(pane_index)
