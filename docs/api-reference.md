@@ -1146,6 +1146,87 @@ claudeswarm start-monitoring --filter-agent agent-2
 
 All modules follow consistent error handling patterns:
 
+### Exception Hierarchy
+
+```
+Exception
+├── DiscoveryError (claudeswarm.discovery)
+│   ├── TmuxNotRunningError
+│   ├── TmuxPermissionError
+│   └── RegistryLockError
+├── ValidationError (claudeswarm.validators)
+├── FileLockError (claudeswarm.file_lock)
+│   └── FileLockTimeout
+├── RuntimeError (built-in)
+├── FileNotFoundError (built-in)
+└── ValueError (built-in)
+```
+
+### Common Exceptions
+
+#### DiscoveryError
+
+Base exception for discovery system errors.
+
+**Example:**
+
+```python
+from claudeswarm.discovery import discover_agents, TmuxNotRunningError, RegistryLockError
+
+try:
+    registry = discover_agents()
+except TmuxNotRunningError as e:
+    print(f"Error: tmux is not running - {e}")
+    # Handle: prompt user to start tmux
+except RegistryLockError as e:
+    print(f"Error: registry file is locked - {e}")
+    # Handle: retry after a delay
+except Exception as e:
+    print(f"Unexpected discovery error: {e}")
+```
+
+#### ValidationError
+
+Raised for invalid input parameters.
+
+**Example:**
+
+```python
+from claudeswarm.locking import LockManager
+from claudeswarm.validators import ValidationError
+
+lm = LockManager()
+
+try:
+    success, conflict = lm.acquire_lock(
+        filepath="src/auth.py",
+        agent_id="",  # Invalid: empty agent ID
+        reason="Testing"
+    )
+except ValidationError as e:
+    print(f"Invalid input: {e}")
+    # Handle: prompt user for valid agent ID
+```
+
+#### FileLockTimeout
+
+Raised when file lock cannot be acquired within timeout.
+
+**Example:**
+
+```python
+from claudeswarm.file_lock import FileLock, FileLockTimeout
+from pathlib import Path
+
+try:
+    with FileLock(Path("ACTIVE_AGENTS.json"), timeout=2.0):
+        # Critical section: access shared file
+        pass
+except FileLockTimeout as e:
+    print(f"Could not acquire lock: {e}")
+    # Handle: retry or skip operation
+```
+
 ### RuntimeError
 
 Raised when system requirements aren't met:
@@ -1166,6 +1247,171 @@ Raised for invalid input:
 - Empty agent IDs
 - Invalid message types
 - Invalid section names
+
+---
+
+## Common Patterns
+
+This section demonstrates common usage patterns for coordinating agents.
+
+### Send Message and Wait for ACK
+
+Send a message that requires acknowledgment, then check for response:
+
+```python
+from claudeswarm.ack import send_with_ack, AckSystem
+from claudeswarm.messaging import MessageType
+import time
+
+# Send message that requires ACK
+msg_id = send_with_ack(
+    sender_id="agent-2",
+    recipient_id="agent-1",
+    msg_type=MessageType.BLOCKED,
+    content="Need auth.py to proceed"
+)
+
+if not msg_id:
+    print("Failed to send message")
+else:
+    # Wait for acknowledgment (system will retry automatically)
+    ack_system = AckSystem()
+    max_wait = 180  # 3 minutes
+    start_time = time.time()
+
+    while time.time() - start_time < max_wait:
+        pending = ack_system.check_pending_acks(agent_id="agent-2")
+        if not any(p.msg_id == msg_id for p in pending):
+            print("Message acknowledged!")
+            break
+        time.sleep(5)  # Check every 5 seconds
+    else:
+        print("Timeout waiting for acknowledgment")
+```
+
+### Lock-Modify-Release Pattern
+
+Safely acquire a lock, modify files, then release:
+
+```python
+from claudeswarm.locking import LockManager
+from pathlib import Path
+
+lm = LockManager()
+agent_id = "agent-1"
+filepath = "src/auth.py"
+
+# Acquire lock
+success, conflict = lm.acquire_lock(
+    filepath=filepath,
+    agent_id=agent_id,
+    reason="Implementing OAuth"
+)
+
+if not success:
+    print(f"Cannot proceed: {conflict.current_holder} has lock")
+    print(f"Reason: {conflict.reason}")
+    # Wait or handle conflict
+else:
+    try:
+        # Critical section: modify file
+        content = Path(filepath).read_text()
+        # ... make changes ...
+        Path(filepath).write_text(content)
+        print("Changes saved successfully")
+    except Exception as e:
+        print(f"Error during modification: {e}")
+        # Handle error, but still release lock
+    finally:
+        # Always release lock, even on error
+        lm.release_lock(filepath, agent_id)
+        print("Lock released")
+```
+
+### Broadcast with Timeout
+
+Broadcast a message and track delivery status:
+
+```python
+from claudeswarm.messaging import broadcast_message, MessageType
+import time
+
+# Send broadcast
+results = broadcast_message(
+    sender_id="agent-0",
+    message_type=MessageType.INFO,
+    content="Sprint starting - check COORDINATION.md"
+)
+
+# Check delivery results
+total_agents = len(results)
+successful = sum(1 for success in results.values() if success)
+failed = [agent_id for agent_id, success in results.items() if not success]
+
+print(f"Broadcast delivered to {successful}/{total_agents} agents")
+
+if failed:
+    print(f"Failed deliveries: {', '.join(failed)}")
+    # Optionally retry failed deliveries
+    time.sleep(5)
+    for agent_id in failed:
+        from claudeswarm.messaging import send_message
+        send_message(
+            sender_id="agent-0",
+            recipient_id=agent_id,
+            message_type=MessageType.INFO,
+            content="Sprint starting - check COORDINATION.md"
+        )
+```
+
+### Retry with Exponential Backoff
+
+Retry an operation with increasing delays:
+
+```python
+from claudeswarm.locking import LockManager
+import time
+
+def acquire_lock_with_retry(lm, filepath, agent_id, max_retries=5):
+    """Acquire lock with exponential backoff retry."""
+    delays = [1, 2, 5, 10, 30]  # seconds
+
+    for attempt in range(max_retries):
+        success, conflict = lm.acquire_lock(
+            filepath=filepath,
+            agent_id=agent_id,
+            reason="Processing with retry"
+        )
+
+        if success:
+            return True, None
+
+        if attempt < max_retries - 1:
+            delay = delays[attempt]
+            print(f"Lock held by {conflict.current_holder}, "
+                  f"retrying in {delay}s... (attempt {attempt + 1}/{max_retries})")
+            time.sleep(delay)
+        else:
+            print(f"Failed to acquire lock after {max_retries} attempts")
+            return False, conflict
+
+    return False, None
+
+# Usage
+lm = LockManager()
+success, conflict = acquire_lock_with_retry(
+    lm,
+    filepath="src/database.py",
+    agent_id="agent-3"
+)
+
+if success:
+    try:
+        # Do work
+        pass
+    finally:
+        lm.release_lock("src/database.py", "agent-3")
+```
 
 ---
 
@@ -1221,6 +1467,156 @@ msg_id = send_with_ack(
 
 ---
 
+## Programmatic Configuration
+
+Claude Swarm can be configured programmatically using the `config` module.
+
+### Loading Configuration
+
+```python
+from claudeswarm.config import get_config, ConfigManager
+
+# Get current configuration (loads from .claudeswarm.yaml if exists)
+config = get_config()
+
+# Access configuration values
+print(f"Rate limit: {config.rate_limiting.messages_per_minute} msg/min")
+print(f"Stale timeout: {config.locking.stale_timeout}s")
+print(f"Stale threshold: {config.discovery.stale_threshold}s")
+```
+
+### Modifying Configuration at Runtime
+
+```python
+from claudeswarm.config import ConfigManager
+
+# Create config manager
+config_mgr = ConfigManager()
+
+# Update rate limiting
+config_mgr.config.rate_limiting.messages_per_minute = 20
+config_mgr.config.rate_limiting.window_seconds = 60
+
+# Update locking settings
+config_mgr.config.locking.stale_timeout = 600  # 10 minutes
+config_mgr.config.locking.auto_cleanup = True
+
+# Save to file
+config_mgr.save(".claudeswarm.yaml")
+```
+
+### Creating Configuration from Scratch
+
+```python
+from claudeswarm.config import (
+    Config,
+    RateLimitingConfig,
+    LockingConfig,
+    DiscoveryConfig,
+    OnboardingConfig
+)
+
+# Create custom configuration
+config = Config(
+    rate_limiting=RateLimitingConfig(
+        messages_per_minute=15,
+        window_seconds=60
+    ),
+    locking=LockingConfig(
+        stale_timeout=300,
+        auto_cleanup=False
+    ),
+    discovery=DiscoveryConfig(
+        stale_threshold=90,
+        auto_refresh_interval=None,
+        enable_cross_project_coordination=False
+    ),
+    onboarding=OnboardingConfig(
+        enabled=True,
+        auto_onboard=False
+    )
+)
+
+# Save to file
+from claudeswarm.config import ConfigManager
+config_mgr = ConfigManager(config=config)
+config_mgr.save(".claudeswarm.yaml")
+```
+
+### Configuration Validation
+
+```python
+from claudeswarm.config import ConfigManager
+
+config_mgr = ConfigManager.from_file(".claudeswarm.yaml")
+
+# Validate configuration
+try:
+    config_mgr.validate()
+    print("Configuration is valid")
+except ValueError as e:
+    print(f"Invalid configuration: {e}")
+```
+
+### Environment-Specific Configuration
+
+```python
+from claudeswarm.config import ConfigManager
+from pathlib import Path
+
+# Development configuration
+dev_config = ConfigManager.from_file("configs/dev.yaml")
+
+# Production configuration
+prod_config = ConfigManager.from_file("configs/prod.yaml")
+
+# Use appropriate config based on environment
+import os
+if os.getenv("ENV") == "production":
+    config = prod_config.config
+else:
+    config = dev_config.config
+
+# Access configuration
+print(f"Using config: {config.rate_limiting.messages_per_minute} msg/min")
+```
+
+### Configuration Schema
+
+All configuration values with their types and defaults:
+
+```python
+@dataclass
+class RateLimitingConfig:
+    messages_per_minute: int = 10
+    window_seconds: int = 60
+
+@dataclass
+class LockingConfig:
+    stale_timeout: int = 300
+    auto_cleanup: bool = False
+
+@dataclass
+class DiscoveryConfig:
+    stale_threshold: int = 60
+    auto_refresh_interval: Optional[int] = None
+    enable_cross_project_coordination: bool = False
+
+@dataclass
+class OnboardingConfig:
+    enabled: bool = True
+    auto_onboard: bool = False
+
+@dataclass
+class Config:
+    rate_limiting: RateLimitingConfig
+    locking: LockingConfig
+    discovery: DiscoveryConfig
+    onboarding: OnboardingConfig
+```
+
+---
+
 ## Version Information
 
 **Current Version:** 0.1.0
@@ -1229,4 +1625,4 @@ For updates and changelog, see the [GitHub repository](https://github.com/yourus
 
 ---
 
-**Last Updated:** 2025-11-07
+**Last Updated:** 2025-11-18

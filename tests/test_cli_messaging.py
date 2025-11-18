@@ -202,7 +202,7 @@ class TestSendMessageCommand:
                 with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
                     with patch("claudeswarm.messaging.send_message") as mock_send:
                         mock_message = Mock()
-                        mock_message.to_dict.return_value = {}
+                        mock_message.to_dict.return_value = {'delivery_status': {}}
                         mock_send.return_value = mock_message
 
                         args = argparse.Namespace(
@@ -217,6 +217,74 @@ class TestSendMessageCommand:
                             cmd_send_message(args)
 
                         assert exc_info.value.code == 0, f"Failed for type {msg_type}"
+
+    def test_send_message_with_auto_detect(self, tmp_path, capsys):
+        """Test send-message with auto-detected sender ID."""
+        import json
+        import os
+
+        # Create mock registry
+        registry_data = {
+            "session_name": "test",
+            "updated_at": "2025-11-18T10:00:00Z",
+            "agents": [{
+                "id": "agent-auto",
+                "pane_index": "test:0.0",
+                "pid": 12345,
+                "status": "active",
+                "last_seen": "2025-11-18T10:00:00Z",
+                "session_name": "test",
+                "tmux_pane_id": "%99"
+            }]
+        }
+
+        registry_path = tmp_path / "ACTIVE_AGENTS.json"
+        registry_path.write_text(json.dumps(registry_data))
+
+        args = argparse.Namespace(
+            sender_id=None,  # Auto-detect
+            recipient_id="agent-2",
+            type="INFO",
+            content="Test message",
+            json=False
+        )
+
+        with patch.dict(os.environ, {'TMUX_PANE': '%99'}):
+            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
+                with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
+                    with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
+                        with patch("claudeswarm.messaging.send_message") as mock_send:
+                            mock_message = Mock()
+                            mock_message.to_dict.return_value = {'delivery_status': {'agent-2': True}}
+                            mock_send.return_value = mock_message
+
+                            with pytest.raises(SystemExit) as exc_info:
+                                cmd_send_message(args)
+
+                            assert exc_info.value.code == 0
+                            # Verify auto-detected sender ID was used
+                            call_kwargs = mock_send.call_args[1]
+                            assert call_kwargs['sender_id'] == "agent-auto"
+
+    def test_send_message_auto_detect_fails(self, capsys):
+        """Test send-message fails when auto-detect fails."""
+        import os
+
+        args = argparse.Namespace(
+            sender_id=None,  # Auto-detect
+            recipient_id="agent-2",
+            type="INFO",
+            content="Test message",
+            json=False
+        )
+
+        with patch.dict(os.environ, {}, clear=True):  # No TMUX_PANE
+            with pytest.raises(SystemExit) as exc_info:
+                cmd_send_message(args)
+
+            assert exc_info.value.code == 1
+            captured = capsys.readouterr()
+            assert "Could not auto-detect agent identity" in captured.err
 
 
 class TestBroadcastMessageCommand:
@@ -418,6 +486,74 @@ class TestBroadcastMessageCommand:
         mock_broadcast.assert_called_once()
         call_kwargs = mock_broadcast.call_args[1]
         assert call_kwargs["exclude_self"] == False
+
+    def test_broadcast_message_with_auto_detect(self, tmp_path, capsys):
+        """Test broadcast-message with auto-detected sender ID."""
+        import json
+        import os
+
+        # Create mock registry
+        registry_data = {
+            "session_name": "test",
+            "updated_at": "2025-11-18T10:00:00Z",
+            "agents": [{
+                "id": "agent-auto",
+                "pane_index": "test:0.0",
+                "pid": 12345,
+                "status": "active",
+                "last_seen": "2025-11-18T10:00:00Z",
+                "session_name": "test",
+                "tmux_pane_id": "%99"
+            }]
+        }
+
+        registry_path = tmp_path / "ACTIVE_AGENTS.json"
+        registry_path.write_text(json.dumps(registry_data))
+
+        args = argparse.Namespace(
+            sender_id=None,  # Auto-detect
+            type="INFO",
+            content="Broadcast test",
+            include_self=False,
+            json=False,
+            verbose=False
+        )
+
+        with patch.dict(os.environ, {'TMUX_PANE': '%99'}):
+            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
+                with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
+                    with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
+                        with patch("claudeswarm.messaging.broadcast_message") as mock_broadcast:
+                            mock_broadcast.return_value = {"agent-2": True}
+
+                            with pytest.raises(SystemExit) as exc_info:
+                                cmd_broadcast_message(args)
+
+                            assert exc_info.value.code == 0
+                            # Verify auto-detected sender ID was used
+                            call_kwargs = mock_broadcast.call_args[1]
+                            assert call_kwargs['sender_id'] == "agent-auto"
+
+    def test_broadcast_message_auto_detect_fails(self, capsys):
+        """Test broadcast-message fails when auto-detect fails."""
+        import os
+
+        args = argparse.Namespace(
+            sender_id=None,  # Auto-detect
+            type="INFO",
+            content="Broadcast test",
+            include_self=False,
+            json=False,
+            verbose=False
+        )
+
+        with patch.dict(os.environ, {}, clear=True):  # No TMUX_PANE
+            with pytest.raises(SystemExit) as exc_info:
+                cmd_broadcast_message(args)
+
+            assert exc_info.value.code == 1
+            captured = capsys.readouterr()
+            assert "Could not auto-detect agent identity" in captured.err
 
 
 class TestMessagingSubprocessExecution:

@@ -33,6 +33,7 @@ from claudeswarm.validators import (
     validate_file_path,
     validate_timeout,
     validate_message_content,
+    validate_tmux_pane_id,
 )
 
 __all__ = ["main"]
@@ -337,6 +338,13 @@ def _detect_current_agent() -> tuple[Optional[str], Optional[dict]]:
     # Check if running in tmux
     tmux_pane_id = os.environ.get('TMUX_PANE')
     if not tmux_pane_id:
+        return None, None
+
+    # Validate tmux pane ID to prevent command injection
+    try:
+        tmux_pane_id = validate_tmux_pane_id(tmux_pane_id)
+    except ValidationError:
+        # Invalid pane ID format - cannot proceed safely
         return None, None
 
     # Load registry
@@ -1141,6 +1149,13 @@ def cmd_whoami(args: argparse.Namespace) -> None:
     if not tmux_pane_id:
         print("Not running in a tmux session.", file=sys.stderr)
         print("The 'whoami' command only works within tmux panes.", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate tmux pane ID to prevent command injection
+    try:
+        tmux_pane_id = validate_tmux_pane_id(tmux_pane_id)
+    except ValidationError as e:
+        print(f"Error: Invalid TMUX_PANE environment variable: {e}", file=sys.stderr)
         sys.exit(1)
 
     # Convert tmux pane ID (like %2) to session:window.pane format (like 0:1.1)

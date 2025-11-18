@@ -66,6 +66,40 @@ __all__ = [
 ]
 
 
+# ============================================================================
+# MESSAGING SYSTEM CONSTANTS
+# ============================================================================
+
+# Timeout for direct message delivery via tmux (seconds)
+# Generous timeout to handle slow systems and ensure reliable delivery
+DIRECT_MESSAGE_TIMEOUT_SECONDS = 10.0
+
+# Timeout for broadcast message delivery via tmux (seconds)
+# Shorter than direct messages to prevent one slow agent from blocking entire broadcast
+BROADCAST_TIMEOUT_SECONDS = 5.0
+
+# Timeout for tmux pane verification (seconds)
+TMUX_VERIFY_TIMEOUT_SECONDS = 5.0
+
+# Maximum message log file size before rotation (bytes)
+# 10MB provides good balance between file size and history retention
+MESSAGE_LOG_MAX_SIZE_BYTES = 10 * 1024 * 1024
+
+# File lock timeout for message log writes (seconds)
+# Short timeout since log writes are fast (<1ms typically)
+MESSAGE_LOG_LOCK_TIMEOUT_SECONDS = 2.0
+
+# File lock timeout for registry reads (seconds)
+REGISTRY_READ_LOCK_TIMEOUT_SECONDS = 5.0
+
+# Maximum number of recipients for broadcast (safety limit)
+# Prevents accidental DOS from broadcasting to huge agent lists
+MAX_BROADCAST_RECIPIENTS = 100
+
+# Cleanup interval for inactive agent rate limiters (seconds)
+# Remove rate limit tracking for agents inactive for 1 hour
+RATE_LIMITER_CLEANUP_SECONDS = 3600
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -369,7 +403,7 @@ class RateLimiter:
             if agent_id in self._message_times:
                 del self._message_times[agent_id]
 
-    def cleanup_inactive_agents(self, cutoff_seconds: int = 3600):
+    def cleanup_inactive_agents(self, cutoff_seconds: int = RATE_LIMITER_CLEANUP_SECONDS):
         """Remove tracking data for agents that haven't sent messages recently.
 
         This prevents memory leaks in long-running scenarios where agents
@@ -427,7 +461,7 @@ class TmuxMessageDelivery:
         return shlex.quote(text)
 
     @staticmethod
-    def send_to_pane(pane_id: str, message: str, timeout: float = 10.0) -> bool:
+    def send_to_pane(pane_id: str, message: str, timeout: float = DIRECT_MESSAGE_TIMEOUT_SECONDS) -> bool:
         """Send message to a specific tmux pane.
 
         Args:
@@ -511,7 +545,7 @@ class TmuxMessageDelivery:
             raise TmuxError(f"Unexpected error sending to pane {pane_id}: {e}") from e
 
     @staticmethod
-    def verify_pane_exists(pane_id: str, timeout: float = 5.0) -> bool:
+    def verify_pane_exists(pane_id: str, timeout: float = TMUX_VERIFY_TIMEOUT_SECONDS) -> bool:
         """Verify that a tmux pane exists.
 
         Args:
@@ -575,7 +609,7 @@ class MessageLogger:
             project_root: Optional project root directory
         """
         self.log_file = log_file or get_messages_log_path(project_root)
-        self.max_size = 10 * 1024 * 1024  # 10MB
+        self.max_size = MESSAGE_LOG_MAX_SIZE_BYTES
 
         # Create log file if it doesn't exist
         if not self.log_file.exists():
@@ -620,7 +654,7 @@ class MessageLogger:
         # Use exclusive lock to protect both rotation check and write
         # This prevents multiple agents from interleaving JSON lines
         try:
-            with FileLock(self.log_file, timeout=2.0, shared=False):
+            with FileLock(self.log_file, timeout=MESSAGE_LOG_LOCK_TIMEOUT_SECONDS, shared=False):
                 # Check if we need to rotate
                 self._rotate_if_needed()
 
@@ -752,7 +786,7 @@ class MessagingSystem:
 
         try:
             # Use shared lock for reading (allows multiple readers)
-            with FileLock(registry_path, timeout=5.0, shared=True):
+            with FileLock(registry_path, timeout=REGISTRY_READ_LOCK_TIMEOUT_SECONDS, shared=True):
                 with open(registry_path, 'r') as f:
                     data = json.load(f)
                 return AgentRegistry.from_dict(data)
@@ -870,13 +904,102 @@ class MessagingSystem:
         # Format and send message
         formatted_msg = message.format_for_display()
 
+        # ========================================================================
+        # MESSAGE DELIVERY WITH GRACEFUL FALLBACK STRATEGY
+        # ========================================================================
+        # This implements a dual-delivery system that ensures messages are logged
+        # even when real-time tmux delivery fails. This is critical for supporting
+        # both interactive (tmux-available) and sandboxed (tmux-unavailable)
+        # environments.
+        #
+        # WHY DUAL DELIVERY:
+        # Messages have two delivery channels:
+        # 1. Real-time tmux delivery (immediate notification in recipient's terminal)
+        # 2. File-based inbox (persistent message log in agent_messages.log)
+        #
+        # Both channels serve different purposes:
+        # - Tmux: Immediate, interactive notifications
+        # - Log file: Persistent inbox, supports asynchronous reading, survives restarts
+        #
+        # GRACEFUL DEGRADATION STRATEGY:
+        #
+        # Claude Code runs in three types of environments:
+        #
+        # A) Full tmux environment (normal operation):
+        # - Tmux socket is accessible
+        # - Real-time delivery succeeds
+        # - Message also logged to file for persistence
+        # - Recipient sees message immediately in terminal
+        #
+        # B) Sandboxed environment (Claude Code in browser/API):
+        # - Tmux socket is not accessible or permission denied
+        # - Real-time delivery fails with TmuxError
+        # - Message is STILL logged to file (fallback)
+        # - Recipient can read from log file asynchronously
+        # - This allows messaging to work even without tmux
+        #
+        # C) Partial failure (agent terminated):
+        # - Tmux pane no longer exists (agent closed)
+        # - Real-time delivery fails with TmuxPaneNotFoundError
+        # - Message is still logged for potential recovery
+        # - Rate limit is still consumed (we attempted delivery)
+        #
+        # EXCEPTION HANDLING HIERARCHY:
+        #
+        # 1. TmuxError/TmuxSocketError/TmuxPaneNotFoundError/TmuxTimeoutError:
+        # These are EXPECTED in sandboxed environments. We:
+        # - Log at DEBUG level (not ERROR - this is normal)
+        # - Mark tmux_unavailable = True (for metrics)
+        # - DO NOT raise exception (fallback to file-based delivery)
+        # - Continue to log message to file
+        # - Return message object normally
+        #
+        # 2. Exception (catch-all):
+        # Unexpected errors that indicate bugs or system issues:
+        # - Log at ERROR level
+        # - Re-raise as MessageDeliveryError
+        # - These should be investigated and fixed
+        #
+        # FINALLY BLOCK GUARANTEES:
+        #
+        # These operations ALWAYS execute, regardless of success/failure:
+        #
+        # 1. Rate limit recording:
+        # - Charge against rate limit even if delivery failed
+        # - Prevents retry storms when tmux is unavailable
+        # - Fair policy: You pay for the attempt, not just success
+        #
+        # 2. Message logging (inbox delivery):
+        # - Always write to agent_messages.log
+        # - This is the fallback delivery mechanism
+        # - Recipients can read from log even if tmux failed
+        # - Provides audit trail of all messaging attempts
+        #
+        # 3. Delivery status tracking:
+        # - Store success/failure in message object
+        # - Allows CLI to show real-time delivery status
+        # - Enables monitoring and debugging
+        #
+        # WHY NOT FAIL FAST:
+        # We could fail immediately when tmux is unavailable, but we don't because:
+        # - File-based inbox is a valid fallback delivery mechanism
+        # - Allows messaging to work in more environments
+        # - Provides better user experience (partial functionality vs complete failure)
+        # - Maintains audit trail even when real-time delivery fails
+        #
+        # PERFORMANCE NOTES:
+        # - Default timeout: 10 seconds for direct messages (generous)
+        # - File logging: Usually <1ms (atomic write to log file)
+        # - Total time: Dominated by tmux operation (1-10s) when available
+        # ========================================================================
+
         # Track delivery success for logging
         success = False
         error_msg = None
         tmux_unavailable = False
 
         try:
-            self.delivery.send_to_pane(pane_id, formatted_msg)
+            self.delivery.send_to_pane(pane_id, formatted_msg, timeout=DIRECT_MESSAGE_TIMEOUT_SECONDS)
             success = True
             logger.info(f"Message {message.msg_id} delivered to {recipient_id}")
 
@@ -916,7 +1039,7 @@ class MessagingSystem:
         msg_type: MessageType,
         content: str,
         exclude_self: bool = True,
-        max_recipients: int = 100
+        max_recipients: int = MAX_BROADCAST_RECIPIENTS
     ) -> Dict[str, bool]:
         """Broadcast a message to all active agents.
 
@@ -1004,8 +1127,76 @@ class MessagingSystem:
         # Format message once for efficiency
         formatted_msg = message.format_for_display()
 
+        # ========================================================================
+        # BROADCAST DELIVERY LOOP WITH FAULT TOLERANCE
+        # ========================================================================
+        # This implements a "best-effort" broadcast delivery strategy that attempts
+        # to deliver to all recipients while gracefully handling failures.
+        #
+        # WHY NOT STOP ON FIRST FAILURE:
+        # Unlike direct messaging where one recipient failure should abort, broadcasts
+        # must attempt delivery to ALL recipients even if some fail. This is because:
+        # - Partial delivery is better than no delivery
+        # - Agent failures are common (panes close, processes crash, tmux issues)
+        # - Caller can inspect delivery_status to see which recipients succeeded
+        # - Failure of one agent shouldn't prevent others from receiving messages
+        #
+        # DELIVERY STRATEGY:
+        #
+        # 1. Sequential delivery (not parallel):
+        # We process recipients one at a time, not in parallel, because:
+        # - Tmux operations can block/interfere with each other
+        # - Sequential processing simplifies error handling
+        # - Total broadcast time is still reasonable (<1s for typical swarm sizes)
+        # - We can exit early if time budget is exceeded (not currently implemented)
+        #
+        # 2. Reduced timeout (5s vs 10s):
+        # Broadcasts use a shorter timeout (5s) compared to direct messages (10s):
+        # - Faster failure detection for unreachable agents
+        # - Prevents one slow agent from blocking entire broadcast
+        # - With N recipients, total time = N * 5s worst case
+        # - 5s is still generous - most operations complete in <100ms
+        #
+        # 3. Graceful pane lookup:
+        # We don't use _get_agent_pane() which raises exceptions. Instead:
+        # - Manually look up pane from registry
+        # - If pane not found, mark as failed and continue
+        # - This prevents cascading failures if registry is stale
+        # - Agent may have terminated between validation and delivery
+        #
+        # 4. Exception handling hierarchy:
+        # Different failure modes get different treatment:
+        # - TmuxPaneNotFoundError: Agent terminated, mark failed
+        # - TmuxSocketError: Tmux unavailable, mark failed but recoverable
+        # - TmuxTimeoutError: Agent slow/hung, mark failed to avoid blocking
+        # - Exception: Unexpected error, log as error but continue
+        #
+        # 5. Complete delivery tracking:
+        # We maintain delivery_status dict with every recipient:
+        # - True: Message successfully delivered to tmux pane
+        # - False: Delivery failed for any reason
+        # This allows callers to:
+        # - Detect partial failures
+        # - Retry failed deliveries
+        # - Monitor agent health/reachability
+        #
+        # RATE LIMITING:
+        # Rate limit is recorded AFTER delivery loop, not before each send:
+        # - One rate limit "charge" per broadcast, not per recipient
+        # - Prevents broadcasts from being expensive in rate limit budget
+        # - Fair policy: broadcasting to 10 agents costs same as to 1 agent
+        # - Recorded even if all deliveries fail (we attempted the broadcast)
+        #
+        # PERFORMANCE CHARACTERISTICS:
+        # - Best case (all succeed): ~100ms for 10 recipients
+        # - Worst case (all timeout): 5s * N recipients
+        # - Typical case (mixed): 1-2s for 10 recipients
+        # - Scales linearly with recipient count
+        # ========================================================================
+
         # Send to all recipients, tracking successes and failures
         delivery_status = {}
+
         for recipient_id in recipients:
             try:
                 # Get pane without raising (handle gracefully for broadcast)
@@ -1021,7 +1212,7 @@ class MessagingSystem:
                     continue
 
                 # Attempt delivery with shorter timeout for broadcasts
-                self.delivery.send_to_pane(pane_id, formatted_msg, timeout=5.0)
+                self.delivery.send_to_pane(pane_id, formatted_msg, timeout=BROADCAST_TIMEOUT_SECONDS)
                 delivery_status[recipient_id] = True
                 logger.debug(f"Broadcast delivered to {recipient_id}")
 

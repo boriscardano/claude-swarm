@@ -574,19 +574,20 @@ class TestGetOrCreateSecret:
         assert secret == original_secret
 
     def test_regenerate_if_secret_too_short(self, tmp_path):
-        """Test regenerating secret if existing one is too short."""
+        """Test that corrupted secret file raises OSError instead of silently regenerating."""
         secret_file = tmp_path / "secret"
         short_secret = b"short"
 
         # Create invalid secret file
         secret_file.write_bytes(short_secret)
 
-        secret = get_or_create_secret(secret_file)
+        # Should raise OSError with helpful message instead of silently regenerating
+        with pytest.raises(OSError) as exc_info:
+            get_or_create_secret(secret_file)
 
-        # Should have generated new secret
-        assert isinstance(secret, bytes)
-        assert len(secret) == 32
-        assert secret != short_secret
+        assert "Corrupted secret file" in str(exc_info.value)
+        assert "too short" in str(exc_info.value)
+        assert "delete the file" in str(exc_info.value)
 
     def test_secret_persists_across_calls(self, tmp_path):
         """Test that secret persists across multiple calls."""
@@ -648,16 +649,18 @@ class TestGetOrCreateSecret:
             secret_file.parent.chmod(0o755)
 
     def test_secret_read_corrupted_file(self, tmp_path):
-        """Test handling corrupted secret file."""
+        """Test handling corrupted secret file raises OSError with helpful message."""
         secret_file = tmp_path / "secret"
         # Create empty file that will fail validation
         secret_file.write_bytes(b"")
 
-        secret = get_or_create_secret(secret_file)
+        # Should raise OSError with helpful message instead of silently regenerating
+        with pytest.raises(OSError) as exc_info:
+            get_or_create_secret(secret_file)
 
-        # Should have generated new secret after validation failure
-        assert isinstance(secret, bytes)
-        assert len(secret) == 32
+        assert "Corrupted secret file" in str(exc_info.value)
+        assert "too short" in str(exc_info.value)
+        assert "delete the file" in str(exc_info.value)
 
 
 class TestIntegration:
