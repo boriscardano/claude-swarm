@@ -15,6 +15,17 @@ from claudeswarm.cloud.mcp_config import (
     attach_perplexity_mcp,
     parse_mcp_list,
 )
+from claudeswarm.cloud.security_utils import (
+    ValidationError,
+    sanitize_api_key_for_logging,
+    sanitize_container_name,
+    sanitize_for_shell,
+    validate_git_url,
+    validate_num_agents,
+    validate_port,
+    validate_sandbox_id,
+    validate_timeout,
+)
 from claudeswarm.cloud.types import MCPConfig, MCPContainerInfo, MCPError, MCPResponse
 
 __all__ = [
@@ -28,6 +39,16 @@ __all__ = [
     "attach_perplexity_mcp",
     "attach_multiple_mcps",
     "parse_mcp_list",
+    # Security utilities
+    "ValidationError",
+    "validate_sandbox_id",
+    "validate_num_agents",
+    "validate_git_url",
+    "validate_port",
+    "validate_timeout",
+    "sanitize_for_shell",
+    "sanitize_container_name",
+    "sanitize_api_key_for_logging",
     # Types
     "MCPConfig",
     "MCPContainerInfo",

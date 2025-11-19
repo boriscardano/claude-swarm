@@ -18,6 +18,9 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 import asyncio
+from threading import Lock
+
+from claudeswarm.messaging import MessagingSystem, MessageType
 
 
 @dataclass
@@ -56,8 +59,8 @@ class WorkDistributor:
     def __init__(self, num_agents: int = 4):
         self.num_agents = num_agents
         self.tasks: Dict[str, Task] = {}
-        # TODO: Initialize messaging when available
-        # self.messaging = MessagingSystem()
+        self.messaging = MessagingSystem()
+        self._task_lock = Lock()  # Thread safety for task operations
 
     async def decompose_feature(
         self,
@@ -336,18 +339,36 @@ class WorkDistributor:
         if not available_tasks:
             return
 
-        # TODO: Use real messaging when available
-        # task_list = "\n".join([f"- {t.id}: {t.title}" for t in available_tasks])
-        # self.messaging.broadcast_message(
-        #     sender_id="work-distributor",
-        #     message_type=MessageType.INFO,
-        #     content=f"Available tasks:\n{task_list}\n\nClaim with: claudeswarm send-message work-distributor INFO 'claim:{task_id}'"
-        # )
+        # Format task list
+        task_list = "\n".join([
+            f"- {t.id}: {t.title}" +
+            (f" (depends on: {', '.join(t.dependencies)})" if t.dependencies else "")
+            for t in available_tasks
+        ])
 
-        print(f"📋 Broadcasting {len(available_tasks)} available tasks:")
-        for task in available_tasks:
-            deps = f" (depends on: {', '.join(task.dependencies)})" if task.dependencies else ""
-            print(f"  - {task.id}: {task.title}{deps}")
+        message_content = (
+            f"Available tasks:\n{task_list}\n\n"
+            f"Claim with: claudeswarm send-message work-distributor INFO 'claim:task_id'"
+        )
+
+        # Broadcast via messaging system (use run_in_executor to avoid blocking event loop)
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,  # Use default executor
+                self.messaging.broadcast_message,
+                "work-distributor",
+                MessageType.INFO,
+                message_content
+            )
+            print(f"📋 Broadcast {len(available_tasks)} available tasks")
+        except Exception as e:
+            print(f"⚠️  Failed to broadcast tasks: {e}")
+            # Still print locally for visibility
+            print(f"📋 Available tasks ({len(available_tasks)}):")
+            for task in available_tasks:
+                deps = f" (depends on: {', '.join(task.dependencies)})" if task.dependencies else ""
+                print(f"  - {task.id}: {task.title}{deps}")
 
     def claim_task(self, task_id: str, agent_id: str) -> bool:
         """
@@ -361,36 +382,41 @@ class WorkDistributor:
             True if successfully claimed, False if already claimed or blocked
         """
 
-        if task_id not in self.tasks:
-            return False
-
-        task = self.tasks[task_id]
-
-        # Check if already claimed
-        if task.status != "available":
-            return False
-
-        # Check if dependencies are met
-        for dep_id in task.dependencies:
-            if dep_id not in self.tasks:
-                return False
-            dep_task = self.tasks[dep_id]
-            if dep_task.status != "completed":
+        # Use lock to prevent race conditions when multiple agents claim simultaneously
+        with self._task_lock:
+            if task_id not in self.tasks:
                 return False
 
-        # Claim task
-        task.agent_id = agent_id
-        task.status = "claimed"
-        task.claimed_at = datetime.now()
+            task = self.tasks[task_id]
 
-        print(f"✓ Task {task_id} claimed by {agent_id}")
+            # Check if already claimed
+            if task.status != "available":
+                return False
 
-        # TODO: Broadcast claim
-        # self.messaging.broadcast_message(
-        #     sender_id="work-distributor",
-        #     message_type=MessageType.INFO,
-        #     content=f"{agent_id} claimed: {task.title}"
-        # )
+            # Check if dependencies are met
+            for dep_id in task.dependencies:
+                if dep_id not in self.tasks:
+                    return False
+                dep_task = self.tasks[dep_id]
+                if dep_task.status != "completed":
+                    return False
+
+            # Claim task (inside lock - atomic operation)
+            task.agent_id = agent_id
+            task.status = "claimed"
+            task.claimed_at = datetime.now()
+
+            print(f"✓ Task {task_id} claimed by {agent_id}")
+
+        # Broadcast claim (outside lock - don't hold lock during I/O)
+        try:
+            self.messaging.broadcast_message(
+                sender_id="work-distributor",
+                msg_type=MessageType.INFO,
+                content=f"{agent_id} claimed: {task.title}"
+            )
+        except Exception as e:
+            print(f"⚠️  Failed to broadcast claim: {e}")
 
         return True
 

@@ -19,6 +19,8 @@ from typing import List, Optional, Dict
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from claudeswarm.messaging import MessagingSystem, MessageType
+
 
 @dataclass
 class ReviewFeedback:
@@ -56,9 +58,9 @@ class Disagreement:
         topic: What the disagreement is about
         agent_a: First agent's ID
         position_a: First agent's position
-        evidence_a: Links/research supporting position A
         agent_b: Second agent's ID
         position_b: Second agent's position
+        evidence_a: Links/research supporting position A
         evidence_b: Links/research supporting position B
         resolved: Whether consensus has been reached
         resolution: Final decision after consensus
@@ -66,9 +68,9 @@ class Disagreement:
     topic: str
     agent_a: str
     position_a: str
-    evidence_a: List[str] = field(default_factory=list)
     agent_b: str
     position_b: str
+    evidence_a: List[str] = field(default_factory=list)
     evidence_b: List[str] = field(default_factory=list)
     resolved: bool = False
     resolution: Optional[str] = None
@@ -100,9 +102,7 @@ class CodeReviewProtocol:
         self.num_agents = num_agents
         self.reviews: Dict[str, ReviewFeedback] = {}
         self.disagreements: List[Disagreement] = []
-
-        # TODO: Initialize messaging when available
-        # self.messaging = MessagingSystem()
+        self.messaging = MessagingSystem()
 
     async def request_review(
         self,
@@ -126,18 +126,30 @@ class CodeReviewProtocol:
 
         review_id = f"review-{author_agent}-{len(self.reviews)}"
 
-        # TODO: Send actual review request via messaging
-        # self.messaging.send_direct_message(
-        #     sender_id=author_agent,
-        #     recipient_id=reviewer_agent,
-        #     message_type=MessageType.REVIEW_REQUEST,
-        #     content=f"Please review my changes:\nFiles: {', '.join(files)}\nTask: {task_description}"
-        # )
+        # Format review request message
+        review_message = (
+            f"Please review my changes:\n"
+            f"Files: {', '.join(files)}\n" +
+            (f"Task: {task_description}" if task_description else "")
+        )
 
-        print(f"📝 Review requested: {author_agent} → {reviewer_agent}")
-        print(f"   Files: {', '.join(files)}")
-        if task_description:
-            print(f"   Task: {task_description}")
+        # Send review request via messaging
+        try:
+            self.messaging.send_message(
+                sender_id=author_agent,
+                recipient_id=reviewer_agent,
+                msg_type=MessageType.REVIEW_REQUEST,
+                content=review_message
+            )
+
+            print(f"📝 Review requested: {author_agent} → {reviewer_agent}")
+            print(f"   Files: {', '.join(files)}")
+            if task_description:
+                print(f"   Task: {task_description}")
+
+        except Exception as e:
+            print(f"⚠️  Failed to send review request: {e}")
+            print(f"📝 Review requested (local only): {author_agent} → {reviewer_agent}")
 
         return review_id
 
@@ -162,19 +174,26 @@ class CodeReviewProtocol:
             for issue in feedback.issues:
                 print(f"   - {issue}")
 
-        # TODO: Send feedback via messaging
-        # self.messaging.send_direct_message(
-        #     sender_id=feedback.reviewer_id,
-        #     recipient_id=feedback.author_id,
-        #     message_type=MessageType.REVIEW_REQUEST,
-        #     content=self._format_feedback(feedback)
-        # )
+        # Send feedback via messaging
+        feedback_message = self._format_feedback(feedback)
 
-        print(f"✓ Review submitted: {feedback.reviewer_id} reviewed {feedback.author_id}'s work")
-        if feedback.approved:
-            print(f"  Status: ✅ Approved")
-        else:
-            print(f"  Status: ⚠️  Changes requested")
+        try:
+            self.messaging.send_message(
+                sender_id=feedback.reviewer_id,
+                recipient_id=feedback.author_id,
+                msg_type=MessageType.INFO,
+                content=feedback_message
+            )
+
+            print(f"✓ Review submitted: {feedback.reviewer_id} reviewed {feedback.author_id}'s work")
+            if feedback.approved:
+                print(f"  Status: ✅ Approved")
+            else:
+                print(f"  Status: ⚠️  Changes requested")
+
+        except Exception as e:
+            print(f"⚠️  Failed to send feedback: {e}")
+            print(f"✓ Review submitted (local only): {feedback.reviewer_id} reviewed {feedback.author_id}'s work")
 
     def _format_feedback(self, feedback: ReviewFeedback) -> str:
         """Format feedback for messaging"""
@@ -249,12 +268,21 @@ class CodeReviewProtocol:
         print(f"   {challenger_agent}: {challenger_position}")
         print(f"   Evidence: {len(author_evidence) + len(challenger_evidence)} sources")
 
-        # TODO: Broadcast disagreement for transparency
-        # self.messaging.broadcast_message(
-        #     sender_id="code-review-protocol",
-        #     message_type=MessageType.INFO,
-        #     content=f"Disagreement on: {topic}\nAgents: {author_agent} vs {challenger_agent}\nNeed consensus vote!"
-        # )
+        # Broadcast disagreement for transparency
+        disagreement_message = (
+            f"Disagreement on: {topic}\n"
+            f"Agents: {author_agent} vs {challenger_agent}\n"
+            f"Need consensus vote!"
+        )
+
+        try:
+            self.messaging.broadcast_message(
+                sender_id="code-review-protocol",
+                msg_type=MessageType.CHALLENGE,
+                content=disagreement_message
+            )
+        except Exception as e:
+            print(f"⚠️  Failed to broadcast disagreement: {e}")
 
         return disagreement
 

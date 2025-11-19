@@ -15,7 +15,19 @@ except ImportError:
     E2BSandbox = None  # type: ignore[assignment, misc]
 
 from claudeswarm.cloud.mcp_bridge import MCPBridge
+from claudeswarm.cloud.security_utils import (
+    ValidationError,
+    validate_num_agents,
+    sanitize_for_shell,
+    validate_timeout,
+)
 from claudeswarm.cloud.types import MCPConfig, MCPContainerInfo
+
+# Security: Default timeout for async operations (in seconds)
+DEFAULT_OPERATION_TIMEOUT = 300.0  # 5 minutes
+
+# Security: Pin claudeswarm to specific commit for reproducibility
+CLAUDESWARM_GIT_URL = "git+https://github.com/borisbanach/claude-swarm.git@d0e37ae"
 
 
 class CloudSandbox:
@@ -35,14 +47,21 @@ class CloudSandbox:
         sandbox_id: Unique identifier for the sandbox
     """
 
-    def __init__(self, num_agents: int = 4) -> None:
+    def __init__(self, num_agents: int = 4, operation_timeout: float = DEFAULT_OPERATION_TIMEOUT) -> None:
         """
         Initialize a CloudSandbox.
 
         Args:
             num_agents: Number of agent panes to create (default: 4)
+            operation_timeout: Timeout for async operations in seconds (default: 300)
+
+        Raises:
+            ValidationError: If num_agents or operation_timeout is invalid
         """
-        self.num_agents = num_agents
+        # Security: Use shared validation from security_utils
+        self.num_agents = validate_num_agents(num_agents)
+        self.operation_timeout = validate_timeout(operation_timeout)
+
         self.sandbox: Optional[E2BSandbox] = None
         self.sandbox_id: Optional[str] = None
         self.mcp_bridge: Optional[MCPBridge] = None
@@ -70,44 +89,60 @@ class CloudSandbox:
                 "Install with: pip install e2b-code-interpreter"
             )
 
-        # Verify API key is set
-        api_key = os.getenv("E2B_API_KEY")
-        if not api_key:
+        # Security: Verify API key is set (without storing it to prevent exposure)
+        if not os.getenv("E2B_API_KEY"):
             raise RuntimeError(
                 "E2B_API_KEY environment variable not set. "
                 "Get your API key from https://e2b.dev/docs"
             )
 
-        # Create sandbox
-        print("🚀 Creating E2B sandbox...")
-        self.sandbox = E2BSandbox()
-        self.sandbox_id = self.sandbox.id
-        print(f"✓ Sandbox created: {self.sandbox_id}")
+        try:
+            # Create sandbox (E2BSandbox retrieves API key internally)
+            print("🚀 Creating E2B sandbox...")
+            self.sandbox = E2BSandbox()
+            self.sandbox_id = self.sandbox.id
+            print(f"✓ Sandbox created: {self.sandbox_id}")
 
-        # Install dependencies
-        await self._install_dependencies()
+            # Install dependencies
+            await self._install_dependencies()
 
-        # Setup tmux
-        await self._setup_tmux()
+            # Setup tmux
+            await self._setup_tmux()
 
-        # Initialize claudeswarm
-        await self._initialize_swarm()
+            # Initialize claudeswarm
+            await self._initialize_swarm()
 
-        print(f"✓ Sandbox {self.sandbox_id} ready with {self.num_agents} agents")
-        return self.sandbox_id
+            print(f"✓ Sandbox {self.sandbox_id} ready with {self.num_agents} agents")
+            return self.sandbox_id
+
+        except Exception as e:
+            # Security: Cleanup on partial initialization failure
+            print(f"❌ Sandbox creation failed: {str(e)}")
+            if self.sandbox:
+                print("🧹 Cleaning up partial sandbox initialization...")
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(self.sandbox.close),
+                        timeout=30.0
+                    )
+                    print("✓ Cleanup complete")
+                except Exception as cleanup_error:
+                    print(f"⚠️  Cleanup error (non-fatal): {cleanup_error}")
+            raise RuntimeError(f"Failed to create sandbox: {str(e)}") from e
 
     async def _install_dependencies(self) -> None:
         """
         Install required packages in sandbox.
 
         Installs:
-        - claudeswarm package (from git repo)
+        - claudeswarm package (from git repo, pinned to specific commit)
         - fastapi and uvicorn (for web dashboard)
         - pytest (for testing)
         - tmux (for multi-pane coordination)
 
         Raises:
             RuntimeError: If any installation fails
+            asyncio.TimeoutError: If installation exceeds timeout
         """
         print("📦 Installing dependencies...")
 
@@ -116,21 +151,30 @@ class CloudSandbox:
             "apt-get update && apt-get install -y tmux git",
             # Python packages
             "pip install --upgrade pip",
-            "pip install git+https://github.com/borisbanach/claude-swarm.git",
+            # Security: Use pinned git URL for reproducibility
+            f"pip install {CLAUDESWARM_GIT_URL}",
             "pip install fastapi uvicorn pytest",
         ]
 
         for i, cmd in enumerate(commands, 1):
             print(f"  [{i}/{len(commands)}] {cmd.split()[0]}...")
             try:
-                result = await asyncio.to_thread(
-                    self.sandbox.run_code,  # type: ignore[union-attr]
-                    f"!{cmd}",
+                # Security: Add timeout protection for all async operations
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.sandbox.run_code,  # type: ignore[union-attr]
+                        f"!{cmd}",
+                    ),
+                    timeout=self.operation_timeout
                 )
                 if result.error:
                     raise RuntimeError(
                         f"Failed to install dependencies: {result.error}"
                     )
+            except asyncio.TimeoutError:
+                raise RuntimeError(
+                    f"Installation timed out after {self.operation_timeout}s: {cmd}"
+                )
             except Exception as e:
                 raise RuntimeError(f"Installation failed: {str(e)}") from e
 
@@ -145,14 +189,21 @@ class CloudSandbox:
 
         Raises:
             RuntimeError: If tmux setup fails
+            asyncio.TimeoutError: If tmux setup exceeds timeout
         """
         print(f"🖥️  Setting up tmux with {self.num_agents} panes...")
 
         try:
+            # Security: Sanitize session name for shell
+            session_name = sanitize_for_shell("claude-swarm")
+
             # Create initial session
-            result = await asyncio.to_thread(
-                self.sandbox.run_code,  # type: ignore[union-attr]
-                '!tmux new-session -d -s claude-swarm -x 200 -y 50',
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.sandbox.run_code,  # type: ignore[union-attr]
+                    f'!tmux new-session -d -s {session_name} -x 200 -y 50',
+                ),
+                timeout=self.operation_timeout
             )
             if result.error:
                 raise RuntimeError(f"Failed to create tmux session: {result.error}")
@@ -160,21 +211,29 @@ class CloudSandbox:
             # Split into multiple panes
             for i in range(1, self.num_agents):
                 # Split horizontally
-                result = await asyncio.to_thread(
-                    self.sandbox.run_code,  # type: ignore[union-attr]
-                    f'!tmux split-window -h -t claude-swarm',
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.sandbox.run_code,  # type: ignore[union-attr]
+                        f'!tmux split-window -h -t {session_name}',
+                    ),
+                    timeout=self.operation_timeout
                 )
                 if result.error:
                     raise RuntimeError(f"Failed to split pane {i}: {result.error}")
 
                 # Apply tiled layout after each split
-                await asyncio.to_thread(
-                    self.sandbox.run_code,  # type: ignore[union-attr]
-                    f'!tmux select-layout -t claude-swarm tiled',
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.sandbox.run_code,  # type: ignore[union-attr]
+                        f'!tmux select-layout -t {session_name} tiled',
+                    ),
+                    timeout=self.operation_timeout
                 )
 
             print("✓ Tmux session created")
 
+        except asyncio.TimeoutError:
+            raise RuntimeError(f"Tmux setup timed out after {self.operation_timeout}s")
         except Exception as e:
             raise RuntimeError(f"Tmux setup failed: {str(e)}") from e
 
@@ -187,20 +246,33 @@ class CloudSandbox:
 
         Raises:
             RuntimeError: If initialization fails
+            asyncio.TimeoutError: If initialization exceeds timeout
         """
         print("🔗 Initializing claudeswarm agents...")
 
         try:
+            # Security: Sanitize all shell arguments
+            session_name = sanitize_for_shell("claude-swarm")
+            workspace_dir = sanitize_for_shell("/workspace")
+            discover_cmd = sanitize_for_shell("claudeswarm discover-agents")
+
             # Set working directory and initialize in each pane
             for i in range(self.num_agents):
+                # Validate pane index is safe
+                if not isinstance(i, int) or i < 0 or i >= self.num_agents:
+                    raise RuntimeError(f"Invalid pane index: {i}")
+
                 # Send command to each pane
                 cmd = (
-                    f"!tmux send-keys -t claude-swarm:{i} "
-                    f"'cd /workspace && claudeswarm discover-agents' Enter"
+                    f"!tmux send-keys -t {session_name}:{i} "
+                    f"'cd {workspace_dir} && {discover_cmd}' Enter"
                 )
-                result = await asyncio.to_thread(
-                    self.sandbox.run_code,  # type: ignore[union-attr]
-                    cmd,
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.sandbox.run_code,  # type: ignore[union-attr]
+                        cmd,
+                    ),
+                    timeout=self.operation_timeout
                 )
                 if result.error:
                     print(f"⚠️  Warning: Pane {i} initialization issue: {result.error}")
@@ -210,6 +282,8 @@ class CloudSandbox:
 
             print("✓ Claudeswarm agents initialized")
 
+        except asyncio.TimeoutError:
+            raise RuntimeError(f"Swarm initialization timed out after {self.operation_timeout}s")
         except Exception as e:
             raise RuntimeError(f"Swarm initialization failed: {str(e)}") from e
 
@@ -316,8 +390,17 @@ class CloudSandbox:
         # Then cleanup sandbox
         if self.sandbox:
             print(f"🧹 Cleaning up sandbox {self.sandbox_id}...")
-            await asyncio.to_thread(self.sandbox.close)
-            print("✓ Sandbox closed")
+            try:
+                # Security: Add timeout for cleanup operations
+                await asyncio.wait_for(
+                    asyncio.to_thread(self.sandbox.close),
+                    timeout=30.0  # Use shorter timeout for cleanup
+                )
+                print("✓ Sandbox closed")
+            except asyncio.TimeoutError:
+                print(f"⚠️  Sandbox cleanup timed out after 30s (non-fatal)")
+            except Exception as e:
+                print(f"⚠️  Sandbox cleanup error: {e} (non-fatal)")
 
     async def __aenter__(self) -> "CloudSandbox":
         """Async context manager entry."""

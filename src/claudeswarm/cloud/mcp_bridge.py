@@ -15,6 +15,12 @@ import docker
 import httpx
 from docker.models.containers import Container
 
+from claudeswarm.cloud.security_utils import (
+    ValidationError,
+    sanitize_api_key_for_logging,
+    sanitize_container_name,
+    validate_sandbox_id,
+)
 from claudeswarm.cloud.types import (
     MCPConfig,
     MCPContainerInfo,
@@ -65,8 +71,16 @@ class MCPBridge:
 
         Args:
             sandbox_id: E2B sandbox identifier for container naming
+
+        Raises:
+            ValidationError: If sandbox_id format is invalid
         """
-        self.sandbox_id = sandbox_id
+        # Validate sandbox_id to prevent command injection
+        try:
+            self.sandbox_id = validate_sandbox_id(sandbox_id)
+        except ValidationError as e:
+            raise ValueError(f"Invalid sandbox_id: {e}") from e
+
         self.docker_client: docker.DockerClient = docker.from_env()
         self.mcp_containers: dict[str, MCPContainerInfo] = {}
         self.mcp_configs: dict[str, MCPConfig] = {}
@@ -127,38 +141,62 @@ class MCPBridge:
 
         try:
             # Pull image if needed
-            # TODO: Add image pull with progress tracking
-            # self.docker_client.images.pull(config.container_image)
+            try:
+                self.docker_client.images.pull(config.container_image)
+            except docker.errors.ImageNotFound:
+                raise MCPError(
+                    message=f"MCP image not found: {config.container_image}",
+                    mcp_name=mcp_name,
+                    method="attach_mcp",
+                )
 
             # Start container
-            container_name = f"{mcp_name}-mcp-{self.sandbox_id}"
+            container_name = sanitize_container_name(f"{mcp_name}-mcp-{self.sandbox_id}")
 
-            # TODO: Once we have real MCP images, uncomment this
-            # container = self.docker_client.containers.run(
-            #     image=config.container_image,
-            #     name=container_name,
-            #     environment=config.environment,
-            #     network_mode=config.network_mode,
-            #     detach=True,
-            #     remove=False,
-            #     ports={f"{config.port}/tcp": config.port}
-            # )
+            # Sanitize environment variables for logging
+            safe_env = {
+                k: sanitize_api_key_for_logging(v) if 'key' in k.lower() or 'token' in k.lower() else v
+                for k, v in config.environment.items()
+            }
 
-            # TODO: Temporary placeholder for development
-            # Replace with actual container when testing with real MCP images
+            # Remove existing container with same name if it exists
+            try:
+                existing = self.docker_client.containers.get(container_name)
+                existing.remove(force=True)
+            except docker.errors.NotFound:
+                pass
+
+            # Start MCP container
+            container = self.docker_client.containers.run(
+                image=config.container_image,
+                name=container_name,
+                environment=config.environment,
+                network_mode=config.network_mode,
+                detach=True,
+                remove=False,
+                ports={f"{config.port}/tcp": config.port},
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 3},
+            )
+
+            # Get container network info
+            container.reload()
+            ip_address = container.attrs['NetworkSettings']['IPAddress']
+            if not ip_address:
+                # If bridge mode, use localhost
+                ip_address = "127.0.0.1"
+
             container_info = MCPContainerInfo(
-                container_id="TODO-container-id",
+                container_id=container.id,
                 mcp_type=mcp_type,
-                ip_address="127.0.0.1",  # TODO: Get from container
+                ip_address=ip_address,
                 port=config.port,
                 status=MCPStatus.INITIALIZING,
-                endpoint_url=f"http://127.0.0.1:{config.port}",
+                endpoint_url=f"http://{ip_address}:{config.port}",
                 started_at=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
 
             # Wait for container to become healthy
-            # TODO: Implement health check
-            # await self._wait_for_health(container_info, timeout=30)
+            await self._wait_for_health(container_info, timeout=30)
 
             # Store container and config
             self.mcp_containers[mcp_name] = container_info
@@ -348,6 +386,8 @@ class MCPBridge:
         """
         Wait for MCP container to become healthy.
 
+        Polls the MCP endpoint until it responds successfully or timeout is reached.
+
         Args:
             container_info: Container information
             timeout: Maximum time to wait in seconds
@@ -355,9 +395,37 @@ class MCPBridge:
         Raises:
             MCPError: If container doesn't become healthy within timeout
         """
-        # TODO: Implement health check
-        # For now, just mark as connected
-        container_info.status = MCPStatus.CONNECTED
+        start_time = time.time()
+        poll_interval = 0.5  # Poll every 500ms
+
+        while time.time() - start_time < timeout:
+            try:
+                # Try to connect to MCP endpoint
+                if self._http_client is None:
+                    self._http_client = httpx.AsyncClient()
+
+                # Simple health check - try to reach the endpoint
+                response = await self._http_client.get(
+                    f"{container_info.endpoint_url}/health",
+                    timeout=2.0
+                )
+
+                if response.status_code == 200:
+                    # Container is healthy
+                    container_info.status = MCPStatus.CONNECTED
+                    return
+
+            except (httpx.HTTPError, Exception):
+                # Container not ready yet, wait and retry
+                await asyncio.sleep(poll_interval)
+
+        # Timeout reached without successful health check
+        container_info.status = MCPStatus.ERROR
+        raise MCPError(
+            message=f"MCP container failed to become healthy within {timeout}s",
+            mcp_name=container_info.mcp_type.value,
+            method="_wait_for_health",
+        )
 
     def get_mcp_status(self, mcp_name: str) -> Optional[MCPContainerInfo]:
         """

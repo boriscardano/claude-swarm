@@ -22,10 +22,10 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from dataclasses import dataclass
 
-# TODO: Import these once implemented
-# from claudeswarm.messaging import MessagingSystem, MessageType
-# from claudeswarm.locking import LockManager
-# from claudeswarm.cloud.mcp_bridge import MCPBridge
+from claudeswarm.messaging import MessagingSystem, MessageType
+from claudeswarm.workflows.work_distributor import WorkDistributor
+from claudeswarm.workflows.code_review import CodeReviewProtocol
+from claudeswarm.workflows.consensus import ConsensusEngine
 
 
 @dataclass
@@ -80,10 +80,13 @@ class AutonomousDevelopmentLoop:
         self.sandbox_id = sandbox_id
         self.num_agents = num_agents
         self.mcp_bridge = mcp_bridge
+        self.agents = [f"agent-{i+1}" for i in range(num_agents)]
 
-        # TODO: Initialize when MessagingSystem is available
-        # self.messaging = MessagingSystem()
-        # self.lock_manager = LockManager()
+        # Initialize workflow components
+        self.work_distributor = WorkDistributor(num_agents)
+        self.code_review = CodeReviewProtocol(num_agents)
+        self.consensus = ConsensusEngine(num_agents)
+        self.messaging = MessagingSystem()
 
         self.tasks: List[Task] = []
         self.research_results: Optional[Dict] = None
@@ -211,12 +214,16 @@ class AutonomousDevelopmentLoop:
             ]
         }
 
-        # TODO: Broadcast to team when messaging available
-        # self.messaging.broadcast_message(
-        #     sender_id=agent_id,
-        #     message_type=MessageType.INFO,
-        #     content=f"Research complete. Key findings: {research_summary['recommendations']}"
-        # )
+        # Broadcast research complete
+        try:
+            recommendations_str = ", ".join(research_summary['recommendations'][:2])
+            self.messaging.broadcast_message(
+                sender_id=agent_id,
+                msg_type=MessageType.INFO,
+                content=f"Research complete. Key recommendations: {recommendations_str}"
+            )
+        except Exception as e:
+            print(f"⚠️  Failed to broadcast research completion: {e}")
 
         print(f"  [{agent_id}] Research complete. Found {len(research_summary['best_practices'])} best practices")
 
@@ -297,12 +304,8 @@ class AutonomousDevelopmentLoop:
                 )
             ]
 
-        # TODO: Broadcast available tasks when messaging available
-        # self.messaging.broadcast_message(
-        #     sender_id="coordinator",
-        #     message_type=MessageType.INFO,
-        #     content=f"Available tasks: {[t.title for t in tasks]}"
-        # )
+        # Broadcast available tasks via WorkDistributor
+        await self.work_distributor.broadcast_tasks(tasks)
 
         print(f"  [coordinator] Created {len(tasks)} tasks")
         for task in tasks:
@@ -348,12 +351,15 @@ class AutonomousDevelopmentLoop:
             task.status = "completed"
             print(f"  [{agent_id}] Completed: {task.title}")
 
-            # TODO: Agent would broadcast completion
-            # self.messaging.broadcast_message(
-            #     sender_id=agent_id,
-            #     message_type=MessageType.COMPLETED,
-            #     content=f"Completed {task.title}"
-            # )
+            # Broadcast completion
+            try:
+                self.messaging.broadcast_message(
+                    sender_id=agent_id,
+                    msg_type=MessageType.COMPLETED,
+                    content=f"Completed {task.title}"
+                )
+            except Exception as e:
+                print(f"⚠️  Failed to broadcast completion: {e}")
 
             implementations.append({
                 "task": task,
@@ -391,13 +397,13 @@ class AutonomousDevelopmentLoop:
 
             print(f"  [{reviewer_id}] Reviewing {author_id}'s work on {impl['task'].title}")
 
-            # TODO: Send review request message
-            # self.messaging.send_direct_message(
-            #     sender_id=reviewer_id,
-            #     recipient_id=author_id,
-            #     message_type=MessageType.REVIEW_REQUEST,
-            #     content=f"Please review my changes to {impl['task'].files}"
-            # )
+            # Send review request via CodeReviewProtocol
+            await self.code_review.request_review(
+                author_agent=author_id,
+                reviewer_agent=reviewer_id,
+                files=impl['task'].files,
+                task_description=impl['task'].description
+            )
 
             # Simulate review (in real implementation, AI would review code)
             review_feedback = ReviewFeedback(
@@ -460,12 +466,15 @@ class AutonomousDevelopmentLoop:
             winner = "B" if votes["option_b"] > votes["option_a"] else "A"
             print(f"       ✅ Consensus reached: Option {winner} (votes: {votes})")
 
-            # TODO: Broadcast decision
-            # self.messaging.broadcast_message(
-            #     sender_id="coordinator",
-            #     message_type=MessageType.INFO,
-            #     content=f"Consensus on {topic}: {winner}"
-            # )
+            # Broadcast decision
+            try:
+                self.messaging.broadcast_message(
+                    sender_id="coordinator",
+                    msg_type=MessageType.INFO,
+                    content=f"Consensus on {topic}: Option {winner} (votes: {votes})"
+                )
+            except Exception as e:
+                print(f"⚠️  Failed to broadcast consensus decision: {e}")
 
     async def testing_phase(self) -> Dict:
         """
@@ -492,12 +501,15 @@ class AutonomousDevelopmentLoop:
 
         print(f"  [{agent_id}] Tests: {test_results['passed_tests']}/{test_results['total_tests']} passed")
 
-        # TODO: Broadcast results
-        # self.messaging.broadcast_message(
-        #     sender_id=agent_id,
-        #     message_type=MessageType.INFO,
-        #     content=f"Tests: {test_results['total_tests']} passed"
-        # )
+        # Broadcast test results
+        try:
+            self.messaging.broadcast_message(
+                sender_id=agent_id,
+                msg_type=MessageType.INFO,
+                content=f"Tests: {test_results['passed_tests']}/{test_results['total_tests']} passed"
+            )
+        except Exception as e:
+            print(f"⚠️  Failed to broadcast test results: {e}")
 
         return test_results
 
@@ -530,12 +542,15 @@ class AutonomousDevelopmentLoop:
 
         print(f"  [{agent_id}] PR created: {pr_url}")
 
-        # TODO: Broadcast completion
-        # self.messaging.broadcast_message(
-        #     sender_id=agent_id,
-        #     message_type=MessageType.COMPLETED,
-        #     content=f"PR created: {pr_url}"
-        # )
+        # Broadcast completion
+        try:
+            self.messaging.broadcast_message(
+                sender_id=agent_id,
+                msg_type=MessageType.COMPLETED,
+                content=f"PR created: {pr_url}"
+            )
+        except Exception as e:
+            print(f"⚠️  Failed to broadcast PR creation: {e}")
 
         return pr_url
 

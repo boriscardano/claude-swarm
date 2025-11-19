@@ -19,6 +19,9 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from threading import Lock
+
+from claudeswarm.messaging import MessagingSystem, MessageType, MessageDeliveryError
 
 
 class VoteOption(Enum):
@@ -110,9 +113,8 @@ class ConsensusEngine:
         self.strategy = strategy
         self.active_votes: Dict[str, List[Vote]] = {}
         self.completed_votes: List[ConsensusResult] = []
-
-        # TODO: Initialize messaging when available
-        # self.messaging = MessagingSystem()
+        self.messaging = MessagingSystem()
+        self._vote_lock = Lock()  # Thread safety for vote operations
 
     async def initiate_vote(
         self,
@@ -140,8 +142,10 @@ class ConsensusEngine:
             Vote ID for tracking
         """
 
-        vote_id = f"vote-{len(self.active_votes)}"
-        self.active_votes[vote_id] = []
+        # Create vote with thread safety
+        with self._vote_lock:
+            vote_id = f"vote-{len(self.active_votes)}"
+            self.active_votes[vote_id] = []
 
         print(f"\n🗳️  CONSENSUS VOTE: {topic}")
         print(f"   Option A: {option_a}")
@@ -153,16 +157,35 @@ class ConsensusEngine:
         print(f"   Voters: {', '.join(agents)}")
         print(f"   Timeout: {timeout}s")
 
-        # TODO: Broadcast vote request
-        # vote_message = self._format_vote_request(
-        #     topic, option_a, option_b,
-        #     evidence_a or [], evidence_b or []
-        # )
-        # self.messaging.broadcast_message(
-        #     sender_id="consensus-engine",
-        #     message_type=MessageType.QUESTION,
-        #     content=vote_message
-        # )
+        # Broadcast vote request
+        vote_message = self._format_vote_request(
+            topic, option_a, option_b,
+            evidence_a or [], evidence_b or []
+        )
+
+        try:
+            # Broadcast and check delivery status
+            delivery_status = self.messaging.broadcast_message(
+                sender_id="consensus-engine",
+                msg_type=MessageType.QUESTION,
+                content=vote_message
+            )
+
+            # Check if broadcast succeeded
+            success_count = sum(1 for status in delivery_status.values() if status)
+            total_agents = len(agents)
+
+            if success_count == 0:
+                raise MessageDeliveryError("Vote broadcast failed - no agents reachable")
+            elif success_count < total_agents // 2:
+                print(f"⚠️  Only {success_count}/{total_agents} agents reached - consensus may fail")
+
+        except MessageDeliveryError:
+            # Re-raise delivery errors - don't silently continue
+            raise
+        except Exception as e:
+            print(f"❌ Failed to broadcast vote request: {e}")
+            raise  # Don't silently continue when voting fails
 
         return vote_id
 
@@ -190,28 +213,31 @@ class ConsensusEngine:
             True if vote was accepted
         """
 
-        if vote_id not in self.active_votes:
-            return False
+        # Use lock to prevent race conditions when multiple agents vote simultaneously
+        with self._vote_lock:
+            if vote_id not in self.active_votes:
+                return False
 
-        # Check if agent already voted
-        existing_vote = next(
-            (v for v in self.active_votes[vote_id] if v.agent_id == agent_id),
-            None
-        )
-        if existing_vote:
-            print(f"⚠️  {agent_id} already voted, ignoring duplicate")
-            return False
+            # Check if agent already voted
+            existing_vote = next(
+                (v for v in self.active_votes[vote_id] if v.agent_id == agent_id),
+                None
+            )
+            if existing_vote:
+                print(f"⚠️  {agent_id} already voted, ignoring duplicate")
+                return False
 
-        vote = Vote(
-            agent_id=agent_id,
-            option=option,
-            rationale=rationale,
-            evidence=evidence or [],
-            confidence=confidence
-        )
+            vote = Vote(
+                agent_id=agent_id,
+                option=option,
+                rationale=rationale,
+                evidence=evidence or [],
+                confidence=confidence
+            )
 
-        self.active_votes[vote_id].append(vote)
+            self.active_votes[vote_id].append(vote)
 
+        # Print outside lock
         print(f"✓ {agent_id} voted: {option.value}")
         print(f"  Rationale: {rationale}")
         if evidence:
@@ -233,29 +259,31 @@ class ConsensusEngine:
             ConsensusResult with winner and reasoning
         """
 
-        if vote_id not in self.active_votes:
-            raise ValueError(f"Vote {vote_id} not found")
+        # Use lock to safely read and delete from active_votes
+        with self._vote_lock:
+            if vote_id not in self.active_votes:
+                raise ValueError(f"Vote {vote_id} not found")
 
-        votes = self.active_votes[vote_id]
+            votes = self.active_votes[vote_id]
 
-        if not votes:
-            raise ValueError(f"No votes cast for {vote_id}")
+            if not votes:
+                raise ValueError(f"No votes cast for {vote_id}")
 
-        # Count votes by strategy
-        if self.strategy == ConsensusStrategy.SIMPLE_MAJORITY:
-            result = self._simple_majority(votes)
-        elif self.strategy == ConsensusStrategy.SUPERMAJORITY:
-            result = self._supermajority(votes)
-        elif self.strategy == ConsensusStrategy.WEIGHTED:
-            result = self._weighted_vote(votes)
-        elif self.strategy == ConsensusStrategy.EVIDENCE_BASED:
-            result = self._evidence_based(votes)
-        else:
-            result = self._simple_majority(votes)
+            # Count votes by strategy (no lock needed - votes list is now local)
+            if self.strategy == ConsensusStrategy.SIMPLE_MAJORITY:
+                result = self._simple_majority(votes)
+            elif self.strategy == ConsensusStrategy.SUPERMAJORITY:
+                result = self._supermajority(votes)
+            elif self.strategy == ConsensusStrategy.WEIGHTED:
+                result = self._weighted_vote(votes)
+            elif self.strategy == ConsensusStrategy.EVIDENCE_BASED:
+                result = self._evidence_based(votes)
+            else:
+                result = self._simple_majority(votes)
 
-        # Mark vote as completed
-        self.completed_votes.append(result)
-        del self.active_votes[vote_id]
+            # Mark vote as completed (inside lock - atomic move)
+            self.completed_votes.append(result)
+            del self.active_votes[vote_id]
 
         print(f"\n✅ CONSENSUS REACHED")
         print(f"   Winner: {result.winner.value}")
