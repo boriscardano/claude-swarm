@@ -1,0 +1,408 @@
+"""
+MCP Bridge for connecting Claude Swarm to MCP servers.
+
+This module provides the core infrastructure for managing MCP server containers,
+handling communication with MCP servers, and providing a standardized API for
+agents to call MCP methods.
+"""
+
+import asyncio
+import time
+from collections import defaultdict
+from typing import Any, Optional
+
+import docker
+import httpx
+from docker.models.containers import Container
+
+from claudeswarm.cloud.types import (
+    MCPConfig,
+    MCPContainerInfo,
+    MCPError,
+    MCPResponse,
+    MCPStatus,
+    MCPType,
+)
+
+
+class MCPBridge:
+    """
+    Manages MCP server containers and provides communication interface.
+
+    This class handles:
+    - Starting and stopping MCP Docker containers
+    - Managing container lifecycle and health
+    - Making HTTP requests to MCP servers with retry logic
+    - Rate limiting MCP calls
+    - Standardized error handling and logging
+
+    Example:
+        ```python
+        bridge = MCPBridge(sandbox_id="e2b-abc123")
+
+        # Attach GitHub MCP
+        await bridge.attach_mcp(
+            mcp_type=MCPType.GITHUB,
+            config=MCPConfig(
+                mcp_type=MCPType.GITHUB,
+                container_image="mcp/github:latest",
+                environment={"GITHUB_TOKEN": "ghp_xxx"}
+            )
+        )
+
+        # Call GitHub MCP method
+        response = await bridge.call_mcp(
+            mcp_name="github",
+            method="create_issue",
+            params={"title": "Bug report", "body": "Details..."}
+        )
+        ```
+    """
+
+    def __init__(self, sandbox_id: str) -> None:
+        """
+        Initialize MCP Bridge.
+
+        Args:
+            sandbox_id: E2B sandbox identifier for container naming
+        """
+        self.sandbox_id = sandbox_id
+        self.docker_client: docker.DockerClient = docker.from_env()
+        self.mcp_containers: dict[str, MCPContainerInfo] = {}
+        self.mcp_configs: dict[str, MCPConfig] = {}
+        self._rate_limiters: dict[str, list[float]] = defaultdict(list)
+        self._http_client: Optional[httpx.AsyncClient] = None
+
+    async def __aenter__(self) -> "MCPBridge":
+        """Async context manager entry."""
+        self._http_client = httpx.AsyncClient()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Async context manager exit."""
+        await self.cleanup()
+
+    async def attach_mcp(
+        self, mcp_type: MCPType, config: MCPConfig
+    ) -> MCPContainerInfo:
+        """
+        Attach an MCP server by starting its Docker container.
+
+        This method:
+        1. Pulls the MCP Docker image if not present
+        2. Starts the container with specified configuration
+        3. Waits for the MCP server to become healthy
+        4. Stores container information for future calls
+
+        Args:
+            mcp_type: Type of MCP to attach (GITHUB, EXA, etc.)
+            config: Configuration for the MCP server
+
+        Returns:
+            Information about the running container
+
+        Raises:
+            MCPError: If container fails to start or become healthy
+
+        Example:
+            ```python
+            info = await bridge.attach_mcp(
+                mcp_type=MCPType.GITHUB,
+                config=MCPConfig(
+                    mcp_type=MCPType.GITHUB,
+                    container_image="mcp/github:latest",
+                    environment={"GITHUB_TOKEN": token}
+                )
+            )
+            print(f"GitHub MCP available at {info.endpoint_url}")
+            ```
+        """
+        mcp_name = mcp_type.value
+
+        # Check if already attached
+        if mcp_name in self.mcp_containers:
+            existing = self.mcp_containers[mcp_name]
+            if existing.is_healthy:
+                return existing
+
+        try:
+            # Pull image if needed
+            # TODO: Add image pull with progress tracking
+            # self.docker_client.images.pull(config.container_image)
+
+            # Start container
+            container_name = f"{mcp_name}-mcp-{self.sandbox_id}"
+
+            # TODO: Once we have real MCP images, uncomment this
+            # container = self.docker_client.containers.run(
+            #     image=config.container_image,
+            #     name=container_name,
+            #     environment=config.environment,
+            #     network_mode=config.network_mode,
+            #     detach=True,
+            #     remove=False,
+            #     ports={f"{config.port}/tcp": config.port}
+            # )
+
+            # TODO: Temporary placeholder for development
+            # Replace with actual container when testing with real MCP images
+            container_info = MCPContainerInfo(
+                container_id="TODO-container-id",
+                mcp_type=mcp_type,
+                ip_address="127.0.0.1",  # TODO: Get from container
+                port=config.port,
+                status=MCPStatus.INITIALIZING,
+                endpoint_url=f"http://127.0.0.1:{config.port}",
+                started_at=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+
+            # Wait for container to become healthy
+            # TODO: Implement health check
+            # await self._wait_for_health(container_info, timeout=30)
+
+            # Store container and config
+            self.mcp_containers[mcp_name] = container_info
+            self.mcp_configs[mcp_name] = config
+
+            return container_info
+
+        except docker.errors.DockerException as e:
+            raise MCPError(
+                message=f"Failed to start MCP container: {str(e)}",
+                mcp_name=mcp_name,
+                method="attach_mcp",
+                original_error=e,
+            ) from e
+
+    async def call_mcp(
+        self, mcp_name: str, method: str, params: dict[str, Any]
+    ) -> MCPResponse:
+        """
+        Call an MCP server method with retry logic and rate limiting.
+
+        This method:
+        1. Validates the MCP is attached and healthy
+        2. Checks rate limits
+        3. Makes HTTP request to MCP server
+        4. Retries on transient failures
+        5. Returns standardized response
+
+        Args:
+            mcp_name: Name of the MCP server (e.g., "github", "exa")
+            method: MCP method to call
+            params: Parameters for the method call
+
+        Returns:
+            Standardized MCPResponse with result data
+
+        Raises:
+            MCPError: If MCP is not attached, unhealthy, or call fails after retries
+
+        Example:
+            ```python
+            # Create a GitHub issue
+            response = await bridge.call_mcp(
+                mcp_name="github",
+                method="create_issue",
+                params={
+                    "repo": "owner/repo",
+                    "title": "Bug found",
+                    "body": "Description..."
+                }
+            )
+
+            if response.success:
+                issue_url = response.data["html_url"]
+                print(f"Created issue: {issue_url}")
+            ```
+        """
+        # Validate MCP is attached
+        if mcp_name not in self.mcp_containers:
+            raise MCPError(
+                message=f"MCP '{mcp_name}' is not attached",
+                mcp_name=mcp_name,
+                method=method,
+            )
+
+        container_info = self.mcp_containers[mcp_name]
+        config = self.mcp_configs[mcp_name]
+
+        # Check if container is healthy
+        if not container_info.is_healthy:
+            raise MCPError(
+                message=f"MCP '{mcp_name}' is not healthy (status: {container_info.status})",
+                mcp_name=mcp_name,
+                method=method,
+            )
+
+        # Check rate limits
+        await self._check_rate_limit(mcp_name, config)
+
+        # Make request with retries
+        start_time = time.time()
+        last_error: Optional[Exception] = None
+
+        for retry_count in range(config.max_retries):
+            try:
+                response = await self._make_request(
+                    endpoint_url=container_info.endpoint_url,
+                    method=method,
+                    params=params,
+                    timeout=config.timeout,
+                )
+
+                duration_ms = (time.time() - start_time) * 1000
+
+                return MCPResponse(
+                    success=True,
+                    data=response,
+                    mcp_name=mcp_name,
+                    method=method,
+                    duration_ms=duration_ms,
+                )
+
+            except httpx.HTTPError as e:
+                last_error = e
+
+                # Exponential backoff before retry
+                if retry_count < config.max_retries - 1:
+                    await asyncio.sleep(2**retry_count)
+
+        # All retries failed
+        duration_ms = (time.time() - start_time) * 1000
+
+        return MCPResponse(
+            success=False,
+            error=f"Request failed after {config.max_retries} retries: {str(last_error)}",
+            mcp_name=mcp_name,
+            method=method,
+            duration_ms=duration_ms,
+        )
+
+    async def _make_request(
+        self, endpoint_url: str, method: str, params: dict[str, Any], timeout: float
+    ) -> dict[str, Any]:
+        """
+        Make HTTP request to MCP server.
+
+        Args:
+            endpoint_url: Base URL of the MCP server
+            method: Method to call
+            params: Request parameters
+            timeout: Request timeout in seconds
+
+        Returns:
+            Response data from MCP server
+
+        Raises:
+            httpx.HTTPError: If request fails
+        """
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient()
+
+        # TODO: Update endpoint format based on actual MCP server API
+        # This is a placeholder - real MCP servers may use different protocols
+        url = f"{endpoint_url}/mcp/{method}"
+
+        response = await self._http_client.post(
+            url, json=params, timeout=timeout
+        )
+        response.raise_for_status()
+
+        return response.json()
+
+    async def _check_rate_limit(self, mcp_name: str, config: MCPConfig) -> None:
+        """
+        Check if we're within rate limits for this MCP.
+
+        Args:
+            mcp_name: Name of the MCP
+            config: MCP configuration with rate limit settings
+
+        Raises:
+            MCPError: If rate limit is exceeded
+        """
+        now = time.time()
+        window_start = now - 60  # 1-minute window
+
+        # Remove old timestamps outside the window
+        self._rate_limiters[mcp_name] = [
+            ts for ts in self._rate_limiters[mcp_name] if ts > window_start
+        ]
+
+        # Check if we're at the limit
+        if len(self._rate_limiters[mcp_name]) >= config.rate_limit:
+            raise MCPError(
+                message=f"Rate limit exceeded for '{mcp_name}' "
+                f"({config.rate_limit} requests/minute)",
+                mcp_name=mcp_name,
+                method="rate_limit_check",
+            )
+
+        # Record this request
+        self._rate_limiters[mcp_name].append(now)
+
+    async def _wait_for_health(
+        self, container_info: MCPContainerInfo, timeout: float = 30
+    ) -> None:
+        """
+        Wait for MCP container to become healthy.
+
+        Args:
+            container_info: Container information
+            timeout: Maximum time to wait in seconds
+
+        Raises:
+            MCPError: If container doesn't become healthy within timeout
+        """
+        # TODO: Implement health check
+        # For now, just mark as connected
+        container_info.status = MCPStatus.CONNECTED
+
+    def get_mcp_status(self, mcp_name: str) -> Optional[MCPContainerInfo]:
+        """
+        Get status of an MCP container.
+
+        Args:
+            mcp_name: Name of the MCP
+
+        Returns:
+            Container information if MCP is attached, None otherwise
+        """
+        return self.mcp_containers.get(mcp_name)
+
+    def list_mcps(self) -> list[MCPContainerInfo]:
+        """
+        List all attached MCP containers.
+
+        Returns:
+            List of container information for all attached MCPs
+        """
+        return list(self.mcp_containers.values())
+
+    async def cleanup(self) -> None:
+        """
+        Stop and remove all MCP containers.
+
+        This method should be called when shutting down the bridge
+        to ensure all resources are properly released.
+        """
+        # Close HTTP client
+        if self._http_client:
+            await self._http_client.aclose()
+            self._http_client = None
+
+        # Stop and remove containers
+        for mcp_name, container_info in self.mcp_containers.items():
+            try:
+                # TODO: Uncomment when using real containers
+                # container = self.docker_client.containers.get(container_info.container_id)
+                # container.stop(timeout=10)
+                # container.remove()
+                pass
+            except docker.errors.DockerException as e:
+                # Log error but continue cleanup
+                print(f"Error cleaning up {mcp_name}: {e}")
+
+        self.mcp_containers.clear()
+        self.mcp_configs.clear()
