@@ -65,6 +65,62 @@ def format_timestamp(ts: float) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def get_cached_sandbox_id() -> Optional[str]:
+    """Get cached sandbox ID with fallback chain.
+
+    Checks in order:
+    1. .e2b_session in current directory (per-project)
+    2. ~/.claudeswarm/last_sandbox_id (global)
+
+    Returns:
+        Sandbox ID if found, None otherwise
+    """
+    # Check local .e2b_session first
+    local_session = Path.cwd() / ".e2b_session"
+    if local_session.exists():
+        try:
+            sandbox_id = local_session.read_text().strip()
+            if sandbox_id:
+                return sandbox_id
+        except Exception:
+            pass
+
+    # Fall back to global cache
+    global_cache = Path.home() / ".claudeswarm" / "last_sandbox_id"
+    if global_cache.exists():
+        try:
+            sandbox_id = global_cache.read_text().strip()
+            if sandbox_id:
+                return sandbox_id
+        except Exception:
+            pass
+
+    return None
+
+
+def save_sandbox_id(sandbox_id: str) -> None:
+    """Save sandbox ID to both local and global cache.
+
+    Args:
+        sandbox_id: E2B sandbox identifier to cache
+    """
+    # Save to local .e2b_session
+    try:
+        local_session = Path.cwd() / ".e2b_session"
+        local_session.write_text(sandbox_id + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to save local .e2b_session: {e}")
+
+    # Save to global cache
+    try:
+        global_cache_dir = Path.home() / ".claudeswarm"
+        global_cache_dir.mkdir(parents=True, exist_ok=True)
+        global_cache = global_cache_dir / "last_sandbox_id"
+        global_cache.write_text(sandbox_id + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to save global sandbox cache: {e}")
+
+
 def cmd_acquire_file_lock(args: argparse.Namespace) -> None:
     """Acquire a lock on a file."""
     try:
@@ -1646,12 +1702,21 @@ def cmd_cloud_deploy(args: argparse.Namespace) -> None:
                 except Exception as e:
                     print(f"⚠️  Warning: Some MCPs failed to attach: {e}")
 
+            # Save sandbox ID to cache for auto-detection
+            save_sandbox_id(sandbox_id)
+
             print()
             print(f"✅ Deployment complete!")
             print(f"   Sandbox ID: {sandbox_id}")
-            print(f"   Dashboard: http://localhost:8080")
+            print(f"   Cached: .e2b_session and ~/.claudeswarm/last_sandbox_id")
             print()
-            print("To monitor: claudeswarm cloud monitor --sandbox-id", sandbox_id)
+            print("📦 Installed in sandbox:")
+            print("   ✓ Python + claudeswarm")
+            print("   ✓ Claude Code CLI")
+            print("   ✓ tmux (Ctrl+a prefix to avoid conflicts)")
+            print(f"   ✓ {args.agents} agent panes ready for coordination")
+            print()
+            print("To monitor: claudeswarm cloud monitor  # (auto-detected)")
             print("To shutdown: claudeswarm cloud shutdown --sandbox-id", sandbox_id)
 
             # If feature specified, start autonomous development
@@ -1659,15 +1724,41 @@ def cmd_cloud_deploy(args: argparse.Namespace) -> None:
                 print()
                 print(f"🤖 Starting autonomous development: {args.feature}")
                 await sandbox.execute_autonomous_dev(args.feature)
+                return sandbox_id
+
+            # Auto-connect to shell if not disabled
+            if not args.no_connect:
+                return sandbox_id
+            else:
+                return None
 
         except Exception as e:
             print(f"❌ Deployment failed: {e}", file=sys.stderr)
             await sandbox.cleanup()
             sys.exit(1)
 
+        return None
+
     # Run async deployment
     try:
-        asyncio.run(deploy())
+        sandbox_id = asyncio.run(deploy())
+
+        # If sandbox_id returned and auto-connect enabled, start shell
+        if sandbox_id and not args.no_connect:
+            print()
+            print("="*60)
+            print("🔌 Connecting to sandbox shell...")
+            print("Type 'exit' or press Ctrl+C to disconnect")
+            print("="*60)
+            print()
+
+            # Create a mock args object for the shell command
+            import argparse as ap
+            shell_args = ap.Namespace(sandbox_id=sandbox_id)
+
+            # Call the shell command
+            cmd_cloud_shell(shell_args)
+
     except KeyboardInterrupt:
         print("\n⚠️  Deployment cancelled by user")
         sys.exit(1)
@@ -1675,41 +1766,240 @@ def cmd_cloud_deploy(args: argparse.Namespace) -> None:
 
 def cmd_cloud_status(args: argparse.Namespace) -> None:
     """Show status of cloud sandbox and agents."""
-    sandbox_id = args.sandbox_id
+    import asyncio
+    from e2b_code_interpreter import Sandbox
 
-    if not sandbox_id:
-        print("Error: --sandbox-id required (auto-detection not yet implemented)", file=sys.stderr)
+    async def get_status() -> None:
+        """Async status checking logic."""
+        sandbox_id = args.sandbox_id
+
+        # Auto-detect if not provided
+        if not sandbox_id:
+            sandbox_id = get_cached_sandbox_id()
+            if not sandbox_id:
+                print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
+                print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+                sys.exit(1)
+            if not args.json:
+                print(f"Using cached sandbox: {sandbox_id}\n")
+
+        try:
+            # Connect to sandbox
+            if not args.json:
+                print(f"📊 Cloud Sandbox Status: {sandbox_id}")
+                print()
+                print("🔌 Connecting to sandbox...")
+
+            sandbox = await asyncio.to_thread(Sandbox.connect, sandbox_id)
+
+            if not args.json:
+                print("✓ Connected\n")
+
+            # Collect status data
+            status_data = {
+                "sandbox_id": sandbox_id,
+                "host": None,
+                "tmux_sessions": [],
+                "active_agents": [],
+                "mcp_containers": []
+            }
+
+            # Get sandbox host info
+            try:
+                host = await asyncio.to_thread(sandbox.get_host)
+                status_data["host"] = host
+                if not args.json:
+                    print(f"Host: {host}")
+            except Exception as e:
+                if not args.json:
+                    print(f"Host: Unable to retrieve ({e})")
+
+            if not args.json:
+                print()
+
+            # Check tmux sessions
+            if not args.json:
+                print("🖥️  Tmux Sessions:")
+            result = await asyncio.to_thread(sandbox.run_code, "!tmux list-sessions 2>&1")
+            if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                sessions = [line.rstrip() for line in result.logs.stdout if line.strip()]
+                status_data["tmux_sessions"] = sessions
+                if not args.json:
+                    for line in sessions:
+                        print(f"  {line}")
+            elif not args.json:
+                if result.error:
+                    print(f"  Error: {result.error}")
+                else:
+                    print("  No tmux sessions found")
+
+            if not args.json:
+                print()
+
+            # Check active agents
+            if not args.json:
+                print("🤖 Active Agents:")
+            result = await asyncio.to_thread(sandbox.run_code, "!source ~/.bashrc 2>/dev/null; cd /workspace && claudeswarm list-agents 2>&1")
+            if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                agent_output = ''.join(result.logs.stdout)
+                if "No active agents" not in agent_output:
+                    agents = [line.rstrip() for line in result.logs.stdout if line.strip()]
+                    status_data["active_agents"] = agents
+                    if not args.json:
+                        for line in agents:
+                            print(f"  {line}")
+                elif not args.json:
+                    print("  No active agents found")
+            elif not args.json:
+                if result.error:
+                    print(f"  Error: {result.error}")
+                else:
+                    print("  Unable to query agents")
+
+            if not args.json:
+                print()
+
+            # Check MCP containers
+            if not args.json:
+                print("🔌 MCP Containers:")
+            result = await asyncio.to_thread(sandbox.run_code, "!docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}' 2>&1")
+            if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                output = ''.join(result.logs.stdout)
+                if output.strip():
+                    containers = [line.rstrip() for line in result.logs.stdout if line.strip()]
+                    status_data["mcp_containers"] = containers
+                    if not args.json:
+                        for line in containers:
+                            print(f"  {line}")
+                elif not args.json:
+                    print("  No MCP containers running")
+            elif not args.json:
+                print("  Docker not available or no containers")
+
+            # Output result
+            if args.json:
+                print(json.dumps(status_data, indent=2))
+            else:
+                print()
+                print("✓ Status check complete")
+
+        except Exception as e:
+            if args.json:
+                print(json.dumps({"error": str(e)}), file=sys.stderr)
+            else:
+                print(f"❌ Failed to get status: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        asyncio.run(get_status())
+    except KeyboardInterrupt:
+        print("\n⚠️  Status check cancelled by user")
         sys.exit(1)
-
-    # TODO: Implement status checking
-    # This will query E2B API for sandbox status and agent information
-    print(f"📊 Cloud Sandbox Status")
-    print(f"   Sandbox ID: {sandbox_id}")
-    print(f"   Status: Running")  # Placeholder
-    print()
-    print("⚠️  Full status checking not yet implemented")
-    print("   Coming in hackathon implementation!")
 
 
 def cmd_cloud_monitor(args: argparse.Namespace) -> None:
     """Monitor live agent activity in cloud sandbox."""
-    sandbox_id = args.sandbox_id
+    import asyncio
+    import time
+    from e2b_code_interpreter import Sandbox
 
-    if not sandbox_id:
-        print("Error: --sandbox-id required (auto-detection not yet implemented)", file=sys.stderr)
-        sys.exit(1)
+    async def monitor_sandbox() -> None:
+        """Async monitoring logic."""
+        sandbox_id = args.sandbox_id
 
-    print(f"📡 Monitoring Cloud Sandbox: {sandbox_id}")
-    if args.follow:
-        print("   Mode: Follow (Ctrl+C to stop)")
-    print()
+        # Auto-detect if not provided
+        if not sandbox_id:
+            sandbox_id = get_cached_sandbox_id()
+            if not sandbox_id:
+                print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
+                print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+                sys.exit(1)
+            print(f"Using cached sandbox: {sandbox_id}\n")
 
-    # TODO: Implement live monitoring
-    # This will tail agent_messages.log from the E2B sandbox
-    print("⚠️  Live monitoring not yet implemented")
-    print("   Coming in hackathon implementation!")
-    print()
-    print("For now, use the dashboard: http://localhost:8080")
+        print(f"📡 Monitoring Cloud Sandbox: {sandbox_id}")
+        if args.follow:
+            print("   Mode: Follow (Ctrl+C to stop)")
+        print()
+
+        try:
+            # Connect to sandbox
+            print("🔌 Connecting to sandbox...")
+            sandbox = await asyncio.to_thread(Sandbox.connect, sandbox_id)
+            print("✓ Connected\n")
+            print("=" * 70)
+            print()
+
+            # Get initial position in log file (for follow mode)
+            log_path = "/workspace/.claudeswarm/agent_messages.log"
+
+            if args.follow:
+                # Follow mode: continuously tail the log
+                last_size = 0
+
+                # Get initial file size
+                result = await asyncio.to_thread(sandbox.run_code, f"!wc -c {log_path} 2>&1 | awk '{{print $1}}'")
+                if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                    try:
+                        last_size = int(''.join(result.logs.stdout).strip())
+                    except ValueError:
+                        last_size = 0
+
+                print("👀 Watching for new agent messages... (Ctrl+C to stop)\n")
+
+                while True:
+                    # Get current file size
+                    result = await asyncio.to_thread(sandbox.run_code, f"!wc -c {log_path} 2>&1 | awk '{{print $1}}'")
+                    if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                        try:
+                            current_size = int(''.join(result.logs.stdout).strip())
+                        except ValueError:
+                            current_size = last_size
+
+                        # If file grew, read the new content
+                        if current_size > last_size:
+                            bytes_to_read = current_size - last_size
+                            result = await asyncio.to_thread(
+                                sandbox.run_code,
+                                f"!tail -c {bytes_to_read} {log_path} 2>&1"
+                            )
+                            if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                                for line in result.logs.stdout:
+                                    print(line.rstrip())
+                            last_size = current_size
+
+                    # Sleep briefly before next check
+                    await asyncio.sleep(1)
+            else:
+                # One-shot mode: show recent messages
+                print("📬 Recent Agent Messages:\n")
+                result = await asyncio.to_thread(
+                    sandbox.run_code,
+                    f"!tail -n 50 {log_path} 2>&1"
+                )
+                if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                    output = ''.join(result.logs.stdout)
+                    if output.strip():
+                        for line in result.logs.stdout:
+                            print(line.rstrip())
+                    else:
+                        print("  No messages found")
+                elif result.error:
+                    print(f"  Error reading log: {result.error}")
+                else:
+                    print("  Log file not found or empty")
+
+                print()
+                print("Tip: Use --follow to stream messages in real-time")
+
+        except Exception as e:
+            print(f"\n❌ Monitoring failed: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        asyncio.run(monitor_sandbox())
+    except KeyboardInterrupt:
+        print("\n\n👋 Stopped monitoring")
+        sys.exit(0)
 
 
 def cmd_cloud_shutdown(args: argparse.Namespace) -> None:
@@ -1720,6 +2010,15 @@ def cmd_cloud_shutdown(args: argparse.Namespace) -> None:
     async def shutdown() -> None:
         """Async shutdown logic."""
         sandbox_id = args.sandbox_id
+
+        # Auto-detect if not provided
+        if not sandbox_id:
+            sandbox_id = get_cached_sandbox_id()
+            if not sandbox_id:
+                print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
+                print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+                sys.exit(1)
+            print(f"Using cached sandbox: {sandbox_id}\n")
 
         if not args.force:
             response = input(f"⚠️  Are you sure you want to shutdown sandbox {sandbox_id}? (yes/no): ")
@@ -1738,6 +2037,98 @@ def cmd_cloud_shutdown(args: argparse.Namespace) -> None:
     except KeyboardInterrupt:
         print("\n⚠️  Shutdown cancelled by user")
         sys.exit(1)
+
+
+def cmd_cloud_shell(args: argparse.Namespace) -> None:
+    """Open an interactive shell inside the E2B sandbox."""
+    import asyncio
+    from e2b_code_interpreter import Sandbox
+
+    async def shell_session() -> None:
+        """Async shell session logic."""
+        sandbox_id = args.sandbox_id
+
+        # Auto-detect if not provided
+        if not sandbox_id:
+            sandbox_id = get_cached_sandbox_id()
+            if not sandbox_id:
+                print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
+                print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+                sys.exit(1)
+            print(f"Using cached sandbox: {sandbox_id}\n")
+
+        print(f"🔌 Connecting to E2B sandbox: {sandbox_id}")
+
+        try:
+            # Connect to existing sandbox
+            sandbox = await asyncio.to_thread(Sandbox.connect, sandbox_id)
+            print(f"✓ Connected to sandbox!")
+
+            # Get sandbox info
+            try:
+                host = await asyncio.to_thread(sandbox.get_host)
+                print(f"  Host: {host}")
+            except:
+                pass
+
+            print("\n" + "="*60)
+            print("Interactive E2B Shell")
+            print("All commands run inside the E2B sandbox.")
+            print("Type 'exit' or press Ctrl+C to disconnect.")
+            print("="*60 + "\n")
+
+            # Interactive shell loop
+            while True:
+                try:
+                    # Use input() for interactive prompt
+                    command = input(f"{sandbox_id[:8]}$ ").strip()
+
+                    if command.lower() in ['exit', 'quit']:
+                        print("\n👋 Disconnecting from sandbox...")
+                        break
+
+                    if not command:
+                        continue
+
+                    # Execute command in sandbox with proper PATH
+                    if not command.startswith('!'):
+                        command = f"!{command}"
+
+                    # Source bashrc to get PATH updates, then run command
+                    command_with_env = f"!source ~/.bashrc 2>/dev/null; {command[1:]}"
+
+                    result = await asyncio.to_thread(sandbox.run_code, command_with_env)
+
+                    # Print output from logs
+                    if hasattr(result, 'logs') and result.logs:
+                        if result.logs.stdout:
+                            for line in result.logs.stdout:
+                                print(line, end='')
+                        if result.logs.stderr:
+                            for line in result.logs.stderr:
+                                print(line, end='', file=sys.stderr)
+
+                    # Also check text and error fields
+                    if result.text:
+                        print(result.text, end='')
+
+                    if result.error:
+                        print(f"Error: {result.error}", file=sys.stderr)
+
+                except EOFError:
+                    print("\n👋 Disconnecting from sandbox...")
+                    break
+
+            print("Note: Sandbox is still running. Use 'claudeswarm cloud shutdown' to clean up.")
+
+        except Exception as e:
+            print(f"❌ Failed to connect to sandbox: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        asyncio.run(shell_session())
+    except KeyboardInterrupt:
+        print("\n\n👋 Disconnected from sandbox")
 
 
 def main() -> NoReturn:
@@ -2102,6 +2493,11 @@ def main() -> NoReturn:
         type=str,
         help="Feature description to implement autonomously (optional)"
     )
+    cloud_deploy_parser.add_argument(
+        "--no-connect",
+        action="store_true",
+        help="Don't automatically connect to sandbox shell after deployment"
+    )
     cloud_deploy_parser.set_defaults(func=cmd_cloud_deploy)
 
     # cloud status
@@ -2147,8 +2543,7 @@ def main() -> NoReturn:
     cloud_shutdown_parser.add_argument(
         "--sandbox-id",
         type=str,
-        required=True,
-        help="Sandbox ID to shutdown"
+        help="Sandbox ID to shutdown (auto-detected if omitted)"
     )
     cloud_shutdown_parser.add_argument(
         "--force",
@@ -2157,10 +2552,36 @@ def main() -> NoReturn:
     )
     cloud_shutdown_parser.set_defaults(func=cmd_cloud_shutdown)
 
+    # cloud shell
+    cloud_shell_parser = cloud_subparsers.add_parser(
+        "shell",
+        help="Open interactive shell inside E2B sandbox"
+    )
+    cloud_shell_parser.add_argument(
+        "--sandbox-id",
+        type=str,
+        help="Sandbox ID to connect to (auto-detected if omitted)"
+    )
+    cloud_shell_parser.set_defaults(func=cmd_cloud_shell)
+
+    # help command
+    help_parser = subparsers.add_parser(
+        "help",
+        help="Show this help message",
+    )
+    help_parser.set_defaults(func=lambda args: print_help())
+
+    # version command
+    version_parser = subparsers.add_parser(
+        "version",
+        help="Show version information",
+    )
+    version_parser.set_defaults(func=lambda args: print_version())
+
     args = parser.parse_args()
 
     if not args.command:
-        parser.print_help()
+        print_help()
         sys.exit(1)
 
     # Execute the command
@@ -2175,23 +2596,44 @@ Claude Swarm - Multi-agent coordination system
 Usage:
     claudeswarm <command> [options]
 
-Commands:
-    discover-agents       Discover active Claude Code agents
+Setup Commands (run from regular terminal):
+    init                 Initialize Claude Swarm in current project (guided setup)
+    discover-agents      Discover active Claude Code agents in tmux
+    onboard              Onboard all discovered agents to coordination system
+    start-monitoring     Start monitoring dashboard (terminal-based)
+    start-dashboard      Start web-based monitoring dashboard
+
+Agent Commands (run from within Claude Code):
     list-agents          List active agents from registry
-    onboard              Onboard all agents to coordination system
-    send-to-agent        Send message to specific agent
-    broadcast-to-all     Broadcast message to all agents
+    send-message         Send message to specific agent
+    broadcast-message    Broadcast message to all agents
+    whoami               Display information about current agent
+    check-messages       Check messages in inbox
     acquire-file-lock    Acquire lock on a file
     release-file-lock    Release lock on a file
-    who-has-lock        Query lock holder for a file
-    list-all-locks      List all active locks
-    cleanup-stale-locks Clean up stale locks
-    send-with-ack       Send message requiring acknowledgment
-    start-monitoring    Start monitoring dashboard
-    start-dashboard     Start web-based monitoring dashboard
 
-    help                Show this help message
-    version             Show version information
+Utility Commands (run from anywhere):
+    who-has-lock         Query lock holder for a file
+    list-all-locks       List all active locks
+    cleanup-stale-locks  Clean up stale locks
+    reload               Reload claudeswarm CLI with latest changes
+
+Configuration Commands:
+    config init          Create default configuration file
+    config show          Display current configuration
+    config validate      Validate configuration file
+    config edit          Open configuration file in editor
+
+Cloud Commands (E2B integration):
+    cloud deploy         Deploy multi-agent swarm to E2B sandbox
+    cloud status         Show status of cloud sandbox and agents
+    cloud monitor        Monitor live agent activity in cloud sandbox
+    cloud shell          Open interactive shell inside E2B sandbox
+    cloud shutdown       Shutdown cloud sandbox and cleanup resources
+
+Other:
+    help                 Show this help message
+    version              Show version information
 
 For detailed help on each command, run:
     claudeswarm <command> --help

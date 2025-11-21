@@ -81,7 +81,31 @@ class MCPBridge:
         except ValidationError as e:
             raise ValueError(f"Invalid sandbox_id: {e}") from e
 
-        self.docker_client: docker.DockerClient = docker.from_env()
+        # Initialize Docker client with helpful error message
+        try:
+            self.docker_client: docker.DockerClient = docker.from_env()
+        except Exception as e:
+            error_msg = str(e)
+            if "Connection refused" in error_msg or "ConnectionRefusedError" in error_msg:
+                raise RuntimeError(
+                    "❌ Docker is not running!\n\n"
+                    "MCPs require Docker to run MCP server containers.\n\n"
+                    "Please start Docker:\n"
+                    "  • macOS: Open Docker Desktop\n"
+                    "  • Linux: sudo systemctl start docker\n"
+                    "  • Windows: Start Docker Desktop\n\n"
+                    f"Original error: {error_msg}"
+                ) from e
+            elif "docker" not in error_msg.lower():
+                raise RuntimeError(
+                    "❌ Failed to connect to Docker!\n\n"
+                    "Make sure Docker is installed and running.\n"
+                    "Install Docker from: https://docs.docker.com/get-docker/\n\n"
+                    f"Original error: {error_msg}"
+                ) from e
+            else:
+                raise RuntimeError(f"Docker connection error: {error_msg}") from e
+
         self.mcp_containers: dict[str, MCPContainerInfo] = {}
         self.mcp_configs: dict[str, MCPConfig] = {}
         self._rate_limiters: dict[str, list[float]] = defaultdict(list)

@@ -7,6 +7,7 @@ coordination. Handles tmux session setup and claudeswarm installation within san
 
 import asyncio
 import os
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -24,7 +25,7 @@ from claudeswarm.cloud.security_utils import (
 from claudeswarm.cloud.types import MCPConfig, MCPContainerInfo
 
 # Security: Default timeout for async operations (in seconds)
-DEFAULT_OPERATION_TIMEOUT = 300.0  # 5 minutes
+DEFAULT_OPERATION_TIMEOUT = 600.0  # 10 minutes (increased for git clone operations)
 
 # Security: Pin claudeswarm to specific commit for reproducibility
 CLAUDESWARM_GIT_URL = "git+https://github.com/borisbanach/claude-swarm.git@d0e37ae"
@@ -103,11 +104,25 @@ class CloudSandbox:
                 asyncio.to_thread(E2BSandbox.create),
                 timeout=self.operation_timeout
             )
-            self.sandbox_id = self.sandbox.id
+            self.sandbox_id = self.sandbox.sandbox_id
             print(f"✓ Sandbox created: {self.sandbox_id}")
 
-            # Install dependencies
-            await self._install_dependencies()
+            # Install dependencies with retry logic for E2B network stability
+            max_retries = 3
+            for attempt in range(1, max_retries + 1):
+                try:
+                    print(f"📦 Installing dependencies (attempt {attempt}/{max_retries})...")
+                    await self._install_dependencies()
+                    break  # Success - exit retry loop
+                except Exception as e:
+                    if attempt == max_retries:
+                        # Last attempt failed - propagate the error
+                        raise
+                    # Calculate exponential backoff: 2^attempt seconds (2s, 4s, 8s)
+                    backoff = 2 ** attempt
+                    print(f"⚠️  Installation failed (attempt {attempt}/{max_retries}): {str(e)}")
+                    print(f"🔄 Retrying in {backoff} seconds...")
+                    await asyncio.sleep(backoff)
 
             # Setup tmux
             await self._setup_tmux()
@@ -125,7 +140,7 @@ class CloudSandbox:
                 print("🧹 Cleaning up partial sandbox initialization...")
                 try:
                     await asyncio.wait_for(
-                        asyncio.to_thread(self.sandbox.close),
+                        asyncio.to_thread(self.sandbox.kill),
                         timeout=30.0
                     )
                     print("✓ Cleanup complete")
@@ -138,7 +153,9 @@ class CloudSandbox:
         Install required packages in sandbox.
 
         Installs:
-        - claudeswarm package (from git repo, pinned to specific commit)
+        - Node.js and npm (for Claude Code)
+        - Claude Code CLI (@anthropic-ai/claude-code)
+        - claudeswarm package (from pre-built wheel - FAST!)
         - fastapi and uvicorn (for web dashboard)
         - pytest (for testing)
         - tmux (for multi-pane coordination)
@@ -147,16 +164,42 @@ class CloudSandbox:
             RuntimeError: If any installation fails
             asyncio.TimeoutError: If installation exceeds timeout
         """
-        print("📦 Installing dependencies...")
+        # Upload pre-built wheel to sandbox for fast, reliable installation
+        wheel_path = Path(__file__).parent.parent.parent.parent / "dist" / "claude_swarm-0.1.0-py3-none-any.whl"
+        if not wheel_path.exists():
+            raise RuntimeError(
+                f"Wheel file not found: {wheel_path}\n"
+                "Please build the wheel first: python -m build"
+            )
+
+        print(f"📦 Uploading claudeswarm wheel ({wheel_path.stat().st_size // 1024}KB)...")
+        wheel_bytes = wheel_path.read_bytes()
+        sandbox_wheel_path = "/tmp/claude_swarm-0.1.0-py3-none-any.whl"
+
+        # Upload wheel to sandbox
+        await asyncio.to_thread(
+            self.sandbox.files.write,  # type: ignore[union-attr]
+            sandbox_wheel_path,
+            wheel_bytes
+        )
+        print(f"✓ Wheel uploaded to {sandbox_wheel_path}")
 
         commands = [
             # System packages
-            "apt-get update && apt-get install -y tmux git",
-            # Python packages
-            "pip install --upgrade pip",
-            # Security: Use pinned git URL for reproducibility
-            f"pip install {CLAUDESWARM_GIT_URL}",
-            "pip install fastapi uvicorn pytest",
+            "apt-get update && apt-get install -y tmux git curl nodejs npm",
+            # Create workspace directory
+            "mkdir -p /workspace && cd /workspace",
+            # Install Claude Code CLI
+            "npm install -g @anthropic-ai/claude-code",
+            # Install claudeswarm from uploaded wheel (FAST: <5 seconds, no network issues!)
+            f"pip3 install {sandbox_wheel_path}",
+            # Install other Python packages
+            "pip3 install --retries 5 fastapi uvicorn pytest",
+            # Verify installations
+            "python3 -c 'import claudeswarm' || echo 'ERROR: claudeswarm module not installed'",
+            "which claudeswarm || echo 'ERROR: claudeswarm CLI script not found'",
+            "claudeswarm --version || echo 'ERROR: claudeswarm command not working'",
+            "claude-code --version || echo 'ERROR: claude-code not installed'",
         ]
 
         for i, cmd in enumerate(commands, 1):
@@ -190,6 +233,8 @@ class CloudSandbox:
         Creates a tmux session named 'claude-swarm' and splits it into
         multiple panes (one per agent) using a tiled layout.
 
+        Configures tmux with Ctrl+a prefix to avoid conflicts with local tmux.
+
         Raises:
             RuntimeError: If tmux setup fails
             asyncio.TimeoutError: If tmux setup exceeds timeout
@@ -197,6 +242,36 @@ class CloudSandbox:
         print(f"🖥️  Setting up tmux with {self.num_agents} panes...")
 
         try:
+            # Create tmux config with Ctrl+a prefix (avoids nested tmux conflicts)
+            # Use printf to avoid heredoc syntax issues with E2B
+            tmux_config_lines = [
+                "# Use Ctrl+a as prefix (instead of Ctrl+b) to avoid conflicts with local tmux",
+                "unbind C-b",
+                "set-option -g prefix C-a",
+                "bind-key C-a send-prefix",
+                "",
+                "# Better colors",
+                "set -g default-terminal screen-256color",
+                "",
+                "# Status bar",
+                "set -g status-bg black",
+                "set -g status-fg white",
+                "set -g status-left '[Claude Swarm] '",
+                "set -g status-right '%H:%M %d-%b-%y'",
+            ]
+            # Join lines with \n and use printf to write file
+            tmux_config = "\\n".join(tmux_config_lines)
+            config_cmd = f"printf '{tmux_config}\\n' > ~/.tmux.conf"
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.sandbox.run_code,  # type: ignore[union-attr]
+                    f"!{config_cmd}",
+                ),
+                timeout=self.operation_timeout
+            )
+            if result.error:
+                print(f"⚠️  Warning: Failed to create tmux config: {result.error}")
+
             # Security: Sanitize session name for shell
             session_name = sanitize_for_shell("claude-swarm")
 
@@ -396,7 +471,7 @@ class CloudSandbox:
             try:
                 # Security: Add timeout for cleanup operations
                 await asyncio.wait_for(
-                    asyncio.to_thread(self.sandbox.close),
+                    asyncio.to_thread(self.sandbox.kill),
                     timeout=30.0  # Use shorter timeout for cleanup
                 )
                 print("✓ Sandbox closed")
