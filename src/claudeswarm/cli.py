@@ -1817,10 +1817,10 @@ def cmd_cloud_status(args: argparse.Namespace) -> None:
             if not args.json:
                 print()
 
-            # Check tmux sessions
+            # Check tmux sessions (use full path for E2B PATH compatibility)
             if not args.json:
                 print("🖥️  Tmux Sessions:")
-            result = await asyncio.to_thread(sandbox.run_code, "!tmux list-sessions 2>&1")
+            result = await asyncio.to_thread(sandbox.run_code, "!/usr/bin/tmux list-sessions 2>&1")
             if hasattr(result, 'logs') and result.logs and result.logs.stdout:
                 sessions = [line.rstrip() for line in result.logs.stdout if line.strip()]
                 status_data["tmux_sessions"] = sessions
