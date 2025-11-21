@@ -99,7 +99,10 @@ class CloudSandbox:
         try:
             # Create sandbox (E2BSandbox retrieves API key internally)
             print("🚀 Creating E2B sandbox...")
-            self.sandbox = E2BSandbox()
+            self.sandbox = await asyncio.wait_for(
+                asyncio.to_thread(E2BSandbox.create),
+                timeout=self.operation_timeout
+            )
             self.sandbox_id = self.sandbox.id
             print(f"✓ Sandbox created: {self.sandbox_id}")
 

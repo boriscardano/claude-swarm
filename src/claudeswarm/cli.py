@@ -1391,14 +1391,14 @@ def cmd_reload(args: argparse.Namespace) -> None:
                 sys.exit(1)
 
             result = subprocess.run(
-                ["uv", "tool", "install", "--force", "--editable", editable_location],
+                ["uv", "tool", "install", "--force", "--editable", f"{editable_location}[cloud]"],
                 capture_output=True,
                 text=True,
                 timeout=60
             )
 
             if result.returncode == 0:
-                print(f"   ✓ Installed from {editable_location} (editable mode)")
+                print(f"   ✓ Installed from {editable_location} (editable mode with cloud extras)")
             else:
                 # Check for uv cache permission errors
                 if "Operation not permitted" in result.stderr and ".cache/uv" in result.stderr:
@@ -1409,13 +1409,13 @@ def cmd_reload(args: argparse.Namespace) -> None:
                                    capture_output=True, timeout=5)
                     # Retry installation
                     result = subprocess.run(
-                        ["uv", "tool", "install", "--force", "--editable", editable_location],
+                        ["uv", "tool", "install", "--force", "--editable", f"{editable_location}[cloud]"],
                         capture_output=True,
                         text=True,
                         timeout=60
                     )
                     if result.returncode == 0:
-                        print(f"   ✓ Installed from {editable_location} (editable mode) after cache clear")
+                        print(f"   ✓ Installed from {editable_location} (editable mode with cloud extras) after cache clear")
                     else:
                         print(f"   ✗ Installation failed: {result.stderr}", file=sys.stderr)
                         sys.exit(1)
@@ -1424,14 +1424,14 @@ def cmd_reload(args: argparse.Namespace) -> None:
                     sys.exit(1)
         else:  # github
             result = subprocess.run(
-                ["uv", "tool", "install", "--force", "git+https://github.com/borisbanach/claude-swarm.git"],
+                ["uv", "tool", "install", "--force", "git+https://github.com/borisbanach/claude-swarm.git[cloud]"],
                 capture_output=True,
                 text=True,
                 timeout=120
             )
 
             if result.returncode == 0:
-                print("   ✓ Installed from GitHub")
+                print("   ✓ Installed from GitHub (with cloud extras)")
             else:
                 print(f"   ✗ Installation failed: {result.stderr}", file=sys.stderr)
                 sys.exit(1)
