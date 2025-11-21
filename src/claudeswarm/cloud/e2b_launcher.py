@@ -189,6 +189,8 @@ class CloudSandbox:
             "apt-get update && apt-get install -y tmux git curl nodejs npm",
             # Create workspace directory
             "mkdir -p /workspace && cd /workspace",
+            # Configure shell PATH for interactive use (fixes tmux not found in shell)
+            "echo 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH' >> ~/.bashrc",
             # Install Claude Code CLI
             "npm install -g @anthropic-ai/claude-code",
             # Install claudeswarm from uploaded wheel (FAST: <5 seconds, no network issues!)
@@ -275,11 +277,11 @@ class CloudSandbox:
             # Security: Sanitize session name for shell
             session_name = sanitize_for_shell("claude-swarm")
 
-            # Create initial session
+            # Create initial session (use full path for E2B PATH compatibility)
             result = await asyncio.wait_for(
                 asyncio.to_thread(
                     self.sandbox.run_code,  # type: ignore[union-attr]
-                    f'!tmux new-session -d -s {session_name} -x 200 -y 50',
+                    f'!/usr/bin/tmux new-session -d -s {session_name} -x 200 -y 50',
                 ),
                 timeout=self.operation_timeout
             )
@@ -292,7 +294,7 @@ class CloudSandbox:
                 result = await asyncio.wait_for(
                     asyncio.to_thread(
                         self.sandbox.run_code,  # type: ignore[union-attr]
-                        f'!tmux split-window -h -t {session_name}',
+                        f'!/usr/bin/tmux split-window -h -t {session_name}',
                     ),
                     timeout=self.operation_timeout
                 )
@@ -303,7 +305,7 @@ class CloudSandbox:
                 await asyncio.wait_for(
                     asyncio.to_thread(
                         self.sandbox.run_code,  # type: ignore[union-attr]
-                        f'!tmux select-layout -t {session_name} tiled',
+                        f'!/usr/bin/tmux select-layout -t {session_name} tiled',
                     ),
                     timeout=self.operation_timeout
                 )
@@ -340,9 +342,9 @@ class CloudSandbox:
                 if not isinstance(i, int) or i < 0 or i >= self.num_agents:
                     raise RuntimeError(f"Invalid pane index: {i}")
 
-                # Send command to each pane
+                # Send command to each pane (use full path for E2B PATH compatibility)
                 cmd = (
-                    f"!tmux send-keys -t {session_name}:{i} "
+                    f"!/usr/bin/tmux send-keys -t {session_name}:{i} "
                     f"'cd {workspace_dir} && {discover_cmd}' Enter"
                 )
                 result = await asyncio.wait_for(
