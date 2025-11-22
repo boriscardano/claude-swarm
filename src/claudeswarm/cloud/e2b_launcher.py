@@ -285,14 +285,66 @@ class CloudSandbox:
             "echo 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH' >> ~/.profile",
             # Install Claude Code CLI - this creates a 'claude' binary in /usr/local/bin
             "npm install -g @anthropic-ai/claude-code",
-            # Create Claude Code directories (both ~/.claude and ~/.config/claude-code)
-            "mkdir -p ~/.claude",
-            "mkdir -p ~/.config/claude-code",
-            # Skip onboarding prompts by creating config files in BOTH locations
-            # ~/.claude.json is checked first (legacy location)
-            'echo \'{"hasCompletedOnboarding": true}\' > ~/.claude.json',
-            # ~/.config/claude-code/config.json is the new location
-            'echo \'{"hasCompletedOnboarding": true}\' > ~/.config/claude-code/config.json',
+            # Create Claude Code directories for BOTH root and user
+            "mkdir -p /root/.claude",
+            "mkdir -p /root/.config/claude-code",
+            "mkdir -p /home/user/.claude",
+            "mkdir -p /home/user/.config/claude-code",
+            # Skip onboarding prompts by creating config files for BOTH root and user
+            # Root configs
+            'echo \'{"hasCompletedOnboarding": true}\' > /root/.claude.json',
+            'echo \'{"hasCompletedOnboarding": true}\' > /root/.config/claude-code/config.json',
+            # User configs (critical for E2B CLI sessions)
+            'echo \'{"hasCompletedOnboarding": true}\' > /home/user/.claude.json',
+            'echo \'{"hasCompletedOnboarding": true}\' > /home/user/.config/claude-code/config.json',
+        ]
+
+        # Configure GitHub MCP server if GITHUB_TOKEN is available
+        github_token = os.getenv("GITHUB_TOKEN")
+        if github_token:
+            print("🔧 Configuring GitHub MCP server...")
+            # Escape the token for JSON
+            escaped_github_token = github_token.replace('"', '\\"').replace("'", "'\\''")
+
+            # Create MCP settings JSON for both root and user
+            mcp_config_json = {
+                "mcpServers": {
+                    "github": {
+                        "command": "docker",
+                        "args": [
+                            "run", "-i", "--rm",
+                            "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+                            "ghcr.io/github/github-mcp-server"
+                        ],
+                        "env": {
+                            "GITHUB_PERSONAL_ACCESS_TOKEN": github_token
+                        }
+                    }
+                }
+            }
+
+            import json
+            mcp_config_str = json.dumps(mcp_config_json).replace("'", "'\\''")
+
+            # Add commands to write MCP config for both root and user
+            mcp_commands = [
+                # Root MCP config
+                f"echo '{mcp_config_str}' > /root/.claude/mcp_settings.json",
+                f"echo '{mcp_config_str}' > /root/.config/claude-code/mcp_settings.json",
+                # User MCP config (critical for E2B CLI sessions)
+                f"su - user -c \"echo '{mcp_config_str}' > /home/user/.claude/mcp_settings.json\"",
+                f"su - user -c \"echo '{mcp_config_str}' > /home/user/.config/claude-code/mcp_settings.json\"",
+                # Export GITHUB_TOKEN as environment variable for the MCP server
+                f"echo 'export GITHUB_PERSONAL_ACCESS_TOKEN={escaped_github_token}' >> /root/.bashrc",
+                f"echo 'export GITHUB_PERSONAL_ACCESS_TOKEN={escaped_github_token}' >> /home/user/.bashrc",
+            ]
+            commands.extend(mcp_commands)
+        else:
+            print("⚠️  GITHUB_TOKEN not found in environment.")
+            print("   GitHub MCP server will not be configured.")
+            print("   Set GITHUB_TOKEN to enable GitHub MCP integration.")
+
+        commands.extend([
             # Install claudeswarm from uploaded wheel (FAST: <5 seconds, no network issues!)
             f"pip3 install {sandbox_wheel_path}",
             # Install other Python packages
@@ -311,16 +363,28 @@ class CloudSandbox:
             print("🔐 Configuring Claude Code OAuth token...")
             # Security: Use shell escaping for the token value
             escaped_token = claude_oauth_token.replace("'", "'\\''")
-            token_export = f"export CLAUDE_CODE_OAUTH_TOKEN='{escaped_token}'"
+            # Use ANTHROPIC_AUTH_TOKEN as it's more reliable than CLAUDE_CODE_OAUTH_TOKEN
+            token_export_oauth = f"export CLAUDE_CODE_OAUTH_TOKEN='{escaped_token}'"
+            token_export_auth = f"export ANTHROPIC_AUTH_TOKEN='{escaped_token}'"
 
-            # Add token export commands before verification commands
+            # Add token export commands for BOTH root and user accounts
+            # E2B CLI connects as 'user', so user configs are critical
             token_commands = [
-                f"echo '{token_export}' >> ~/.bashrc",
-                f"echo '{token_export}' >> ~/.bash_profile",
-                f"echo '{token_export}' >> ~/.profile",
+                # Root user configs (for run_code operations)
+                f"echo '{token_export_oauth}' >> /root/.bashrc",
+                f"echo '{token_export_auth}' >> /root/.bashrc",
+                f"echo '{token_export_oauth}' >> /root/.bash_profile",
+                f"echo '{token_export_auth}' >> /root/.bash_profile",
+                # Regular user configs (for E2B CLI interactive sessions)
+                f"echo '{token_export_oauth}' >> /home/user/.bashrc",
+                f"echo '{token_export_auth}' >> /home/user/.bashrc",
+                f"echo '{token_export_oauth}' >> /home/user/.bash_profile",
+                f"echo '{token_export_auth}' >> /home/user/.bash_profile",
+                f"echo '{token_export_oauth}' >> /home/user/.profile",
+                f"echo '{token_export_auth}' >> /home/user/.profile",
             ]
-            # Insert token commands after config.json creation (index 4)
-            commands = commands[:4] + token_commands + commands[4:]
+            # Insert token commands after config.json creation
+            commands = commands[:5] + token_commands + commands[5:]
         else:
             print("⚠️  CLAUDE_CODE_OAUTH_TOKEN not found in environment.")
             print("   Claude Code will require manual authentication in sandbox.")
