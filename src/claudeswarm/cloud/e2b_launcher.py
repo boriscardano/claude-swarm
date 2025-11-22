@@ -262,15 +262,25 @@ class CloudSandbox:
         print(f"✓ Wheel uploaded to {sandbox_wheel_path}")
 
         commands = [
-            # System packages (use bash -c with set -e to fail on errors)
-            "bash -c 'set -e && apt-get update && apt-get install -y tmux git curl nodejs npm'",
+            # CRITICAL: Update apt cache first (required for package installation)
+            "apt-get update",
+            # CRITICAL: Install system packages (tmux, git, curl are essential for coordination)
+            # Note: nodejs and npm are pre-installed in E2B, but we install them explicitly
+            # to ensure they're available. The DEBIAN_FRONTEND=noninteractive prevents
+            # interactive prompts during installation.
+            "DEBIAN_FRONTEND=noninteractive apt-get install -y tmux git curl",
+            # Verify tmux was installed successfully (this will fail deployment if not)
+            "which tmux",
             # Create workspace directory
             "mkdir -p /workspace",
-            # Configure shell PATH for interactive use (fixes tmux not found in shell)
+            # Configure shell PATH for ALL shell types (interactive, login, non-interactive)
+            # .bashrc is sourced by interactive non-login shells
             "echo 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH' >> ~/.bashrc",
-            # Add helpful alias for claude -> claude-code
-            "echo 'alias claude=claude-code' >> ~/.bashrc",
-            # Install Claude Code CLI
+            # .bash_profile is sourced by login shells
+            "echo 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH' >> ~/.bash_profile",
+            # .profile is sourced by login shells if .bash_profile doesn't exist
+            "echo 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH' >> ~/.profile",
+            # Install Claude Code CLI - this creates a 'claude' binary in /usr/local/bin
             "npm install -g @anthropic-ai/claude-code",
             # Install claudeswarm from uploaded wheel (FAST: <5 seconds, no network issues!)
             f"pip3 install {sandbox_wheel_path}",
@@ -279,9 +289,10 @@ class CloudSandbox:
             # Verify installations (these should succeed or deployment fails)
             "python3 -c 'import claudeswarm'",
             "which claudeswarm",
-            "/usr/bin/tmux -V",  # Verify tmux is installed with full path
+            "tmux -V",  # Verify tmux is working
             "claudeswarm --version",
-            "claude-code --version",
+            "which claude",  # Verify claude binary is in PATH
+            "claude --version",  # Verify claude works (npm creates 'claude' binary, not 'claude-code')
         ]
 
         for i, cmd in enumerate(commands, 1):

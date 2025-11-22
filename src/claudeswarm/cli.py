@@ -2040,95 +2040,252 @@ def cmd_cloud_shutdown(args: argparse.Namespace) -> None:
 
 
 def cmd_cloud_shell(args: argparse.Namespace) -> None:
-    """Open an interactive shell inside the E2B sandbox."""
-    import asyncio
-    from e2b_code_interpreter import Sandbox
+    """Open an interactive shell inside the E2B sandbox.
 
-    async def shell_session() -> None:
-        """Async shell session logic."""
-        sandbox_id = args.sandbox_id
+    Uses the E2B CLI for full interactive terminal support with tmux, vim, etc.
+    Falls back to Python-based shell if E2B CLI is not available.
+    """
+    import subprocess
+    import shutil
+    import os
 
-        # Auto-detect if not provided
+    sandbox_id = args.sandbox_id
+
+    # Auto-detect if not provided
+    if not sandbox_id:
+        sandbox_id = get_cached_sandbox_id()
         if not sandbox_id:
-            sandbox_id = get_cached_sandbox_id()
-            if not sandbox_id:
-                print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
-                print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
-                sys.exit(1)
-            print(f"Using cached sandbox: {sandbox_id}\n")
+            print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
+            print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+            sys.exit(1)
+        print(f"Using cached sandbox: {sandbox_id}\n")
 
+    # Check if E2B CLI is available
+    e2b_cli = shutil.which('e2b')
+
+    if e2b_cli:
+        # Use E2B CLI for full interactive terminal
         print(f"🔌 Connecting to E2B sandbox: {sandbox_id}")
+        print("✓ Using E2B CLI for full interactive terminal support")
+        print("  (tmux, vim, claude, and all TUI apps will work!)\n")
+
+        print("="*60)
+        print("Full Interactive Terminal")
+        print("Press Ctrl+D or type 'exit' to disconnect.")
+        print("="*60 + "\n")
 
         try:
-            # Connect to existing sandbox
-            sandbox = await asyncio.to_thread(Sandbox.connect, sandbox_id)
-            print(f"✓ Connected to sandbox!")
+            # Run e2b sandbox connect with the API key from environment
+            # The E2B_API_KEY should already be set
+            subprocess.run(['e2b', 'sandbox', 'connect', sandbox_id], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"\n❌ E2B CLI connection failed: {e}", file=sys.stderr)
+            print("Note: Sandbox is still running. Use 'claudeswarm cloud shutdown' to clean up.", file=sys.stderr)
+            sys.exit(1)
+        except KeyboardInterrupt:
+            print("\n\n👋 Disconnected from sandbox")
 
-            # Get sandbox info
-            try:
-                host = await asyncio.to_thread(sandbox.get_host)
-                print(f"  Host: {host}")
-            except:
-                pass
+        print("\nNote: Sandbox is still running. Use 'claudeswarm cloud shutdown' to clean up.")
+        return
+
+    # Fallback to Python-based shell
+    print("⚠️  E2B CLI not found. Install with: npm install -g @e2b/cli")
+    print(f"🔌 Connecting to E2B sandbox: {sandbox_id}")
+    print("⚠️  Using fallback command shell (limited functionality)\n")
+
+    import asyncio
+    import sys
+    import threading
+    from e2b_code_interpreter import Sandbox
+    from e2b import PtySize
+
+    def simple_shell_session() -> None:
+        """Fallback simple shell session."""
+        try:
+            # Connect to existing sandbox (sync mode)
+            sandbox = Sandbox.connect(sandbox_id)
+            print(f"✓ Connected to sandbox!")
 
             print("\n" + "="*60)
             print("Interactive E2B Shell")
-            print("All commands run inside the E2B sandbox.")
-            print("Type 'exit' or press Ctrl+C to disconnect.")
+            print("⚠️  Note: PTY mode is experimental and may not show output")
+            print("⚠️  Falling back to simple command mode...")
+            print("Useful commands:")
+            print("  - tmux ls                  # List tmux sessions")
+            print("  - tmux capture-pane -p -t claude-swarm:0  # View pane 0")
+            print("  - tmux send-keys -t claude-swarm:0 'cmd' Enter  # Send to pane 0")
+            print("Press Ctrl+C to disconnect.")
             print("="*60 + "\n")
 
-            # Interactive shell loop
+            # Skip PTY mode for now and use simple command mode
+            print("⚠️  Skipping PTY mode - using simple command shell instead\n")
+
+            # Simple command loop (like before, but improved)
             while True:
                 try:
-                    # Use input() for interactive prompt
                     command = input(f"{sandbox_id[:8]}$ ").strip()
 
                     if command.lower() in ['exit', 'quit']:
-                        print("\n👋 Disconnecting from sandbox...")
+                        print("\n👋 Disconnecting...")
                         break
 
                     if not command:
                         continue
 
-                    # Execute command in sandbox with proper PATH
-                    if not command.startswith('!'):
-                        command = f"!{command}"
-
-                    # Set PATH explicitly and source bashrc for shell configuration
-                    # E2B's shell might not have standard PATH set correctly
+                    # Execute with proper PATH
                     path_export = "export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
-                    command_with_env = f"!{path_export}; source ~/.bashrc 2>/dev/null; {command[1:]}"
+                    wrapped_command = f"!bash -c '{path_export}; source ~/.bashrc 2>/dev/null || true; {command.replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))}'"
 
-                    result = await asyncio.to_thread(sandbox.run_code, command_with_env)
+                    result = sandbox.run_code(wrapped_command)
 
-                    # Print output from logs
+                    # Print output
+                    had_output = False
                     if hasattr(result, 'logs') and result.logs:
                         if result.logs.stdout:
                             for line in result.logs.stdout:
                                 print(line, end='')
+                                had_output = True
                         if result.logs.stderr:
                             for line in result.logs.stderr:
                                 print(line, end='', file=sys.stderr)
+                                had_output = True
 
-                    # Also check text and error fields
-                    if result.text:
+                    if hasattr(result, 'text') and result.text:
                         print(result.text, end='')
+                        had_output = True
 
-                    if result.error:
+                    if hasattr(result, 'error') and result.error:
                         print(f"Error: {result.error}", file=sys.stderr)
+                        had_output = True
+
+                    # If no output, print a newline to keep spacing clean
+                    if not had_output:
+                        print()  # Just add a newline
 
                 except EOFError:
-                    print("\n👋 Disconnecting from sandbox...")
+                    print("\n👋 Disconnecting...")
                     break
 
             print("Note: Sandbox is still running. Use 'claudeswarm cloud shutdown' to clean up.")
+            return  # Skip the PTY code below
+
+            # PTY CODE BELOW IS COMMENTED OUT FOR NOW
+            # ==========================================
+
+            # Get terminal size
+            import shutil
+            try:
+                cols, rows = shutil.get_terminal_size()
+            except:
+                cols, rows = 80, 24
+
+            # Start a PTY session with bash
+            print("🚀 Starting bash PTY session...")
+
+            # Output buffer for PTY
+            output_lock = threading.Lock()
+
+            def on_pty_output(output):
+                """Callback for PTY output."""
+                with output_lock:
+                    if hasattr(output, 'data'):
+                        sys.stdout.write(output.data)
+                        sys.stdout.flush()
+
+            # Start PTY
+            pty_handle = sandbox.pty.create(
+                size=PtySize(rows=rows, cols=cols),
+                cwd="/workspace",
+                envs={"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"},
+                timeout=None  # No timeout for interactive session
+            )
+
+            print(f"✓ PTY session started (PID: {pty_handle.pid})")
+            print("📝 Type commands and press Enter. Type 'exit' to quit.\n")
+
+            # Simple command loop (not full PTY passthrough yet)
+            import termios
+            import tty
+            stdin_fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(stdin_fd)
+
+            try:
+                # Set terminal to raw mode
+                tty.setraw(stdin_fd)
+
+                # Use a non-blocking approach with callbacks
+                # Start the PTY shell with bash
+                print("Starting interactive bash session...")
+                sandbox.pty.send_stdin(pty_handle.pid, b"bash\n")
+
+                # Create a queue for output
+                import queue
+                output_queue = queue.Queue()
+                stop_event = threading.Event()
+
+                def read_pty_output():
+                    """Read and print PTY output using iterator."""
+                    try:
+                        for event in pty_handle:
+                            if stop_event.is_set():
+                                break
+                            # PtyOutput events have a 'data' attribute
+                            if hasattr(event, 'data') and event.data:
+                                output_queue.put(event.data)
+                    except Exception as e:
+                        output_queue.put(f"\n[PTY Error: {e}]\n")
+
+                # Start output thread
+                output_thread = threading.Thread(target=read_pty_output, daemon=True)
+                output_thread.start()
+
+                # Main I/O loop
+                import select
+                while True:
+                    # Print any queued output
+                    try:
+                        while True:
+                            data = output_queue.get_nowait()
+                            if isinstance(data, bytes):
+                                sys.stdout.buffer.write(data)
+                            else:
+                                sys.stdout.write(data)
+                            sys.stdout.flush()
+                    except queue.Empty:
+                        pass
+
+                    # Check for user input (non-blocking)
+                    if select.select([sys.stdin], [], [], 0.05)[0]:
+                        char = sys.stdin.read(1)
+                        if not char:
+                            break
+
+                        # Send to PTY (convert str to bytes)
+                        sandbox.pty.send_stdin(pty_handle.pid, char.encode('utf-8'))
+
+            finally:
+                # Cleanup
+                stop_event.set()
+                termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_settings)
+
+                # Kill PTY
+                try:
+                    sandbox.pty.kill(pty_handle.pid)
+                except:
+                    pass
+
+            print("\n\n👋 Disconnected from PTY session")
+            print("Note: Sandbox is still running. Use 'claudeswarm cloud shutdown' to clean up.")
 
         except Exception as e:
-            print(f"❌ Failed to connect to sandbox: {e}", file=sys.stderr)
+            print(f"❌ Failed to start PTY session: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
 
+    # Call the fallback shell if E2B CLI wasn't available
     try:
-        asyncio.run(shell_session())
+        simple_shell_session()
     except KeyboardInterrupt:
         print("\n\n👋 Disconnected from sandbox")
 
