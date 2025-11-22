@@ -261,6 +261,9 @@ class CloudSandbox:
         )
         print(f"✓ Wheel uploaded to {sandbox_wheel_path}")
 
+        # Get Claude Code OAuth token from local environment (if available)
+        claude_oauth_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
+
         commands = [
             # CRITICAL: Update apt cache first (required for package installation)
             "apt-get update",
@@ -282,6 +285,10 @@ class CloudSandbox:
             "echo 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH' >> ~/.profile",
             # Install Claude Code CLI - this creates a 'claude' binary in /usr/local/bin
             "npm install -g @anthropic-ai/claude-code",
+            # Create Claude Code config directory
+            "mkdir -p /root/.config/claude-code",
+            # Skip onboarding prompts by creating config file
+            'echo \'{"hasCompletedOnboarding": true}\' > /root/.config/claude-code/config.json',
             # Install claudeswarm from uploaded wheel (FAST: <5 seconds, no network issues!)
             f"pip3 install {sandbox_wheel_path}",
             # Install other Python packages
@@ -294,6 +301,26 @@ class CloudSandbox:
             "which claude",  # Verify claude binary is in PATH
             "claude --version",  # Verify claude works (npm creates 'claude' binary, not 'claude-code')
         ]
+
+        # If Claude OAuth token is available, add it to all shell configs for automatic authentication
+        if claude_oauth_token:
+            print("🔐 Configuring Claude Code OAuth token...")
+            # Security: Use shell escaping for the token value
+            escaped_token = claude_oauth_token.replace("'", "'\\''")
+            token_export = f"export CLAUDE_CODE_OAUTH_TOKEN='{escaped_token}'"
+
+            # Add token export commands before verification commands
+            token_commands = [
+                f"echo '{token_export}' >> ~/.bashrc",
+                f"echo '{token_export}' >> ~/.bash_profile",
+                f"echo '{token_export}' >> ~/.profile",
+            ]
+            # Insert token commands after config.json creation (index 4)
+            commands = commands[:4] + token_commands + commands[4:]
+        else:
+            print("⚠️  CLAUDE_CODE_OAUTH_TOKEN not found in environment.")
+            print("   Claude Code will require manual authentication in sandbox.")
+            print("   Run 'claude setup-token' locally and add to ~/.zshrc or ~/.bashrc")
 
         for i, cmd in enumerate(commands, 1):
             print(f"  [{i}/{len(commands)}] {cmd.split()[0]}...")
@@ -341,7 +368,8 @@ class CloudSandbox:
         Creates a tmux session named 'claude-swarm' and splits it into
         multiple panes (one per agent) using a tiled layout.
 
-        Configures tmux with Ctrl+a prefix to avoid conflicts with local tmux.
+        Configures tmux with standard Ctrl+b prefix, vim-style navigation,
+        and mouse support.
 
         Raises:
             RuntimeError: If tmux setup fails
@@ -350,14 +378,11 @@ class CloudSandbox:
         print(f"🖥️  Setting up tmux with {self.num_agents} panes...")
 
         try:
-            # Create tmux config with Ctrl+a prefix (avoids nested tmux conflicts)
+            # Create tmux config for E2B sandbox
             # Write to /home/user/.tmux.conf since tmux runs as 'user'
             tmux_config_lines = [
                 "# Claude Swarm tmux configuration",
-                "# Use Ctrl+a as prefix (instead of Ctrl+b) to avoid conflicts with local tmux",
-                "unbind C-b",
-                "set-option -g prefix C-a",
-                "bind-key C-a send-prefix",
+                "# Using standard Ctrl+b prefix",
                 "",
                 "# Better colors",
                 "set -g default-terminal screen-256color",
@@ -368,7 +393,7 @@ class CloudSandbox:
                 "set -g status-left '[Claude Swarm] '",
                 "set -g status-right '%H:%M %d-%b-%y'",
                 "",
-                "# Pane navigation",
+                "# Vim-style pane navigation",
                 "bind h select-pane -L",
                 "bind j select-pane -D",
                 "bind k select-pane -U",
@@ -376,6 +401,12 @@ class CloudSandbox:
                 "",
                 "# Enable mouse support",
                 "set -g mouse on",
+                "",
+                "# Pane resizing with vim keys",
+                "bind -r H resize-pane -L 5",
+                "bind -r J resize-pane -D 5",
+                "bind -r K resize-pane -U 5",
+                "bind -r L resize-pane -R 5",
             ]
             # Join lines with \n and use printf to write file as 'user'
             tmux_config = "\\n".join(tmux_config_lines)
