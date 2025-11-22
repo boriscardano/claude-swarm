@@ -366,7 +366,7 @@ class CloudSandbox:
             "claudeswarm --version",
             "which claude",  # Verify claude binary is in PATH
             "claude --version",  # Verify claude works (npm creates 'claude' binary, not 'claude-code')
-        ]
+        ])
 
         # If Claude OAuth token is available, add it to all shell configs for automatic authentication
         if claude_oauth_token:
