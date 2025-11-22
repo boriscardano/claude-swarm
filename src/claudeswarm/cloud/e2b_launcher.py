@@ -335,13 +335,12 @@ class CloudSandbox:
 
             # Add commands to write MCP config and export token for BOTH root and user
             # E2B CLI connects as 'user', so user configs are critical
+            # Note: Claude Code looks for .mcp.json in ~/.claude/ directory
             mcp_commands = [
-                # Root MCP configs
-                f"echo '{mcp_config_str}' > /root/.claude/mcp_settings.json",
-                f"echo '{mcp_config_str}' > /root/.config/claude-code/mcp_settings.json",
+                # Root MCP configs (write to .mcp.json as per Claude Code docs)
+                f"echo '{mcp_config_str}' > /root/.claude/.mcp.json",
                 # User MCP configs (critical for E2B CLI sessions)
-                f"su - user -c \"echo '{mcp_config_str}' > /home/user/.claude/mcp_settings.json\"",
-                f"su - user -c \"echo '{mcp_config_str}' > /home/user/.config/claude-code/mcp_settings.json\"",
+                f"su - user -c \"echo '{mcp_config_str}' > /home/user/.claude/.mcp.json\"",
                 # Export GITHUB_PERSONAL_ACCESS_TOKEN in all shell configs (same pattern as Claude OAuth)
                 # Root user configs (for run_code operations)
                 f"echo '{token_export}' >> /root/.bashrc",
