@@ -383,24 +383,25 @@ class CloudSandbox:
             # Security: Sanitize session name for shell
             session_name = sanitize_for_shell("claude-swarm")
 
-            # Create initial session (use full path for E2B PATH compatibility)
+            # Create initial session as the 'user' (not root) so it's accessible from E2B CLI
+            # E2B CLI connects as 'user', so tmux session must be owned by 'user'
             result = await asyncio.wait_for(
                 asyncio.to_thread(
                     self.sandbox.run_code,  # type: ignore[union-attr]
-                    f'!/usr/bin/tmux new-session -d -s {session_name} -x 200 -y 50',
+                    f'!su - user -c "/usr/bin/tmux new-session -d -s {session_name} -x 200 -y 50"',
                 ),
                 timeout=self.operation_timeout
             )
             if result.error:
                 raise RuntimeError(f"Failed to create tmux session: {result.error}")
 
-            # Split into multiple panes
+            # Split into multiple panes (run as 'user' to match session ownership)
             for i in range(1, self.num_agents):
                 # Split horizontally
                 result = await asyncio.wait_for(
                     asyncio.to_thread(
                         self.sandbox.run_code,  # type: ignore[union-attr]
-                        f'!/usr/bin/tmux split-window -h -t {session_name}',
+                        f'!su - user -c "/usr/bin/tmux split-window -h -t {session_name}"',
                     ),
                     timeout=self.operation_timeout
                 )
@@ -411,7 +412,7 @@ class CloudSandbox:
                 await asyncio.wait_for(
                     asyncio.to_thread(
                         self.sandbox.run_code,  # type: ignore[union-attr]
-                        f'!/usr/bin/tmux select-layout -t {session_name} tiled',
+                        f'!su - user -c "/usr/bin/tmux select-layout -t {session_name} tiled"',
                     ),
                     timeout=self.operation_timeout
                 )
@@ -448,10 +449,10 @@ class CloudSandbox:
                 if not isinstance(i, int) or i < 0 or i >= self.num_agents:
                     raise RuntimeError(f"Invalid pane index: {i}")
 
-                # Send command to each pane (use full path for E2B PATH compatibility)
+                # Send command to each pane as 'user' (use full path for E2B PATH compatibility)
                 cmd = (
-                    f"!/usr/bin/tmux send-keys -t {session_name}:{i} "
-                    f"'cd {workspace_dir} && {discover_cmd}' Enter"
+                    f"!su - user -c \"/usr/bin/tmux send-keys -t {session_name}:{i} "
+                    f"'cd {workspace_dir} && {discover_cmd}' Enter\""
                 )
                 result = await asyncio.wait_for(
                     asyncio.to_thread(
