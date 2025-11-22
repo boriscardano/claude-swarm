@@ -7,6 +7,7 @@ coordination. Handles tmux session setup and claudeswarm installation within san
 
 import asyncio
 import os
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -148,6 +149,87 @@ class CloudSandbox:
                     print(f"⚠️  Cleanup error (non-fatal): {cleanup_error}")
             raise RuntimeError(f"Failed to create sandbox: {str(e)}") from e
 
+    def _ensure_wheel_exists(self) -> Path:
+        """
+        Ensure the claudeswarm wheel is built and ready for upload.
+
+        Automatically builds the wheel if it doesn't exist using python -m build.
+
+        Returns:
+            Path: Path to the wheel file
+
+        Raises:
+            RuntimeError: If wheel cannot be built
+        """
+        # Find project root (where pyproject.toml is located)
+        project_root = Path(__file__).parent.parent.parent.parent
+        wheel_path = project_root / "dist" / "claude_swarm-0.1.0-py3-none-any.whl"
+
+        if wheel_path.exists():
+            return wheel_path
+
+        # Wheel doesn't exist - build it automatically
+        print("📦 Wheel not found, building automatically...")
+        pyproject_path = project_root / "pyproject.toml"
+
+        if not pyproject_path.exists():
+            raise RuntimeError(
+                f"pyproject.toml not found at {pyproject_path}. "
+                "Cannot build wheel automatically."
+            )
+
+        try:
+            # Try to find python/python3 command
+            python_cmd = None
+            for cmd in ["python3", "python"]:
+                try:
+                    result = subprocess.run(
+                        [cmd, "--version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0:
+                        python_cmd = cmd
+                        break
+                except (FileNotFoundError, subprocess.TimeoutExpired):
+                    continue
+
+            if not python_cmd:
+                raise RuntimeError("Python interpreter not found. Install Python 3.9+")
+
+            # Build the wheel
+            print(f"  Building with: {python_cmd} -m build")
+            result = subprocess.run(
+                [python_cmd, "-m", "build"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=120  # 2 minute timeout for build
+            )
+
+            if result.returncode != 0:
+                error_msg = f"Wheel build failed:\n{result.stderr}"
+                # Check if 'build' module is missing
+                if "No module named build" in result.stderr:
+                    error_msg += f"\n\nInstall build module with: {python_cmd} -m pip install build"
+                raise RuntimeError(error_msg)
+
+            # Verify wheel was created
+            if not wheel_path.exists():
+                raise RuntimeError(
+                    f"Build completed but wheel not found at {wheel_path}\n"
+                    f"Build output: {result.stdout}"
+                )
+
+            print(f"✓ Wheel built successfully: {wheel_path.name}")
+            return wheel_path
+
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Wheel build timed out after 120 seconds")
+        except Exception as e:
+            raise RuntimeError(f"Failed to build wheel: {str(e)}") from e
+
     async def _install_dependencies(self) -> None:
         """
         Install required packages in sandbox.
@@ -164,13 +246,8 @@ class CloudSandbox:
             RuntimeError: If any installation fails
             asyncio.TimeoutError: If installation exceeds timeout
         """
-        # Upload pre-built wheel to sandbox for fast, reliable installation
-        wheel_path = Path(__file__).parent.parent.parent.parent / "dist" / "claude_swarm-0.1.0-py3-none-any.whl"
-        if not wheel_path.exists():
-            raise RuntimeError(
-                f"Wheel file not found: {wheel_path}\n"
-                "Please build the wheel first: python -m build"
-            )
+        # Ensure wheel exists (build automatically if needed)
+        wheel_path = await asyncio.to_thread(self._ensure_wheel_exists)
 
         print(f"📦 Uploading claudeswarm wheel ({wheel_path.stat().st_size // 1024}KB)...")
         wheel_bytes = wheel_path.read_bytes()
