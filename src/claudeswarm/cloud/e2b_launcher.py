@@ -333,14 +333,12 @@ class CloudSandbox:
             # Create export command for GitHub token (same pattern as Claude OAuth token)
             token_export = f"export GITHUB_PERSONAL_ACCESS_TOKEN='{escaped_github_token}'"
 
-            # Add commands to write MCP config and export token for BOTH root and user
-            # E2B CLI connects as 'user', so user configs are critical
-            # Note: Claude Code looks for .mcp.json in ~/.claude/ directory
+            # Add commands to write MCP config and export token
+            # NOTE: .mcp.json must be in the PROJECT ROOT directory (not ~/.claude/)
+            # Claude Code looks for .mcp.json in the current working directory
             mcp_commands = [
-                # Root MCP configs (write to .mcp.json as per Claude Code docs)
-                f"echo '{mcp_config_str}' > /root/.claude/.mcp.json",
-                # User MCP configs (critical for E2B CLI sessions)
-                f"su - user -c \"echo '{mcp_config_str}' > /home/user/.claude/.mcp.json\"",
+                # Write .mcp.json to /workspace (project root) as 'user' for proper ownership
+                f"su - user -c \"echo '{mcp_config_str}' > /workspace/.mcp.json\"",
                 # Export GITHUB_PERSONAL_ACCESS_TOKEN in all shell configs (same pattern as Claude OAuth)
                 # Root user configs (for run_code operations)
                 f"echo '{token_export}' >> /root/.bashrc",
@@ -372,35 +370,15 @@ class CloudSandbox:
 
         # If Claude OAuth token is available, add it to all shell configs for automatic authentication
         if claude_oauth_token:
-            print("🔐 Configuring Claude Code OAuth token...")
-            # Security: Use shell escaping for the token value
-            escaped_token = claude_oauth_token.replace("'", "'\\''")
-            # Use ANTHROPIC_AUTH_TOKEN as it's more reliable than CLAUDE_CODE_OAUTH_TOKEN
-            token_export_oauth = f"export CLAUDE_CODE_OAUTH_TOKEN='{escaped_token}'"
-            token_export_auth = f"export ANTHROPIC_AUTH_TOKEN='{escaped_token}'"
-
-            # Add token export commands for BOTH root and user accounts
-            # E2B CLI connects as 'user', so user configs are critical
-            token_commands = [
-                # Root user configs (for run_code operations)
-                f"echo '{token_export_oauth}' >> /root/.bashrc",
-                f"echo '{token_export_auth}' >> /root/.bashrc",
-                f"echo '{token_export_oauth}' >> /root/.bash_profile",
-                f"echo '{token_export_auth}' >> /root/.bash_profile",
-                # Regular user configs (for E2B CLI interactive sessions)
-                f"echo '{token_export_oauth}' >> /home/user/.bashrc",
-                f"echo '{token_export_auth}' >> /home/user/.bashrc",
-                f"echo '{token_export_oauth}' >> /home/user/.bash_profile",
-                f"echo '{token_export_auth}' >> /home/user/.bash_profile",
-                f"echo '{token_export_oauth}' >> /home/user/.profile",
-                f"echo '{token_export_auth}' >> /home/user/.profile",
-            ]
-            # Insert token commands after config.json creation
-            commands = commands[:5] + token_commands + commands[5:]
+            print("⚠️  Claude Code OAuth token found but NOT recommended for E2B")
+            print("   OAuth tokens don't work in headless environments (will show API Error: 401)")
+            print("   Recommended: Use ANTHROPIC_API_KEY for API billing instead")
+            print("   Skipping OAuth token configuration...")
+            # Don't configure OAuth token as it doesn't work in headless environments
         else:
-            print("⚠️  CLAUDE_CODE_OAUTH_TOKEN not found in environment.")
-            print("   Claude Code will require manual authentication in sandbox.")
-            print("   Run 'claude setup-token' locally and add to ~/.zshrc or ~/.bashrc")
+            print("ℹ️  CLAUDE_CODE_OAUTH_TOKEN not found in environment.")
+            print("   To use Claude Code in E2B, set ANTHROPIC_API_KEY for API billing")
+            print("   (Note: This will charge API usage, not use Claude subscription)")
 
         for i, cmd in enumerate(commands, 1):
             print(f"  [{i}/{len(commands)}] {cmd.split()[0]}...")
