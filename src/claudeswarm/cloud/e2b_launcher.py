@@ -185,10 +185,10 @@ class CloudSandbox:
         print(f"✓ Wheel uploaded to {sandbox_wheel_path}")
 
         commands = [
-            # System packages
-            "apt-get update && apt-get install -y tmux git curl nodejs npm",
+            # System packages (use bash -c with set -e to fail on errors)
+            "bash -c 'set -e && apt-get update && apt-get install -y tmux git curl nodejs npm'",
             # Create workspace directory
-            "mkdir -p /workspace && cd /workspace",
+            "mkdir -p /workspace",
             # Configure shell PATH for interactive use (fixes tmux not found in shell)
             "echo 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH' >> ~/.bashrc",
             # Install Claude Code CLI
@@ -197,11 +197,12 @@ class CloudSandbox:
             f"pip3 install {sandbox_wheel_path}",
             # Install other Python packages
             "pip3 install --retries 5 fastapi uvicorn pytest",
-            # Verify installations
-            "python3 -c 'import claudeswarm' || echo 'ERROR: claudeswarm module not installed'",
-            "which claudeswarm || echo 'ERROR: claudeswarm CLI script not found'",
-            "claudeswarm --version || echo 'ERROR: claudeswarm command not working'",
-            "claude-code --version || echo 'ERROR: claude-code not installed'",
+            # Verify installations (these should succeed or deployment fails)
+            "python3 -c 'import claudeswarm'",
+            "which claudeswarm",
+            "/usr/bin/tmux -V",  # Verify tmux is installed with full path
+            "claudeswarm --version",
+            "claude-code --version",
         ]
 
         for i, cmd in enumerate(commands, 1):
@@ -215,16 +216,31 @@ class CloudSandbox:
                     ),
                     timeout=self.operation_timeout
                 )
+
+                # Check for errors (both result.error and exit codes)
                 if result.error:
-                    raise RuntimeError(
-                        f"Failed to install dependencies: {result.error}"
-                    )
+                    error_msg = f"Command failed: {cmd}\nError: {result.error}"
+                    if hasattr(result, 'logs') and result.logs:
+                        if result.logs.stderr:
+                            error_msg += f"\nStderr: {''.join(result.logs.stderr)}"
+                    raise RuntimeError(error_msg)
+
+                # Check exit code if available
+                if hasattr(result, 'exit_code') and result.exit_code != 0:
+                    error_msg = f"Command exited with code {result.exit_code}: {cmd}"
+                    if hasattr(result, 'logs') and result.logs:
+                        if result.logs.stdout:
+                            error_msg += f"\nStdout: {''.join(result.logs.stdout)}"
+                        if result.logs.stderr:
+                            error_msg += f"\nStderr: {''.join(result.logs.stderr)}"
+                    raise RuntimeError(error_msg)
+
             except asyncio.TimeoutError:
                 raise RuntimeError(
                     f"Installation timed out after {self.operation_timeout}s: {cmd}"
                 )
             except Exception as e:
-                raise RuntimeError(f"Installation failed: {str(e)}") from e
+                raise RuntimeError(f"Installation failed at step [{i}/{len(commands)}]: {str(e)}") from e
 
         print("✓ Dependencies installed")
 
