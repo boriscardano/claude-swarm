@@ -351,8 +351,9 @@ class CloudSandbox:
 
         try:
             # Create tmux config with Ctrl+a prefix (avoids nested tmux conflicts)
-            # Use printf to avoid heredoc syntax issues with E2B
+            # Write to /home/user/.tmux.conf since tmux runs as 'user'
             tmux_config_lines = [
+                "# Claude Swarm tmux configuration",
                 "# Use Ctrl+a as prefix (instead of Ctrl+b) to avoid conflicts with local tmux",
                 "unbind C-b",
                 "set-option -g prefix C-a",
@@ -361,15 +362,25 @@ class CloudSandbox:
                 "# Better colors",
                 "set -g default-terminal screen-256color",
                 "",
-                "# Status bar",
+                "# Status bar styling",
                 "set -g status-bg black",
                 "set -g status-fg white",
                 "set -g status-left '[Claude Swarm] '",
                 "set -g status-right '%H:%M %d-%b-%y'",
+                "",
+                "# Pane navigation",
+                "bind h select-pane -L",
+                "bind j select-pane -D",
+                "bind k select-pane -U",
+                "bind l select-pane -R",
+                "",
+                "# Enable mouse support",
+                "set -g mouse on",
             ]
-            # Join lines with \n and use printf to write file
+            # Join lines with \n and use printf to write file as 'user'
             tmux_config = "\\n".join(tmux_config_lines)
-            config_cmd = f"printf '{tmux_config}\\n' > ~/.tmux.conf"
+            # Write to user's home directory (/home/user/.tmux.conf)
+            config_cmd = f"su - user -c \"printf '{tmux_config}\\n' > /home/user/.tmux.conf\""
             result = await asyncio.wait_for(
                 asyncio.to_thread(
                     self.sandbox.run_code,  # type: ignore[union-attr]
