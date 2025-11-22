@@ -307,6 +307,7 @@ class CloudSandbox:
             escaped_github_token = github_token.replace('"', '\\"').replace("'", "'\\''")
 
             # Create MCP settings JSON for both root and user
+            # Using Docker Hub MCP catalog image (mcp/github) as required by E2B hackathon
             mcp_config_json = {
                 "mcpServers": {
                     "github": {
@@ -314,7 +315,7 @@ class CloudSandbox:
                         "args": [
                             "run", "-i", "--rm",
                             "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
-                            "ghcr.io/github/github-mcp-server"
+                            "mcp/github"  # Official Docker Hub MCP catalog image
                         ],
                         "env": {
                             "GITHUB_PERSONAL_ACCESS_TOKEN": github_token
