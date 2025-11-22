@@ -297,6 +297,9 @@ class CloudSandbox:
             # User configs (critical for E2B CLI sessions)
             'echo \'{"hasCompletedOnboarding": true}\' > /home/user/.claude.json',
             'echo \'{"hasCompletedOnboarding": true}\' > /home/user/.config/claude-code/config.json',
+            # Fix permissions: ensure user owns their directories (CRITICAL for claude to work)
+            "chown -R user:user /home/user/.claude",
+            "chown -R user:user /home/user/.config/claude-code",
         ]
 
         # Configure GitHub MCP server if GITHUB_PERSONAL_ACCESS_TOKEN is available
