@@ -2094,8 +2094,10 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
                     if not command.startswith('!'):
                         command = f"!{command}"
 
-                    # Source bashrc to get PATH updates, then run command
-                    command_with_env = f"!source ~/.bashrc 2>/dev/null; {command[1:]}"
+                    # Set PATH explicitly and source bashrc for shell configuration
+                    # E2B's shell might not have standard PATH set correctly
+                    path_export = "export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
+                    command_with_env = f"!{path_export}; source ~/.bashrc 2>/dev/null; {command[1:]}"
 
                     result = await asyncio.to_thread(sandbox.run_code, command_with_env)
 

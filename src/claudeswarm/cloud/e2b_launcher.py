@@ -268,6 +268,8 @@ class CloudSandbox:
             "mkdir -p /workspace",
             # Configure shell PATH for interactive use (fixes tmux not found in shell)
             "echo 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH' >> ~/.bashrc",
+            # Add helpful alias for claude -> claude-code
+            "echo 'alias claude=claude-code' >> ~/.bashrc",
             # Install Claude Code CLI
             "npm install -g @anthropic-ai/claude-code",
             # Install claudeswarm from uploaded wheel (FAST: <5 seconds, no network issues!)
