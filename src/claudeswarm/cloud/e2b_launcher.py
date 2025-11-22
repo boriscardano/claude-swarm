@@ -299,12 +299,12 @@ class CloudSandbox:
             'echo \'{"hasCompletedOnboarding": true}\' > /home/user/.config/claude-code/config.json',
         ]
 
-        # Configure GitHub MCP server if GITHUB_TOKEN is available
-        github_token = os.getenv("GITHUB_TOKEN")
+        # Configure GitHub MCP server if GITHUB_PERSONAL_ACCESS_TOKEN is available
+        github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN") or os.getenv("GITHUB_TOKEN")
         if github_token:
-            print("🔧 Configuring GitHub MCP server...")
-            # Escape the token for JSON
-            escaped_github_token = github_token.replace('"', '\\"').replace("'", "'\\''")
+            print("🔧 Configuring GitHub MCP server from Docker Hub...")
+            # Security: Use shell escaping for the token value (same pattern as Claude OAuth token)
+            escaped_github_token = github_token.replace("'", "'\\''")
 
             # Create MCP settings JSON for both root and user
             # Using Docker Hub MCP catalog image (mcp/github) as required by E2B hackathon
@@ -327,23 +327,32 @@ class CloudSandbox:
             import json
             mcp_config_str = json.dumps(mcp_config_json).replace("'", "'\\''")
 
-            # Add commands to write MCP config for both root and user
+            # Create export command for GitHub token (same pattern as Claude OAuth token)
+            token_export = f"export GITHUB_PERSONAL_ACCESS_TOKEN='{escaped_github_token}'"
+
+            # Add commands to write MCP config and export token for BOTH root and user
+            # E2B CLI connects as 'user', so user configs are critical
             mcp_commands = [
-                # Root MCP config
+                # Root MCP configs
                 f"echo '{mcp_config_str}' > /root/.claude/mcp_settings.json",
                 f"echo '{mcp_config_str}' > /root/.config/claude-code/mcp_settings.json",
-                # User MCP config (critical for E2B CLI sessions)
+                # User MCP configs (critical for E2B CLI sessions)
                 f"su - user -c \"echo '{mcp_config_str}' > /home/user/.claude/mcp_settings.json\"",
                 f"su - user -c \"echo '{mcp_config_str}' > /home/user/.config/claude-code/mcp_settings.json\"",
-                # Export GITHUB_TOKEN as environment variable for the MCP server
-                f"echo 'export GITHUB_PERSONAL_ACCESS_TOKEN={escaped_github_token}' >> /root/.bashrc",
-                f"echo 'export GITHUB_PERSONAL_ACCESS_TOKEN={escaped_github_token}' >> /home/user/.bashrc",
+                # Export GITHUB_PERSONAL_ACCESS_TOKEN in all shell configs (same pattern as Claude OAuth)
+                # Root user configs (for run_code operations)
+                f"echo '{token_export}' >> /root/.bashrc",
+                f"echo '{token_export}' >> /root/.bash_profile",
+                # Regular user configs (for E2B CLI interactive sessions)
+                f"echo '{token_export}' >> /home/user/.bashrc",
+                f"echo '{token_export}' >> /home/user/.bash_profile",
+                f"echo '{token_export}' >> /home/user/.profile",
             ]
             commands.extend(mcp_commands)
         else:
-            print("⚠️  GITHUB_TOKEN not found in environment.")
+            print("⚠️  GITHUB_PERSONAL_ACCESS_TOKEN not found in environment.")
             print("   GitHub MCP server will not be configured.")
-            print("   Set GITHUB_TOKEN to enable GitHub MCP integration.")
+            print("   Set GITHUB_PERSONAL_ACCESS_TOKEN or GITHUB_TOKEN to enable GitHub MCP integration.")
 
         commands.extend([
             # Install claudeswarm from uploaded wheel (FAST: <5 seconds, no network issues!)
