@@ -486,22 +486,33 @@ class CloudSandbox:
                 "bind -r K resize-pane -U 5",
                 "bind -r L resize-pane -R 5",
             ]
-            # Write config file using heredoc for proper multiline handling
-            # This ensures the config file is properly formatted with actual newlines
-            tmux_config = "\n".join(tmux_config_lines)
-            # Escape single quotes in the config content
-            tmux_config_escaped = tmux_config.replace("'", "'\\''")
-            # Write to user's home directory (/home/user/.tmux.conf)
-            config_cmd = f"su - user -c 'cat > /home/user/.tmux.conf << \"EOF\"\n{tmux_config}\nEOF\n'"
-            result = await asyncio.wait_for(
+            # Write config file line by line to avoid heredoc issues with E2B's run_code
+            # First, clear the file
+            clear_cmd = "su - user -c '> /home/user/.tmux.conf'"
+            await asyncio.wait_for(
                 asyncio.to_thread(
                     self.sandbox.run_code,  # type: ignore[union-attr]
-                    f"!{config_cmd}",
+                    f"!{clear_cmd}",
                 ),
                 timeout=self.operation_timeout
             )
-            if result.error:
-                print(f"⚠️  Warning: Failed to create tmux config: {result.error}")
+
+            # Write each line of config
+            for line in tmux_config_lines:
+                # Escape single quotes for shell
+                escaped_line = line.replace("'", "'\\''")
+                # Append line to file
+                append_cmd = f"su - user -c \"echo '{escaped_line}' >> /home/user/.tmux.conf\""
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.sandbox.run_code,  # type: ignore[union-attr]
+                        f"!{append_cmd}",
+                    ),
+                    timeout=self.operation_timeout
+                )
+                if result.error:
+                    print(f"⚠️  Warning: Failed to write tmux config line: {result.error}")
+                    break
 
             # Verify config was written correctly
             verify_cmd = "su - user -c 'cat /home/user/.tmux.conf'"
