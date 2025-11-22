@@ -285,10 +285,14 @@ class CloudSandbox:
             "echo 'export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH' >> ~/.profile",
             # Install Claude Code CLI - this creates a 'claude' binary in /usr/local/bin
             "npm install -g @anthropic-ai/claude-code",
-            # Create Claude Code config directory
-            "mkdir -p /root/.config/claude-code",
-            # Skip onboarding prompts by creating config file
-            'echo \'{"hasCompletedOnboarding": true}\' > /root/.config/claude-code/config.json',
+            # Create Claude Code directories (both ~/.claude and ~/.config/claude-code)
+            "mkdir -p ~/.claude",
+            "mkdir -p ~/.config/claude-code",
+            # Skip onboarding prompts by creating config files in BOTH locations
+            # ~/.claude.json is checked first (legacy location)
+            'echo \'{"hasCompletedOnboarding": true}\' > ~/.claude.json',
+            # ~/.config/claude-code/config.json is the new location
+            'echo \'{"hasCompletedOnboarding": true}\' > ~/.config/claude-code/config.json',
             # Install claudeswarm from uploaded wheel (FAST: <5 seconds, no network issues!)
             f"pip3 install {sandbox_wheel_path}",
             # Install other Python packages
@@ -408,10 +412,13 @@ class CloudSandbox:
                 "bind -r K resize-pane -U 5",
                 "bind -r L resize-pane -R 5",
             ]
-            # Join lines with \n and use printf to write file as 'user'
-            tmux_config = "\\n".join(tmux_config_lines)
+            # Write config file using heredoc for proper multiline handling
+            # This ensures the config file is properly formatted with actual newlines
+            tmux_config = "\n".join(tmux_config_lines)
+            # Escape single quotes in the config content
+            tmux_config_escaped = tmux_config.replace("'", "'\\''")
             # Write to user's home directory (/home/user/.tmux.conf)
-            config_cmd = f"su - user -c \"printf '{tmux_config}\\n' > /home/user/.tmux.conf\""
+            config_cmd = f"su - user -c 'cat > /home/user/.tmux.conf << \"EOF\"\n{tmux_config}\nEOF\n'"
             result = await asyncio.wait_for(
                 asyncio.to_thread(
                     self.sandbox.run_code,  # type: ignore[union-attr]
@@ -422,15 +429,28 @@ class CloudSandbox:
             if result.error:
                 print(f"⚠️  Warning: Failed to create tmux config: {result.error}")
 
+            # Verify config was written correctly
+            verify_cmd = "su - user -c 'cat /home/user/.tmux.conf'"
+            verify_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.sandbox.run_code,  # type: ignore[union-attr]
+                    f"!{verify_cmd}",
+                ),
+                timeout=self.operation_timeout
+            )
+            if verify_result.error or not verify_result.text:
+                print(f"⚠️  Warning: Could not verify tmux config was written")
+
             # Security: Sanitize session name for shell
             session_name = sanitize_for_shell("claude-swarm")
 
             # Create initial session as the 'user' (not root) so it's accessible from E2B CLI
             # E2B CLI connects as 'user', so tmux session must be owned by 'user'
+            # The -f flag ensures tmux loads the config from /home/user/.tmux.conf
             result = await asyncio.wait_for(
                 asyncio.to_thread(
                     self.sandbox.run_code,  # type: ignore[union-attr]
-                    f'!su - user -c "/usr/bin/tmux new-session -d -s {session_name} -x 200 -y 50"',
+                    f'!su - user -c "/usr/bin/tmux -f /home/user/.tmux.conf new-session -d -s {session_name} -x 200 -y 50"',
                 ),
                 timeout=self.operation_timeout
             )
