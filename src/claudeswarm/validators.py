@@ -6,6 +6,8 @@ This module provides comprehensive validation functions for:
 - Message content (length, sanitization)
 - Timeout values (ranges, types)
 - Retry counts and other numeric parameters
+- Hostnames and IP addresses (RFC compliance, security warnings)
+- Port numbers (range validation)
 
 All validation functions raise ValueError with helpful error messages
 when validation fails, making it easy to provide user feedback.
@@ -16,11 +18,12 @@ Phase: Security & Robustness
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import unicodedata
 from pathlib import Path, PurePath
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Tuple
 
 __all__ = [
     "ValidationError",
@@ -32,8 +35,11 @@ __all__ = [
     "validate_rate_limit_config",
     "validate_recipient_list",
     "validate_tmux_pane_id",
+    "validate_host",
+    "validate_port",
     "sanitize_message_content",
     "normalize_path",
+    "contains_dangerous_unicode",
 ]
 
 # Validation constants
@@ -53,6 +59,32 @@ AGENT_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
 
 # Pattern for valid tmux pane IDs: must match ^%\d+$ format
 TMUX_PANE_ID_PATTERN = re.compile(r'^%\d+$')
+
+# Dangerous Unicode characters to remove
+# Bidirectional text override characters (CVE-2021-42574 - Trojan Source attack)
+BIDI_OVERRIDE_CHARS = {
+    '\u202A',  # LEFT-TO-RIGHT EMBEDDING
+    '\u202B',  # RIGHT-TO-LEFT EMBEDDING
+    '\u202C',  # POP DIRECTIONAL FORMATTING
+    '\u202D',  # LEFT-TO-RIGHT OVERRIDE
+    '\u202E',  # RIGHT-TO-LEFT OVERRIDE
+    '\u2066',  # LEFT-TO-RIGHT ISOLATE
+    '\u2067',  # RIGHT-TO-LEFT ISOLATE
+    '\u2068',  # FIRST STRONG ISOLATE
+    '\u2069',  # POP DIRECTIONAL ISOLATE
+}
+
+# Zero-width characters (can hide content)
+ZERO_WIDTH_CHARS = {
+    '\u200B',  # ZERO WIDTH SPACE
+    '\u200C',  # ZERO WIDTH NON-JOINER
+    '\u200D',  # ZERO WIDTH JOINER
+    '\u2060',  # WORD JOINER
+    '\uFEFF',  # ZERO WIDTH NO-BREAK SPACE (BOM)
+}
+
+# All dangerous Unicode characters combined
+DANGEROUS_UNICODE_CHARS = BIDI_OVERRIDE_CHARS | ZERO_WIDTH_CHARS
 
 
 class ValidationError(ValueError):
@@ -178,11 +210,15 @@ def validate_message_content(content: Any, max_length: int = MAX_MESSAGE_LENGTH)
 def sanitize_message_content(content: str) -> str:
     """Sanitize message content for safe transmission.
 
-    This function:
-    - Normalizes whitespace (but preserves newlines)
-    - Removes null bytes
-    - Removes other control characters (except tab and newline)
-    - Trims leading/trailing whitespace per line
+    Removes:
+    - Null bytes (can truncate strings in C-based systems)
+    - Control characters (except tab, newline, carriage return)
+    - Bidirectional override characters (Trojan Source attack prevention)
+    - Zero-width characters (hidden content prevention)
+
+    Also:
+    - Normalizes line endings to Unix style
+    - Strips leading/trailing whitespace per line
 
     Args:
         content: Content to sanitize
@@ -196,13 +232,20 @@ def sanitize_message_content(content: str) -> str:
         >>> sanitize_message_content("  Line 1  \\n  Line 2  ")
         'Line 1\\nLine 2'
     """
+    if not isinstance(content, str):
+        content = str(content)
+
     # Remove null bytes
     content = content.replace('\x00', '')
 
-    # Remove other control characters except \t and \n
+    # Remove dangerous Unicode characters (bidi overrides, zero-width)
+    for char in DANGEROUS_UNICODE_CHARS:
+        content = content.replace(char, '')
+
+    # Remove other control characters (keep tab \x09, newline \x0A, carriage return \x0D)
     content = ''.join(
         char for char in content
-        if ord(char) >= 32 or char in '\t\n'
+        if char in '\t\n\r' or (ord(char) >= 32 and ord(char) < 127) or ord(char) >= 128
     )
 
     # Normalize line endings
@@ -217,6 +260,38 @@ def sanitize_message_content(content: str) -> str:
     content = content.strip()
 
     return content
+
+
+def contains_dangerous_unicode(text: str) -> Tuple[bool, list[str]]:
+    """Check if text contains dangerous Unicode characters.
+
+    This function detects:
+    - Bidirectional override characters (Trojan Source attack vectors)
+    - Zero-width characters (hidden content)
+
+    Args:
+        text: Text to check for dangerous Unicode characters
+
+    Returns:
+        Tuple of (has_dangerous, list of found character names)
+
+    Examples:
+        >>> contains_dangerous_unicode("Hello World")
+        (False, [])
+        >>> contains_dangerous_unicode("Hello\\u202EWorld")
+        (True, ['RIGHT-TO-LEFT OVERRIDE'])
+    """
+    found = []
+    for char in DANGEROUS_UNICODE_CHARS:
+        if char in text:
+            # Get Unicode name for reporting
+            try:
+                name = unicodedata.name(char)
+            except ValueError:
+                name = f"U+{ord(char):04X}"
+            found.append(name)
+
+    return (len(found) > 0, found)
 
 
 def validate_file_path(
@@ -690,3 +765,110 @@ def validate_tmux_pane_id(pane_id: Any) -> str:
         )
 
     return pane_id
+
+
+# Valid hostname pattern (RFC 1123)
+HOSTNAME_PATTERN = re.compile(
+    r'^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.[A-Za-z0-9-]{1,63})*$'
+)
+
+
+def validate_host(
+    host: str,
+    allow_all_interfaces: bool = False,
+    warn_callback: Optional[Callable[[str], None]] = None
+) -> str:
+    """Validate a hostname or IP address.
+    
+    Args:
+        host: Hostname or IP address to validate
+        allow_all_interfaces: If False, warn about 0.0.0.0
+        warn_callback: Optional callback to issue warnings
+        
+    Returns:
+        Validated host string
+        
+    Raises:
+        ValidationError: If host is invalid
+        
+    Examples:
+        >>> validate_host("localhost")
+        'localhost'
+        >>> validate_host("127.0.0.1")
+        '127.0.0.1'
+        >>> validate_host("example.com")
+        'example.com'
+        >>> validate_host("")
+        ValidationError: Host must be a non-empty string
+        >>> validate_host("invalid@host")
+        ValidationError: Invalid hostname
+    """
+    if not host or not isinstance(host, str):
+        raise ValidationError("Host must be a non-empty string")
+    
+    host = host.strip()
+    
+    # Check for dangerous all-interfaces binding
+    if host in ('0.0.0.0', '::') and not allow_all_interfaces:
+        if warn_callback:
+            warn_callback(
+                f"Warning: Binding to '{host}' exposes the service to all network interfaces. "
+                "Consider using '127.0.0.1' or 'localhost' for local-only access."
+            )
+    
+    # Try parsing as IP address first
+    try:
+        ip = ipaddress.ip_address(host)
+        # Warn about public IPs
+        if warn_callback and ip.is_global:
+            warn_callback(
+                f"Warning: '{host}' is a public IP address. "
+                "Ensure proper firewall rules are in place."
+            )
+        return host
+    except ValueError:
+        pass
+    
+    # Validate as hostname
+    if not HOSTNAME_PATTERN.match(host):
+        raise ValidationError(
+            f"Invalid hostname: '{host}'. Must be a valid hostname or IP address."
+        )
+    
+    return host
+
+
+def validate_port(port: Any, allow_privileged: bool = False) -> int:
+    """Validate a port number.
+    
+    Args:
+        port: Port number to validate
+        allow_privileged: If False, warn about ports < 1024
+        
+    Returns:
+        Validated port as integer
+        
+    Raises:
+        ValidationError: If port is invalid
+        
+    Examples:
+        >>> validate_port(8080)
+        8080
+        >>> validate_port(80)
+        80
+        >>> validate_port(0)
+        ValidationError: Port must be between 1 and 65535
+        >>> validate_port(70000)
+        ValidationError: Port must be between 1 and 65535
+        >>> validate_port("invalid")
+        ValidationError: Port must be an integer
+    """
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        raise ValidationError(f"Port must be an integer, got: {type(port).__name__}")
+    
+    if port < 1 or port > 65535:
+        raise ValidationError(f"Port must be between 1 and 65535, got: {port}")
+    
+    return port

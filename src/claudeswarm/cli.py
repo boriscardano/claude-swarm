@@ -34,6 +34,8 @@ from claudeswarm.validators import (
     validate_timeout,
     validate_message_content,
     validate_tmux_pane_id,
+    validate_host,
+    validate_port,
 )
 
 __all__ = ["main"]
@@ -904,10 +906,25 @@ def cmd_start_dashboard(args: argparse.Namespace) -> None:
     auto_open = not args.no_browser and config.dashboard.auto_open_browser
     reload = args.reload
 
+    # Validate host and port
+    try:
+        # Validate port
+        validated_port = validate_port(port)
+
+        # Validate host with warning callback
+        def warn(msg: str) -> None:
+            print(msg, file=sys.stderr)
+
+        validated_host = validate_host(host, allow_all_interfaces=False, warn_callback=warn)
+
+    except ValidationError as e:
+        print(f"Validation error: {e}", file=sys.stderr)
+        sys.exit(1)
+
     try:
         start_dashboard_server(
-            port=port,
-            host=host,
+            port=validated_port,
+            host=validated_host,
             auto_open=auto_open,
             reload=reload
         )
