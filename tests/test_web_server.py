@@ -439,7 +439,7 @@ class TestSecurityHeaders:
         from claudeswarm.web.server import app
         # Check that CORS middleware is added
         # CORS headers only appear with proper Origin header
-        response = client.get("/api/agents", headers={"Origin": "http://localhost:3000"})
+        response = client.get("/api/v1/agents", headers={"Origin": "http://localhost:3000"})
         assert response.status_code == 200
         # CORS middleware is configured in server.py
         # TestClient may not fully simulate CORS, but we verify the endpoint works
@@ -454,34 +454,259 @@ class TestSecurityHeaders:
         )
         # FastAPI's TestClient doesn't always show CORS headers
         # This test mainly verifies the middleware is configured
-        response = client.get("/api/agents")
+        response = client.get("/api/v1/agents")
         assert response.status_code == 200  # Endpoint works
 
-
-class TestAuthentication:
-    """Test authentication handling (when implemented)."""
-
-    def test_no_auth_required_by_default(self, client):
-        """Test no authentication required by default."""
-        response = client.get("/api/agents")
+    def test_security_headers_present(self, client):
+        """Test that all security headers are present in responses."""
+        response = client.get("/health")
         assert response.status_code == 200
-        # No auth required - should succeed
 
-    def test_all_endpoints_accessible_without_auth(self, client):
-        """Test all endpoints accessible without authentication."""
+        headers = response.headers
+        assert headers.get("X-Content-Type-Options") == "nosniff"
+        assert headers.get("X-Frame-Options") == "DENY"
+        assert headers.get("X-XSS-Protection") == "1; mode=block"
+
+        csp = headers.get("Content-Security-Policy")
+        assert csp is not None
+        assert "default-src 'self'" in csp
+        assert "script-src 'self' 'unsafe-inline'" in csp
+        assert "style-src 'self' 'unsafe-inline'" in csp
+        assert "img-src 'self' data:" in csp
+
+    def test_security_headers_on_all_endpoints(self, client):
+        """Test security headers are applied to all endpoints."""
         endpoints = [
             "/",
             "/health",
-            "/api/agents",
-            "/api/locks",
-            "/api/messages",
-            "/api/stats"
+            "/api/v1/agents",
+            "/api/v1/locks",
+            "/api/v1/messages",
+            "/api/v1/stats"
+        ]
+
+        for endpoint in endpoints:
+            response = client.get(endpoint)
+            assert response.status_code == 200
+
+            # Verify all security headers are present
+            assert response.headers.get("X-Content-Type-Options") == "nosniff"
+            assert response.headers.get("X-Frame-Options") == "DENY"
+            assert response.headers.get("X-XSS-Protection") == "1; mode=block"
+            assert "Content-Security-Policy" in response.headers
+
+    def test_csp_header_format(self, client):
+        """Test Content-Security-Policy header has correct format."""
+        response = client.get("/health")
+        csp = response.headers.get("Content-Security-Policy")
+
+        # Verify CSP contains all required directives
+        assert "default-src 'self'" in csp
+        assert "script-src 'self' 'unsafe-inline'" in csp
+        assert "style-src 'self' 'unsafe-inline'" in csp
+        assert "img-src 'self' data:" in csp
+
+
+class TestAuthentication:
+    """Test HTTP Basic authentication handling."""
+
+    def test_no_auth_required_by_default(self, client, monkeypatch):
+        """Test no authentication required when env vars not set."""
+        # Ensure env vars are not set
+        monkeypatch.delenv("DASHBOARD_USERNAME", raising=False)
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+
+        response = client.get("/api/v1/agents")
+        assert response.status_code == 200
+        # No auth required - should succeed
+
+    def test_all_endpoints_accessible_without_auth(self, client, monkeypatch):
+        """Test all endpoints accessible without authentication when not configured."""
+        # Ensure env vars are not set
+        monkeypatch.delenv("DASHBOARD_USERNAME", raising=False)
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+
+        endpoints = [
+            "/",
+            "/health",
+            "/api/v1/agents",
+            "/api/v1/locks",
+            "/api/v1/messages",
+            "/api/v1/stats"
         ]
 
         for endpoint in endpoints:
             response = client.get(endpoint)
             # All should be accessible (200 for successful endpoints)
-            assert response.status_code in [200, 404]  # 404 is ok for non-existent endpoints
+            assert response.status_code == 200
+
+    def test_auth_required_when_credentials_configured(self, client, monkeypatch):
+        """Test authentication required when env vars are set."""
+        monkeypatch.setenv("DASHBOARD_USERNAME", "admin")
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
+
+        # Request without credentials should return 401
+        response = client.get("/api/v1/agents")
+        assert response.status_code == 401
+        assert "WWW-Authenticate" in response.headers
+        assert response.headers["WWW-Authenticate"] == "Basic"
+
+    def test_valid_credentials_grant_access(self, client, monkeypatch):
+        """Test valid credentials grant access to endpoints."""
+        monkeypatch.setenv("DASHBOARD_USERNAME", "admin")
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
+
+        # Request with valid credentials
+        response = client.get("/api/v1/agents", auth=("admin", "secret123"))
+        assert response.status_code == 200
+
+    def test_invalid_username_rejected(self, client, monkeypatch):
+        """Test invalid username is rejected."""
+        monkeypatch.setenv("DASHBOARD_USERNAME", "admin")
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
+
+        # Request with wrong username
+        response = client.get("/api/v1/agents", auth=("wrong", "secret123"))
+        assert response.status_code == 401
+        assert "WWW-Authenticate" in response.headers
+
+    def test_invalid_password_rejected(self, client, monkeypatch):
+        """Test invalid password is rejected."""
+        monkeypatch.setenv("DASHBOARD_USERNAME", "admin")
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
+
+        # Request with wrong password
+        response = client.get("/api/v1/agents", auth=("admin", "wrong"))
+        assert response.status_code == 401
+        assert "WWW-Authenticate" in response.headers
+
+    def test_all_endpoints_require_auth_when_configured(self, client, monkeypatch):
+        """Test all endpoints require authentication when configured."""
+        monkeypatch.setenv("DASHBOARD_USERNAME", "admin")
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
+
+        # Test non-streaming endpoints
+        endpoints = [
+            "/",
+            "/api/v1/agents",
+            "/api/v1/locks",
+            "/api/v1/messages",
+            "/api/v1/stats"
+        ]
+
+        for endpoint in endpoints:
+            # Without auth
+            response = client.get(endpoint)
+            assert response.status_code == 401, f"Endpoint {endpoint} should require auth"
+
+            # With valid auth
+            response = client.get(endpoint, auth=("admin", "secret123"))
+            assert response.status_code == 200, f"Endpoint {endpoint} should accept valid auth"
+
+    def test_stream_endpoint_requires_auth(self, client, monkeypatch):
+        """Test SSE stream endpoint requires authentication when configured."""
+        monkeypatch.setenv("DASHBOARD_USERNAME", "admin")
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
+
+        # Without auth - should return 401 immediately
+        response = client.get("/api/v1/stream")
+        assert response.status_code == 401
+
+        # Note: We don't test successful auth for stream endpoint as it would hang
+        # The authentication is verified by the dependency injection before streaming starts
+
+    def test_legacy_endpoints_require_auth(self, client, monkeypatch):
+        """Test legacy redirect endpoints also require authentication."""
+        monkeypatch.setenv("DASHBOARD_USERNAME", "admin")
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
+
+        legacy_endpoints = [
+            "/api/agents",
+            "/api/locks",
+            "/api/messages",
+            "/api/stats",
+            "/api/stream"
+        ]
+
+        for endpoint in legacy_endpoints:
+            # Without auth
+            response = client.get(endpoint, follow_redirects=False)
+            assert response.status_code == 401
+
+            # With valid auth
+            response = client.get(endpoint, auth=("admin", "secret123"), follow_redirects=False)
+            assert response.status_code == 307  # Redirect status
+
+    def test_auth_with_only_username_set(self, client, monkeypatch):
+        """Test that auth is not enabled if only username is set."""
+        monkeypatch.setenv("DASHBOARD_USERNAME", "admin")
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+
+        # Should allow access without auth
+        response = client.get("/api/v1/agents")
+        assert response.status_code == 200
+
+    def test_auth_with_only_password_set(self, client, monkeypatch):
+        """Test that auth is not enabled if only password is set."""
+        monkeypatch.delenv("DASHBOARD_USERNAME", raising=False)
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
+
+        # Should allow access without auth
+        response = client.get("/api/v1/agents")
+        assert response.status_code == 200
+
+    def test_timing_attack_prevention(self, client, monkeypatch):
+        """Test that authentication uses constant-time comparison."""
+        import time
+
+        monkeypatch.setenv("DASHBOARD_USERNAME", "admin")
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
+
+        # Test with completely wrong credentials
+        start = time.perf_counter()
+        response1 = client.get("/api/v1/agents", auth=("x", "y"))
+        time1 = time.perf_counter() - start
+
+        # Test with partially correct credentials
+        start = time.perf_counter()
+        response2 = client.get("/api/v1/agents", auth=("admin", "wrong"))
+        time2 = time.perf_counter() - start
+
+        # Both should return 401
+        assert response1.status_code == 401
+        assert response2.status_code == 401
+
+        # Timing should be similar (within an order of magnitude)
+        # This is a basic check - true timing attack testing needs more sophisticated methods
+        assert abs(time1 - time2) < 1.0  # Should complete in similar time
+
+    def test_www_authenticate_header_format(self, client, monkeypatch):
+        """Test WWW-Authenticate header has correct format."""
+        monkeypatch.setenv("DASHBOARD_USERNAME", "admin")
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
+
+        response = client.get("/api/v1/agents")
+        assert response.status_code == 401
+        assert response.headers.get("WWW-Authenticate") == "Basic"
+
+    def test_auth_error_detail_message(self, client, monkeypatch):
+        """Test authentication error returns appropriate detail message."""
+        monkeypatch.setenv("DASHBOARD_USERNAME", "admin")
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
+
+        # No credentials
+        response = client.get("/api/v1/agents")
+        assert response.status_code == 401
+        data = response.json()
+        assert "detail" in data
+        assert "Authentication required" in data["detail"]
+
+        # Invalid credentials
+        response = client.get("/api/v1/agents", auth=("wrong", "wrong"))
+        assert response.status_code == 401
+        data = response.json()
+        assert "detail" in data
+        assert "Invalid credentials" in data["detail"]
 
 
 class TestErrorHandling:

@@ -8,15 +8,17 @@ for live updates.
 import asyncio
 import json
 import os
+import secrets
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, APIRouter, Request, Response
+from fastapi import FastAPI, HTTPException, APIRouter, Request, Response, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import project utilities
@@ -51,9 +53,63 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:;"
+        )
+        response.headers["X-XSS-Protection"] = "1; mode=block"
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
+
+# HTTP Basic Authentication setup
+security = HTTPBasic(auto_error=False)
+
+
+def get_current_user(credentials: HTTPBasicCredentials | None = Depends(security)) -> str | None:
+    """Verify HTTP Basic authentication credentials.
+
+    Reads credentials from DASHBOARD_USERNAME and DASHBOARD_PASSWORD environment variables.
+    If both are set, authentication is required. Otherwise, access is allowed without auth.
+
+    Args:
+        credentials: HTTP Basic credentials from request
+
+    Returns:
+        Username if authenticated, None if auth not configured
+
+    Raises:
+        HTTPException: 401 if authentication required but credentials invalid/missing
+    """
+    username = os.environ.get("DASHBOARD_USERNAME")
+    password = os.environ.get("DASHBOARD_PASSWORD")
+
+    # If no auth configured, allow access
+    if not username or not password:
+        return None
+
+    # If auth configured but no credentials provided
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    # Constant-time comparison to prevent timing attacks
+    is_valid_user = secrets.compare_digest(credentials.username.encode(), username.encode())
+    is_valid_pass = secrets.compare_digest(credentials.password.encode(), password.encode())
+
+    if not (is_valid_user and is_valid_pass):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    return credentials.username
 
 # CORS configuration - restrictive by default for security
 # To allow external origins, set ALLOWED_ORIGINS environment variable (comma-separated)
@@ -230,8 +286,11 @@ class StateTracker:
 
 # Root and health endpoints (not versioned)
 @app.get("/", response_class=HTMLResponse)
-async def dashboard() -> HTMLResponse:
+async def dashboard(user: str | None = Depends(get_current_user)) -> HTMLResponse:
     """Serve the dashboard HTML page.
+
+    Args:
+        user: Authenticated user (if auth configured)
 
     Returns:
         HTML response with dashboard page or placeholder
@@ -313,8 +372,11 @@ async def dashboard() -> HTMLResponse:
 
 
 @api_v1.get("/agents")
-async def get_agents() -> dict[str, Any]:
+async def get_agents(user: str | None = Depends(get_current_user)) -> dict[str, Any]:
     """Get list of active agents.
+
+    Args:
+        user: Authenticated user (if auth configured)
 
     Returns:
         Dictionary containing session info and list of active agents
@@ -335,8 +397,11 @@ async def get_agents() -> dict[str, Any]:
 
 
 @api_v1.get("/locks")
-async def get_locks() -> dict[str, Any]:
+async def get_locks(user: str | None = Depends(get_current_user)) -> dict[str, Any]:
     """Get list of active file locks.
+
+    Args:
+        user: Authenticated user (if auth configured)
 
     Returns:
         Dictionary containing list of active locks
@@ -349,11 +414,12 @@ async def get_locks() -> dict[str, Any]:
 
 
 @api_v1.get("/messages")
-async def get_messages(limit: int = 50) -> dict[str, Any]:
+async def get_messages(limit: int = 50, user: str | None = Depends(get_current_user)) -> dict[str, Any]:
     """Get recent messages from log file.
 
     Args:
         limit: Maximum number of messages to return (default: 50)
+        user: Authenticated user (if auth configured)
 
     Returns:
         Dictionary containing list of messages and count
@@ -372,8 +438,11 @@ async def get_messages(limit: int = 50) -> dict[str, Any]:
 
 
 @api_v1.get("/stats")
-async def get_stats() -> dict[str, Any]:
+async def get_stats(user: str | None = Depends(get_current_user)) -> dict[str, Any]:
     """Get aggregated system statistics.
+
+    Args:
+        user: Authenticated user (if auth configured)
 
     Returns:
         Dictionary containing various system metrics
@@ -413,8 +482,11 @@ async def get_stats() -> dict[str, Any]:
 
 
 @api_v1.get("/stream")
-async def event_stream() -> StreamingResponse:
+async def event_stream(user: str | None = Depends(get_current_user)) -> StreamingResponse:
     """Server-Sent Events endpoint for real-time updates.
+
+    Args:
+        user: Authenticated user (if auth configured)
 
     Returns:
         StreamingResponse with SSE stream
@@ -487,7 +559,7 @@ app.include_router(api_v1)
 
 # Legacy API redirects for backwards compatibility
 @app.get("/api/agents")
-async def legacy_agents_redirect(request: Request) -> RedirectResponse:
+async def legacy_agents_redirect(request: Request, user: str | None = Depends(get_current_user)) -> RedirectResponse:
     """Redirect legacy /api/agents to /api/v1/agents."""
     url = "/api/v1/agents"
     if request.query_params:
@@ -496,7 +568,7 @@ async def legacy_agents_redirect(request: Request) -> RedirectResponse:
 
 
 @app.get("/api/locks")
-async def legacy_locks_redirect(request: Request) -> RedirectResponse:
+async def legacy_locks_redirect(request: Request, user: str | None = Depends(get_current_user)) -> RedirectResponse:
     """Redirect legacy /api/locks to /api/v1/locks."""
     url = "/api/v1/locks"
     if request.query_params:
@@ -505,7 +577,7 @@ async def legacy_locks_redirect(request: Request) -> RedirectResponse:
 
 
 @app.get("/api/messages")
-async def legacy_messages_redirect(request: Request) -> RedirectResponse:
+async def legacy_messages_redirect(request: Request, user: str | None = Depends(get_current_user)) -> RedirectResponse:
     """Redirect legacy /api/messages to /api/v1/messages."""
     url = "/api/v1/messages"
     if request.query_params:
@@ -514,7 +586,7 @@ async def legacy_messages_redirect(request: Request) -> RedirectResponse:
 
 
 @app.get("/api/stats")
-async def legacy_stats_redirect(request: Request) -> RedirectResponse:
+async def legacy_stats_redirect(request: Request, user: str | None = Depends(get_current_user)) -> RedirectResponse:
     """Redirect legacy /api/stats to /api/v1/stats."""
     url = "/api/v1/stats"
     if request.query_params:
@@ -523,7 +595,7 @@ async def legacy_stats_redirect(request: Request) -> RedirectResponse:
 
 
 @app.get("/api/stream")
-async def legacy_stream_redirect(request: Request) -> RedirectResponse:
+async def legacy_stream_redirect(request: Request, user: str | None = Depends(get_current_user)) -> RedirectResponse:
     """Redirect legacy /api/stream to /api/v1/stream."""
     url = "/api/v1/stream"
     if request.query_params:
