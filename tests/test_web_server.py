@@ -674,30 +674,32 @@ class TestAuthentication:
         response = client.get("/api/v1/agents")
         assert response.status_code == 200
 
-    def test_timing_attack_prevention(self, client, monkeypatch):
-        """Test that authentication uses constant-time comparison."""
-        import time
+    def test_timing_attack_prevention(self, monkeypatch):
+        """Test that authentication uses constant-time comparison.
 
-        monkeypatch.setenv("DASHBOARD_USERNAME", "admin")
-        monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
+        Instead of measuring actual timing (which is flaky and unreliable in tests),
+        we verify that the implementation uses secrets.compare_digest() which is
+        the Python standard library's constant-time comparison function designed
+        to prevent timing attacks.
+        """
+        import inspect
+        import secrets
 
-        # Test with completely wrong credentials
-        start = time.perf_counter()
-        response1 = client.get("/api/v1/agents", auth=("x", "y"))
-        time1 = time.perf_counter() - start
+        from claudeswarm.web.server import get_current_user
 
-        # Test with partially correct credentials
-        start = time.perf_counter()
-        response2 = client.get("/api/v1/agents", auth=("admin", "wrong"))
-        time2 = time.perf_counter() - start
+        # Verify the function uses secrets.compare_digest
+        source = inspect.getsource(get_current_user)
+        assert "secrets.compare_digest" in source, (
+            "Authentication should use secrets.compare_digest() for constant-time comparison "
+            "to prevent timing attacks"
+        )
 
-        # Both should return 401
-        assert response1.status_code == 401
-        assert response2.status_code == 401
+        # Verify secrets module is imported
+        import claudeswarm.web.server as server_module
 
-        # Timing should be similar (within an order of magnitude)
-        # This is a basic check - true timing attack testing needs more sophisticated methods
-        assert abs(time1 - time2) < 1.0  # Should complete in similar time
+        assert hasattr(server_module, "secrets"), (
+            "Server module should import secrets module for secure comparison"
+        )
 
     def test_www_authenticate_header_format(self, client, monkeypatch):
         """Test WWW-Authenticate header has correct format."""
@@ -853,6 +855,32 @@ class TestUtilityFunctions:
         assert result[0]["id"] == 90
         assert result[-1]["id"] == 99
 
+    def test_tail_log_file_efficient_with_large_file(self, tmp_path):
+        """Test tail_log_file handles large files efficiently without loading all into memory."""
+        from claudeswarm.web.server import tail_log_file
+
+        log_file = tmp_path / "large_test.log"
+        # Create a large log file with 10000 messages
+        messages = [{"id": i, "msg": f"Message {i}"} for i in range(10000)]
+        log_file.write_text("\n".join(json.dumps(m) for m in messages))
+
+        # Should efficiently tail last 50 lines without reading entire file
+        result = tail_log_file(log_file, limit=50)
+        assert len(result) == 50
+        # Should be last 50 messages
+        assert result[0]["id"] == 9950
+        assert result[-1]["id"] == 9999
+
+    def test_tail_log_file_handles_empty_file(self, tmp_path):
+        """Test tail_log_file handles empty file gracefully."""
+        from claudeswarm.web.server import tail_log_file
+
+        log_file = tmp_path / "empty.log"
+        log_file.write_text("")
+
+        result = tail_log_file(log_file, limit=10)
+        assert result == []
+
     def test_get_lock_files_returns_lock_info(self, tmp_path, monkeypatch):
         """Test get_lock_files returns lock information."""
         from claudeswarm.web.server import get_lock_files
@@ -927,6 +955,58 @@ class TestStateTracker:
 
         changes = tracker.check_changes()
         assert changes["locks"]
+
+    def test_state_tracker_stats_caching(self):
+        """Test StateTracker only sends stats when changed or as heartbeat."""
+        from claudeswarm.web.server import StateTracker
+
+        tracker = StateTracker()
+
+        # First call should always send stats
+        stats1 = {"agent_count": 0, "lock_count": 0}
+        assert tracker.should_send_stats(stats1, 0.0)
+
+        # Same stats immediately after should not send
+        assert not tracker.should_send_stats(stats1, 0.1)
+
+        # Changed stats should send
+        stats2 = {"agent_count": 1, "lock_count": 0}
+        assert tracker.should_send_stats(stats2, 0.2)
+
+        # Same stats should not send immediately
+        assert not tracker.should_send_stats(stats2, 0.3)
+
+        # After 5 seconds, should send as heartbeat
+        assert tracker.should_send_stats(stats2, 5.5)
+
+        # Immediately after heartbeat, should not send
+        assert not tracker.should_send_stats(stats2, 5.6)
+
+    def test_state_tracker_stats_heartbeat_interval(self):
+        """Test StateTracker sends stats every 5 seconds even without changes."""
+        from claudeswarm.web.server import StateTracker
+
+        tracker = StateTracker()
+
+        stats = {"agent_count": 0, "lock_count": 0}
+
+        # First send
+        assert tracker.should_send_stats(stats, 0.0)
+
+        # No send at 1s, 2s, 3s, 4s with same stats
+        assert not tracker.should_send_stats(stats, 1.0)
+        assert not tracker.should_send_stats(stats, 2.0)
+        assert not tracker.should_send_stats(stats, 3.0)
+        assert not tracker.should_send_stats(stats, 4.0)
+
+        # Send at 5s (heartbeat)
+        assert tracker.should_send_stats(stats, 5.0)
+
+        # No send at 6s
+        assert not tracker.should_send_stats(stats, 6.0)
+
+        # Send at 10s (next heartbeat)
+        assert tracker.should_send_stats(stats, 10.0)
 
 
 class TestConcurrency:

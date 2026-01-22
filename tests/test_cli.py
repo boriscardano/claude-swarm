@@ -830,7 +830,9 @@ class TestMain:
 
     def test_main_acquire_lock(self):
         """Test main with acquire-file-lock command."""
-        with patch("sys.argv", ["claudeswarm", "acquire-file-lock", "test.txt", "agent-1"]):
+        with patch(
+            "sys.argv", ["claudeswarm", "acquire-file-lock", "test.txt", "--agent-id", "agent-1"]
+        ):
             with patch("claudeswarm.cli.LockManager") as mock_manager_class:
                 mock_manager = Mock()
                 mock_manager.acquire_lock.return_value = (True, None)
@@ -843,7 +845,9 @@ class TestMain:
 
     def test_main_release_lock(self):
         """Test main with release-file-lock command."""
-        with patch("sys.argv", ["claudeswarm", "release-file-lock", "test.txt", "agent-1"]):
+        with patch(
+            "sys.argv", ["claudeswarm", "release-file-lock", "test.txt", "--agent-id", "agent-1"]
+        ):
             with patch("claudeswarm.cli.LockManager") as mock_manager_class:
                 mock_manager = Mock()
                 mock_manager.release_lock.return_value = True
