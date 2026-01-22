@@ -548,6 +548,159 @@ class TestAckSystem:
         assert len(errors) == 0
         assert ack_system.get_pending_count() == 10
 
+    def test_rate_limiting(self, ack_system: AckSystem) -> None:
+        """Test rate limiting prevents excessive ACK requests."""
+        now = datetime.now()
+
+        # Add pending ACKs for testing
+        for i in range(5):
+            msg = Message(
+                sender_id="agent-sender",
+                timestamp=now,
+                msg_type=MessageType.QUESTION,
+                content=f"Test {i}",
+                recipients=["agent-receiver"],
+                msg_id=f"msg-{i}",
+            )
+
+            ack = PendingAck(
+                msg_id=f"msg-{i}",
+                sender_id="agent-sender",
+                recipient_id="agent-receiver",
+                message=msg.to_dict(),
+                sent_at=now.isoformat(),
+                retry_count=0,
+                next_retry_at=(now + timedelta(seconds=30)).isoformat(),
+            )
+
+            acks, _ = ack_system._load_pending_acks()
+            ack_system._save_pending_acks(acks + [ack])
+
+        # Test: Should accept ACKs within rate limit
+        for i in range(5):
+            result = ack_system.receive_ack(f"msg-{i}", "agent-receiver")
+            assert result is True
+
+        # Add more pending ACKs
+        for i in range(5, 105):
+            msg = Message(
+                sender_id="agent-sender",
+                timestamp=now,
+                msg_type=MessageType.QUESTION,
+                content=f"Test {i}",
+                recipients=["agent-receiver"],
+                msg_id=f"msg-{i}",
+            )
+
+            ack = PendingAck(
+                msg_id=f"msg-{i}",
+                sender_id="agent-sender",
+                recipient_id="agent-receiver",
+                message=msg.to_dict(),
+                sent_at=now.isoformat(),
+                retry_count=0,
+                next_retry_at=(now + timedelta(seconds=30)).isoformat(),
+            )
+
+            acks, _ = ack_system._load_pending_acks()
+            ack_system._save_pending_acks(acks + [ack])
+
+        # Test: Should accept up to MAX_ACKS_PER_AGENT_PER_MINUTE
+        accepted_count = 0
+        for i in range(5, 105):
+            result = ack_system.receive_ack(f"msg-{i}", "agent-receiver")
+            if result:
+                accepted_count += 1
+
+        # Should accept up to limit (100 total, already accepted 5)
+        assert accepted_count == 95  # 100 - 5 = 95 more allowed
+
+    def test_rate_limiting_different_agents(self, ack_system: AckSystem) -> None:
+        """Test rate limiting is per-agent, not global."""
+        now = datetime.now()
+
+        # Add pending ACKs for multiple agents
+        for agent_num in range(3):
+            for i in range(10):
+                msg = Message(
+                    sender_id="agent-sender",
+                    timestamp=now,
+                    msg_type=MessageType.QUESTION,
+                    content=f"Test {i}",
+                    recipients=[f"agent-{agent_num}"],
+                    msg_id=f"msg-{agent_num}-{i}",
+                )
+
+                ack = PendingAck(
+                    msg_id=f"msg-{agent_num}-{i}",
+                    sender_id="agent-sender",
+                    recipient_id=f"agent-{agent_num}",
+                    message=msg.to_dict(),
+                    sent_at=now.isoformat(),
+                    retry_count=0,
+                    next_retry_at=(now + timedelta(seconds=30)).isoformat(),
+                )
+
+                acks, _ = ack_system._load_pending_acks()
+                ack_system._save_pending_acks(acks + [ack])
+
+        # Each agent should be able to ACK their messages independently
+        for agent_num in range(3):
+            for i in range(10):
+                result = ack_system.receive_ack(f"msg-{agent_num}-{i}", f"agent-{agent_num}")
+                assert result is True
+
+    def test_cryptographic_temp_id(self, ack_system: AckSystem) -> None:
+        """Test that temporary message IDs use cryptographically secure random values."""
+        from unittest.mock import patch, MagicMock
+
+        with patch("claudeswarm.ack.send_message") as mock_send:
+            now = datetime.now()
+            mock_msg = Message(
+                sender_id="agent-1",
+                timestamp=now,
+                msg_type=MessageType.QUESTION,
+                content="[REQUIRES-ACK] Test",
+                recipients=["agent-2"],
+                msg_id="real-msg-id",
+            )
+            mock_send.return_value = mock_msg
+
+            # Send multiple messages and verify temp IDs are unpredictable
+            temp_ids = []
+
+            # Track temporary IDs by checking what's added to pending before send completes
+            original_save = ack_system._save_pending_acks
+
+            def capture_temp_id(acks, expected_version=None):
+                if acks:
+                    msg_id = acks[-1].msg_id
+                    # Only capture IDs that start with "temp-"
+                    if msg_id.startswith("temp-"):
+                        temp_ids.append(msg_id)
+                return original_save(acks, expected_version)
+
+            with patch.object(ack_system, "_save_pending_acks", side_effect=capture_temp_id):
+                for i in range(5):
+                    ack_system.send_with_ack(
+                        "agent-1", "agent-2", MessageType.QUESTION, f"Test {i}"
+                    )
+
+            # Should have captured 5 temp IDs
+            assert len(temp_ids) == 5
+
+            # Verify temp IDs start with "temp-" prefix
+            for temp_id in temp_ids:
+                assert temp_id.startswith("temp-")
+                # Verify the rest is hex (32 chars from token_hex(16))
+                hex_part = temp_id.split("temp-")[1]
+                assert len(hex_part) == 32
+                # Verify it's valid hex
+                int(hex_part, 16)
+
+            # Verify temp IDs are unique (high entropy)
+            assert len(set(temp_ids)) == len(temp_ids)
+
 
 class TestModuleFunctions:
     """Test module-level convenience functions."""

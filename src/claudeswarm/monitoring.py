@@ -158,13 +158,13 @@ class LogTailer:
 
     def cleanup(self) -> None:
         """Clean up any open file handles and reset state."""
-        if self._file_handle is not None:
-            try:
+        try:
+            if self._file_handle is not None:
                 self._file_handle.close()
-            except Exception:
-                pass
-            finally:
-                self._file_handle = None
+        except Exception:
+            pass
+        finally:
+            self._file_handle = None
         self.position = 0
         self.last_inode = None
 
@@ -527,6 +527,10 @@ def create_tmux_monitoring_pane(
     Returns:
         Pane ID if successful, None otherwise
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     try:
         # Split current pane vertically
         result = subprocess.run(
@@ -537,6 +541,11 @@ def create_tmux_monitoring_pane(
         )
 
         if result.returncode != 0:
+            logger.warning(
+                "Failed to create tmux pane: command returned %d, stderr: %s",
+                result.returncode,
+                result.stderr.strip() if result.stderr else "none",
+            )
             return None
 
         pane_id = result.stdout.strip()
@@ -546,7 +555,18 @@ def create_tmux_monitoring_pane(
 
         return pane_id
 
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.TimeoutExpired as e:
+        logger.warning("Failed to create tmux pane: timeout after %s seconds", e.timeout)
+        return None
+    except subprocess.CalledProcessError as e:
+        logger.warning(
+            "Failed to create tmux pane: CalledProcessError (returncode=%d, stderr=%s)",
+            e.returncode,
+            e.stderr.strip() if e.stderr else "none",
+        )
+        return None
+    except FileNotFoundError:
+        logger.warning("Failed to create tmux pane: tmux command not found")
         return None
 
 

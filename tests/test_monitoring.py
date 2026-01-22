@@ -596,3 +596,58 @@ class TestMonitoringIntegration:
         filtered = [msg for msg in monitor.recent_messages if monitor.message_filter.matches(msg)]
         assert len(filtered) == 1
         assert filtered[0].msg_type == MessageType.BLOCKED
+
+
+class TestTmuxPaneCreation:
+    """Tests for tmux pane creation error logging."""
+
+    def test_create_tmux_pane_logs_error_on_failure(self, caplog):
+        """Test that create_tmux_monitoring_pane logs errors when pane creation fails."""
+        from unittest.mock import patch
+        from claudeswarm.monitoring import create_tmux_monitoring_pane
+        import subprocess
+
+        with patch("subprocess.run") as mock_run:
+            # Simulate command returning non-zero
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stderr = "tmux: no current client\n"
+
+            result = create_tmux_monitoring_pane()
+
+            assert result is None
+            # Check that warning was logged
+            assert any("Failed to create tmux pane" in record.message for record in caplog.records)
+            assert any("command returned" in record.message for record in caplog.records)
+
+    def test_create_tmux_pane_logs_timeout(self, caplog):
+        """Test that create_tmux_monitoring_pane logs timeout errors."""
+        from unittest.mock import patch
+        from claudeswarm.monitoring import create_tmux_monitoring_pane
+        import subprocess
+
+        with patch("subprocess.run") as mock_run:
+            # Simulate timeout
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd="tmux", timeout=5)
+
+            result = create_tmux_monitoring_pane()
+
+            assert result is None
+            # Check that warning was logged
+            assert any("Failed to create tmux pane" in record.message for record in caplog.records)
+            assert any("timeout" in record.message for record in caplog.records)
+
+    def test_create_tmux_pane_logs_not_found(self, caplog):
+        """Test that create_tmux_monitoring_pane logs when tmux is not found."""
+        from unittest.mock import patch
+        from claudeswarm.monitoring import create_tmux_monitoring_pane
+
+        with patch("subprocess.run") as mock_run:
+            # Simulate tmux command not found
+            mock_run.side_effect = FileNotFoundError()
+
+            result = create_tmux_monitoring_pane()
+
+            assert result is None
+            # Check that warning was logged
+            assert any("Failed to create tmux pane" in record.message for record in caplog.records)
+            assert any("not found" in record.message for record in caplog.records)

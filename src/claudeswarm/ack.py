@@ -17,7 +17,9 @@ Phase: Phase 2
 from __future__ import annotations
 
 import json
+import secrets
 import threading
+from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -94,11 +96,16 @@ class AckSystem:
     - Retry logic with exponential backoff (30s, 60s, 120s)
     - Escalation after max retries
     - ACK reception and matching
+    - Rate limiting for ACK requests to prevent DoS
     """
 
     # Retry configuration
     MAX_RETRIES = 3
     RETRY_DELAYS = [30, 60, 120]  # Exponential backoff in seconds
+
+    # Rate limiting configuration
+    MAX_ACKS_PER_AGENT_PER_MINUTE = 100
+    RATE_LIMIT_WINDOW_SECONDS = 60
 
     def __init__(self, pending_file: Path | None = None):
         """Initialize ACK system.
@@ -109,6 +116,9 @@ class AckSystem:
         self.pending_file = pending_file or Path("./PENDING_ACKS.json")
         self._lock = threading.Lock()
         self._ensure_pending_file()
+
+        # Rate limiting tracking: agent_id -> list of timestamps
+        self._ack_timestamps: dict[str, list[datetime]] = defaultdict(list)
 
     def _ensure_pending_file(self) -> None:
         """Ensure PENDING_ACKS.json exists with version tracking."""
@@ -210,7 +220,8 @@ class AckSystem:
 
         # Create pending ACK entry BEFORE sending (to avoid race condition)
         # We'll use a temporary msg_id that we'll update after send
-        temp_msg_id = f"temp-{sender_id}-{datetime.now().timestamp()}"
+        # Use cryptographically secure random ID to prevent prediction attacks
+        temp_msg_id = f"temp-{secrets.token_hex(16)}"  # nosec B311
         pending_ack = PendingAck(
             msg_id=temp_msg_id,
             sender_id=sender_id,
@@ -266,19 +277,55 @@ class AckSystem:
                 self._save_pending_acks(acks, expected_version=version)
             raise
 
+    def _check_rate_limit(self, agent_id: str) -> bool:
+        """Check if agent has exceeded ACK rate limit.
+
+        Args:
+            agent_id: ID of agent to check
+
+        Returns:
+            True if within rate limit, False if exceeded
+        """
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=self.RATE_LIMIT_WINDOW_SECONDS)
+
+        # Clean up old timestamps outside the window
+        self._ack_timestamps[agent_id] = [
+            ts for ts in self._ack_timestamps[agent_id] if ts > cutoff
+        ]
+
+        # Check if rate limit exceeded
+        if len(self._ack_timestamps[agent_id]) >= self.MAX_ACKS_PER_AGENT_PER_MINUTE:
+            logger.warning(
+                f"Rate limit exceeded for agent {agent_id}: "
+                f"{len(self._ack_timestamps[agent_id])} ACKs in "
+                f"{self.RATE_LIMIT_WINDOW_SECONDS}s window"
+            )
+            return False
+
+        # Record this attempt
+        self._ack_timestamps[agent_id].append(now)
+        return True
+
     def receive_ack(self, msg_id: str, agent_id: str) -> bool:
         """Process received acknowledgment for a message.
 
         Matches the ACK to a pending entry and removes it from tracking.
+        Includes rate limiting to prevent DoS attacks.
 
         Args:
             msg_id: ID of message being acknowledged
             agent_id: ID of agent acknowledging
 
         Returns:
-            True if ACK was matched and removed, False if not found
+            True if ACK was matched and removed, False if not found or rate limited
         """
         with self._lock:
+            # Check rate limit first to prevent DoS
+            if not self._check_rate_limit(agent_id):
+                logger.warning(f"ACK rejected due to rate limiting: agent {agent_id}")
+                return False
+
             acks, version = self._load_pending_acks()
 
             # Find matching pending ACK
