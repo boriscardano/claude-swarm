@@ -9,14 +9,15 @@ import asyncio
 import json
 import os
 from collections.abc import AsyncGenerator
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, APIRouter
+from fastapi import FastAPI, HTTPException, APIRouter, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import project utilities
 from ..project import (
@@ -41,13 +42,29 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS configuration for development
+# Security headers middleware
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Middleware to add security headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        """Add security headers to response."""
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS configuration - restrictive by default for security
+# To allow external origins, set ALLOWED_ORIGINS environment variable (comma-separated)
+default_origins = "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000"
+allowed_origins = os.getenv("ALLOWED_ORIGINS", default_origins).split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=allowed_origins,
+    allow_credentials=False,  # Set to True only if using cookies/auth
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept"],
 )
 
 # Mount static files if directory exists
@@ -226,7 +243,10 @@ async def dashboard() -> HTMLResponse:
                 content = f.read()
             return HTMLResponse(content=content)
         except (IOError, OSError) as e:
-            raise HTTPException(status_code=500, detail=f"Failed to load dashboard: {e}")
+            # Log the detailed error server-side, return generic message to client
+            import logging
+            logging.error(f"Failed to load dashboard: {e}")
+            raise HTTPException(status_code=500, detail="Failed to load dashboard")
 
     # Placeholder if frontend hasn't been created yet
     placeholder_html = """
@@ -409,7 +429,7 @@ async def event_stream() -> StreamingResponse:
         tracker = StateTracker()
 
         # Send initial connection event
-        yield f"event: connected\ndata: {json.dumps({'status': 'connected', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+        yield f"event: connected\ndata: {json.dumps({'status': 'connected', 'timestamp': datetime.now(timezone.utc).isoformat()})}\n\n"
 
         while True:
             try:
@@ -436,7 +456,7 @@ async def event_stream() -> StreamingResponse:
                 yield f"event: stats\ndata: {json.dumps(stats_data)}\n\n"
 
                 # Send heartbeat
-                yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.utcnow().isoformat()})}\n\n"
+                yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.now(timezone.utc).isoformat()})}\n\n"
 
                 # Wait before next check
                 await asyncio.sleep(1.0)
@@ -446,7 +466,7 @@ async def event_stream() -> StreamingResponse:
                 break
             except Exception as e:
                 # Log error but continue
-                error_data = {"error": str(e), "timestamp": datetime.utcnow().isoformat()}
+                error_data = {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
                 yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
                 await asyncio.sleep(1.0)
 
@@ -467,33 +487,48 @@ app.include_router(api_v1)
 
 # Legacy API redirects for backwards compatibility
 @app.get("/api/agents")
-async def legacy_agents_redirect() -> RedirectResponse:
+async def legacy_agents_redirect(request: Request) -> RedirectResponse:
     """Redirect legacy /api/agents to /api/v1/agents."""
-    return RedirectResponse(url="/api/v1/agents", status_code=307)
+    url = "/api/v1/agents"
+    if request.query_params:
+        url += f"?{request.query_params}"
+    return RedirectResponse(url=url, status_code=307)
 
 
 @app.get("/api/locks")
-async def legacy_locks_redirect() -> RedirectResponse:
+async def legacy_locks_redirect(request: Request) -> RedirectResponse:
     """Redirect legacy /api/locks to /api/v1/locks."""
-    return RedirectResponse(url="/api/v1/locks", status_code=307)
+    url = "/api/v1/locks"
+    if request.query_params:
+        url += f"?{request.query_params}"
+    return RedirectResponse(url=url, status_code=307)
 
 
 @app.get("/api/messages")
-async def legacy_messages_redirect() -> RedirectResponse:
+async def legacy_messages_redirect(request: Request) -> RedirectResponse:
     """Redirect legacy /api/messages to /api/v1/messages."""
-    return RedirectResponse(url="/api/v1/messages", status_code=307)
+    url = "/api/v1/messages"
+    if request.query_params:
+        url += f"?{request.query_params}"
+    return RedirectResponse(url=url, status_code=307)
 
 
 @app.get("/api/stats")
-async def legacy_stats_redirect() -> RedirectResponse:
+async def legacy_stats_redirect(request: Request) -> RedirectResponse:
     """Redirect legacy /api/stats to /api/v1/stats."""
-    return RedirectResponse(url="/api/v1/stats", status_code=307)
+    url = "/api/v1/stats"
+    if request.query_params:
+        url += f"?{request.query_params}"
+    return RedirectResponse(url=url, status_code=307)
 
 
 @app.get("/api/stream")
-async def legacy_stream_redirect() -> RedirectResponse:
+async def legacy_stream_redirect(request: Request) -> RedirectResponse:
     """Redirect legacy /api/stream to /api/v1/stream."""
-    return RedirectResponse(url="/api/v1/stream", status_code=307)
+    url = "/api/v1/stream"
+    if request.query_params:
+        url += f"?{request.query_params}"
+    return RedirectResponse(url=url, status_code=307)
 
 
 @app.get("/health")
@@ -505,7 +540,7 @@ async def health_check() -> dict[str, Any]:
     """
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "files": {
             "agents": ACTIVE_AGENTS_FILE.exists(),
             "messages": AGENT_MESSAGES_LOG.exists(),
@@ -518,9 +553,12 @@ async def health_check() -> dict[str, Any]:
 if __name__ == "__main__":
     import uvicorn
 
+    # Bind to localhost by default for security
+    # To expose to network, set HOST environment variable to "0.0.0.0"
+    host = os.getenv("HOST", "127.0.0.1")
     uvicorn.run(
         "claudeswarm.web.server:app",
-        host="0.0.0.0",
+        host=host,
         port=8000,
         reload=True,
         log_level="info",
