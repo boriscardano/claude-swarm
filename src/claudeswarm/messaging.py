@@ -368,6 +368,9 @@ class RateLimiter:
         # Thread safety lock for protecting shared state
         self._lock = threading.Lock()
 
+        # Counter for periodic cleanup (prevent memory leaks)
+        self._cleanup_counter = 0
+
     def check_rate_limit(self, agent_id: str) -> bool:
         """Check if agent is within rate limit.
 
@@ -378,6 +381,13 @@ class RateLimiter:
             True if within limit, False if rate limit exceeded
         """
         with self._lock:
+            # Periodic cleanup to prevent memory leaks (every 100 checks)
+            self._cleanup_counter += 1
+            if self._cleanup_counter >= 100:
+                self._cleanup_counter = 0
+                # Use 5-minute inactivity threshold for cleanup
+                self._cleanup_inactive_agents_internal(cutoff_seconds=300)
+
             now = datetime.now()
             cutoff = now - timedelta(seconds=self.window_seconds)
 
@@ -392,10 +402,49 @@ class RateLimiter:
 
             return True
 
-    def record_message(self, agent_id: str):
-        """Record that a message was sent by an agent."""
+    def check_rate_limit_bulk(self, agent_id: str, count: int) -> bool:
+        """Check if agent can send multiple messages within rate limit.
+
+        This method is used for broadcasts to ensure that sending a message
+        to N recipients counts as N messages toward the rate limit, preventing
+        broadcast DoS attacks where an agent could send 10 broadcasts to 100
+        recipients each (1000 effective messages) while appearing to stay
+        within a 10 msg/min limit.
+
+        Args:
+            agent_id: ID of the agent to check
+            count: Number of messages to check (e.g., number of broadcast recipients)
+
+        Returns:
+            True if sending count messages would be within limit, False otherwise
+        """
         with self._lock:
-            self._message_times[agent_id].append(datetime.now())
+            now = datetime.now()
+            cutoff = now - timedelta(seconds=self.window_seconds)
+
+            # Remove old timestamps
+            times = self._message_times[agent_id]
+            while times and times[0] < cutoff:
+                times.popleft()
+
+            # Check if we have room for count more messages
+            if len(times) + count > self.max_messages:
+                return False
+
+            return True
+
+    def record_message(self, agent_id: str, count: int = 1):
+        """Record that message(s) were sent by an agent.
+
+        Args:
+            agent_id: ID of the agent
+            count: Number of messages to record (default: 1)
+        """
+        with self._lock:
+            now = datetime.now()
+            # Record count timestamps for rate limiting
+            for _ in range(count):
+                self._message_times[agent_id].append(now)
 
     def reset_agent(self, agent_id: str):
         """Reset rate limit for a specific agent."""
@@ -403,11 +452,44 @@ class RateLimiter:
             if agent_id in self._message_times:
                 del self._message_times[agent_id]
 
+    def _cleanup_inactive_agents_internal(self, cutoff_seconds: int = 300):
+        """Internal cleanup method called automatically during check_rate_limit.
+
+        This is called periodically (every 100 rate limit checks) to prevent
+        memory leaks from inactive agents. Uses a shorter 5-minute threshold
+        by default for more aggressive cleanup.
+
+        Args:
+            cutoff_seconds: Remove agents inactive for this many seconds (default: 5 minutes)
+
+        Note:
+            This method assumes the caller already holds self._lock.
+            For external cleanup, use cleanup_inactive_agents() instead.
+        """
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=cutoff_seconds)
+
+        # Find agents with no recent activity
+        agents_to_remove = []
+        for agent_id, times in self._message_times.items():
+            if not times or (times and times[-1] < cutoff):
+                agents_to_remove.append(agent_id)
+
+        # Remove inactive agents
+        for agent_id in agents_to_remove:
+            del self._message_times[agent_id]
+
+        if agents_to_remove:
+            logger.debug(f"Cleaned up {len(agents_to_remove)} inactive agents from rate limiter")
+
     def cleanup_inactive_agents(self, cutoff_seconds: int = RATE_LIMITER_CLEANUP_SECONDS):
         """Remove tracking data for agents that haven't sent messages recently.
 
         This prevents memory leaks in long-running scenarios where agents
         come and go but their tracking data remains in memory.
+
+        This is the public API for manual cleanup. For automatic periodic cleanup,
+        see _cleanup_inactive_agents_internal() which is called automatically.
 
         Args:
             cutoff_seconds: Remove agents inactive for this many seconds (default: 1 hour)
