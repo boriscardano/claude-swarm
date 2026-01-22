@@ -77,6 +77,10 @@ try:
 except ImportError:
     HAS_YAML = False
 
+# YAML DoS prevention limits
+MAX_CONFIG_FILE_SIZE_BYTES = 1 * 1024 * 1024  # 1MB
+MAX_YAML_NESTING_DEPTH = 10
+
 __all__ = [
     "RateLimitConfig",
     "LockingConfig",
@@ -353,6 +357,32 @@ class ClaudeSwarmConfig:
         return result
 
 
+def _check_yaml_nesting_depth(obj: Any, current_depth: int = 0, max_depth: int = MAX_YAML_NESTING_DEPTH) -> None:
+    """Check that YAML object doesn't exceed maximum nesting depth.
+
+    Prevents DoS attacks via deeply nested structures.
+
+    Args:
+        obj: Object to check (typically from yaml.safe_load)
+        current_depth: Current depth in the object tree
+        max_depth: Maximum allowed depth
+
+    Raises:
+        ConfigValidationError: If nesting depth exceeds max_depth
+    """
+    if current_depth > max_depth:
+        raise ConfigValidationError(
+            f"YAML nesting depth exceeds maximum of {max_depth} levels"
+        )
+
+    if isinstance(obj, dict):
+        for value in obj.values():
+            _check_yaml_nesting_depth(value, current_depth + 1, max_depth)
+    elif isinstance(obj, list):
+        for item in obj:
+            _check_yaml_nesting_depth(item, current_depth + 1, max_depth)
+
+
 def _find_config_file(start_path: Optional[Path] = None) -> Optional[Path]:
     """Find configuration file in project directory.
 
@@ -401,12 +431,31 @@ def _load_yaml_config(path: Path) -> Dict[str, Any]:
             "YAML support not available. Install pyyaml: pip install pyyaml"
         )
 
+    # Check file size to prevent large file DoS attacks
+    try:
+        file_size = path.stat().st_size
+        if file_size > MAX_CONFIG_FILE_SIZE_BYTES:
+            raise ConfigValidationError(
+                f"Configuration file too large: {file_size} bytes "
+                f"(max {MAX_CONFIG_FILE_SIZE_BYTES} bytes)"
+            )
+    except OSError as e:
+        raise ConfigValidationError(f"Failed to check file size for {path}: {e}") from e
+
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
+
+            # Validate nesting depth to prevent deeply nested structure DoS attacks
+            if data is not None:
+                _check_yaml_nesting_depth(data)
+
             return data if data is not None else {}
     except yaml.YAMLError as e:
         raise ConfigValidationError(f"Failed to parse YAML file {path}: {e}") from e
+    except ConfigValidationError:
+        # Re-raise our own validation errors
+        raise
     except Exception as e:
         raise ConfigValidationError(f"Failed to load YAML file {path}: {e}") from e
 

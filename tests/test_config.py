@@ -23,6 +23,9 @@ from claudeswarm.config import (
     _dict_to_config,
     _find_config_file,
     _merge_config_dict,
+    _check_yaml_nesting_depth,
+    MAX_CONFIG_FILE_SIZE_BYTES,
+    MAX_YAML_NESTING_DEPTH,
 )
 
 
@@ -607,3 +610,250 @@ class TestSingletonConfig:
 
         # After reload, get_config returns the new instance
         assert config1 is not config2
+
+
+class TestYAMLNestingDepth:
+    """Tests for YAML nesting depth validation."""
+
+    def test_check_yaml_nesting_depth_flat_dict(self) -> None:
+        """Test that flat dictionaries pass validation."""
+        obj = {"a": 1, "b": 2, "c": 3}
+        _check_yaml_nesting_depth(obj)  # Should not raise
+
+    def test_check_yaml_nesting_depth_flat_list(self) -> None:
+        """Test that flat lists pass validation."""
+        obj = [1, 2, 3, 4, 5]
+        _check_yaml_nesting_depth(obj)  # Should not raise
+
+    def test_check_yaml_nesting_depth_nested_within_limit(self) -> None:
+        """Test that nesting within limit passes validation."""
+        obj = {"a": {"b": {"c": {"d": 1}}}}
+        _check_yaml_nesting_depth(obj)  # Should not raise
+
+    def test_check_yaml_nesting_depth_exactly_at_limit(self) -> None:
+        """Test that nesting exactly at limit passes validation."""
+        # Build nested structure with depth = MAX_YAML_NESTING_DEPTH
+        obj: Any = {"value": 1}
+        for _ in range(MAX_YAML_NESTING_DEPTH - 1):
+            obj = {"nested": obj}
+
+        _check_yaml_nesting_depth(obj)  # Should not raise
+
+    def test_check_yaml_nesting_depth_exceeds_limit(self) -> None:
+        """Test that nesting exceeding limit raises error."""
+        # Build nested structure with depth = MAX_YAML_NESTING_DEPTH + 1
+        obj: Any = {"value": 1}
+        for _ in range(MAX_YAML_NESTING_DEPTH):
+            obj = {"nested": obj}
+
+        with pytest.raises(ConfigValidationError, match="YAML nesting depth exceeds maximum"):
+            _check_yaml_nesting_depth(obj)
+
+    def test_check_yaml_nesting_depth_list_nesting(self) -> None:
+        """Test that nested lists are validated."""
+        # Build deeply nested list structure
+        obj: Any = [1]
+        for _ in range(MAX_YAML_NESTING_DEPTH):
+            obj = [obj]
+
+        with pytest.raises(ConfigValidationError, match="YAML nesting depth exceeds maximum"):
+            _check_yaml_nesting_depth(obj)
+
+    def test_check_yaml_nesting_depth_mixed_nesting(self) -> None:
+        """Test that mixed dict/list nesting is validated."""
+        # Build deeply nested mixed structure
+        obj: Any = {"value": 1}
+        for i in range(MAX_YAML_NESTING_DEPTH):
+            if i % 2 == 0:
+                obj = {"nested": obj}
+            else:
+                obj = [obj]
+
+        with pytest.raises(ConfigValidationError, match="YAML nesting depth exceeds maximum"):
+            _check_yaml_nesting_depth(obj)
+
+    def test_check_yaml_nesting_depth_custom_limit(self) -> None:
+        """Test that custom depth limit can be specified."""
+        obj = {"a": {"b": {"c": 1}}}
+
+        # Should pass with higher limit
+        _check_yaml_nesting_depth(obj, max_depth=5)
+
+        # Should fail with lower limit
+        with pytest.raises(ConfigValidationError, match="YAML nesting depth exceeds maximum of 2"):
+            _check_yaml_nesting_depth(obj, max_depth=2)
+
+    def test_check_yaml_nesting_depth_primitives(self) -> None:
+        """Test that primitive values pass validation."""
+        _check_yaml_nesting_depth(42)
+        _check_yaml_nesting_depth("string")
+        _check_yaml_nesting_depth(True)
+        _check_yaml_nesting_depth(None)
+        _check_yaml_nesting_depth(3.14)
+
+
+class TestYAMLFileSizeLimit:
+    """Tests for YAML file size limit validation."""
+
+    def test_load_yaml_config_normal_size(self) -> None:
+        """Test that normal-sized YAML files load successfully."""
+        try:
+            import yaml
+        except ImportError:
+            pytest.skip("YAML not available")
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            # Write a small config (< 1KB)
+            tmp.write("rate_limiting:\n  messages_per_minute: 20\n")
+            tmp.flush()
+            tmp_path = Path(tmp.name)
+
+        try:
+            config = load_config(tmp_path)
+            assert config.rate_limiting.messages_per_minute == 20
+        finally:
+            tmp_path.unlink()
+
+    def test_load_yaml_config_large_file_rejected(self) -> None:
+        """Test that files exceeding size limit are rejected."""
+        try:
+            import yaml
+        except ImportError:
+            pytest.skip("YAML not available")
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            # Write a file larger than MAX_CONFIG_FILE_SIZE_BYTES
+            # Create a large YAML with many entries
+            tmp.write("large_data:\n")
+            # Write enough data to exceed 1MB
+            chunk = "  " + "x" * 100 + ": value\n"
+            chunks_needed = (MAX_CONFIG_FILE_SIZE_BYTES // len(chunk)) + 1
+            for i in range(chunks_needed):
+                tmp.write(f"  key{i}: {'x' * 1000}\n")
+            tmp.flush()
+            tmp_path = Path(tmp.name)
+
+        try:
+            # Verify file is actually too large
+            assert tmp_path.stat().st_size > MAX_CONFIG_FILE_SIZE_BYTES
+
+            with pytest.raises(ConfigValidationError, match="Configuration file too large"):
+                load_config(tmp_path)
+        finally:
+            tmp_path.unlink()
+
+    def test_load_yaml_config_exactly_at_limit(self) -> None:
+        """Test that files exactly at the size limit are accepted."""
+        try:
+            import yaml
+        except ImportError:
+            pytest.skip("YAML not available")
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            # Write a file exactly at MAX_CONFIG_FILE_SIZE_BYTES
+            # Start with minimal valid YAML
+            content = "rate_limiting:\n  messages_per_minute: 20\n"
+            # Pad with comments to reach the limit
+            current_size = len(content.encode('utf-8'))
+            padding_needed = MAX_CONFIG_FILE_SIZE_BYTES - current_size - 10  # Leave some margin
+            if padding_needed > 0:
+                content += "# " + "x" * (padding_needed - 2) + "\n"
+            tmp.write(content)
+            tmp.flush()
+            tmp_path = Path(tmp.name)
+
+        try:
+            # Verify file is close to limit but not over
+            file_size = tmp_path.stat().st_size
+            assert file_size <= MAX_CONFIG_FILE_SIZE_BYTES
+            assert file_size > MAX_CONFIG_FILE_SIZE_BYTES - 1000  # Close to limit
+
+            config = load_config(tmp_path)
+            assert config.rate_limiting.messages_per_minute == 20
+        finally:
+            tmp_path.unlink()
+
+
+class TestYAMLNestingDepthIntegration:
+    """Integration tests for YAML nesting depth in config loading."""
+
+    def test_load_yaml_config_normal_nesting(self) -> None:
+        """Test that normal config nesting loads successfully."""
+        try:
+            import yaml
+        except ImportError:
+            pytest.skip("YAML not available")
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            tmp.write("""
+rate_limiting:
+  messages_per_minute: 20
+  window_seconds: 60
+
+locking:
+  stale_timeout: 300
+  auto_cleanup: true
+  default_reason: "working"
+
+discovery:
+  stale_threshold: 60
+""")
+            tmp.flush()
+            tmp_path = Path(tmp.name)
+
+        try:
+            config = load_config(tmp_path)
+            assert config.rate_limiting.messages_per_minute == 20
+            assert config.locking.stale_timeout == 300
+        finally:
+            tmp_path.unlink()
+
+    def test_load_yaml_config_deep_nesting_rejected(self) -> None:
+        """Test that deeply nested YAML is rejected."""
+        try:
+            import yaml
+        except ImportError:
+            pytest.skip("YAML not available")
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            # Create a deeply nested structure that exceeds MAX_YAML_NESTING_DEPTH
+            content = "a:\n"
+            indent = "  "
+            for i in range(MAX_YAML_NESTING_DEPTH + 2):
+                content += indent * (i + 1) + f"level{i}:\n"
+            content += indent * (MAX_YAML_NESTING_DEPTH + 3) + "value: 1\n"
+
+            tmp.write(content)
+            tmp.flush()
+            tmp_path = Path(tmp.name)
+
+        try:
+            with pytest.raises(ConfigValidationError, match="YAML nesting depth exceeds maximum"):
+                load_config(tmp_path)
+        finally:
+            tmp_path.unlink()
+
+    def test_load_yaml_config_deep_list_nesting_rejected(self) -> None:
+        """Test that deeply nested lists in YAML are rejected."""
+        try:
+            import yaml
+        except ImportError:
+            pytest.skip("YAML not available")
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+            # Create a deeply nested list structure
+            content = "data:\n"
+            indent = "  "
+            for i in range(MAX_YAML_NESTING_DEPTH + 2):
+                content += indent * (i + 1) + "-\n"
+            content += indent * (MAX_YAML_NESTING_DEPTH + 3) + "- value\n"
+
+            tmp.write(content)
+            tmp.flush()
+            tmp_path = Path(tmp.name)
+
+        try:
+            with pytest.raises(ConfigValidationError, match="YAML nesting depth exceeds maximum"):
+                load_config(tmp_path)
+        finally:
+            tmp_path.unlink()
