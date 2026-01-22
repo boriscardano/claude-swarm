@@ -140,16 +140,35 @@ def validate_git_url(url: str) -> str:
             f"Git URL contains dangerous characters: {url}"
         )
 
-    # Validate basic URL structure
+    # Security: Prevent path traversal attacks
+    if '..' in url:
+        raise ValidationError(
+            f"Git URL contains path traversal (..) which is not allowed: {url}"
+        )
+
+    # Security: Prevent SSRF attacks by blocking IP addresses
+    # Block both IPv4 and IPv6 addresses in the URL
+    ip_pattern = r'(?:(?:\d{1,3}\.){3}\d{1,3})|(?:\[?[0-9a-fA-F:]+\]?)'
     if url.startswith('https://'):
-        # Basic check for https URLs
-        if not re.match(r'^https://[a-zA-Z0-9.-]+/[\w\-./]+\.git$', url):
+        # Extract domain part after https://
+        domain_part = url[8:].split('/')[0]
+        # Check if it looks like an IP address
+        if re.match(r'^' + ip_pattern + r'(?::\d+)?$', domain_part):
+            raise ValidationError(
+                f"Git URL cannot use IP addresses (potential SSRF attack): {url}"
+            )
+
+    # Validate basic URL structure with stricter domain validation
+    if url.startswith('https://'):
+        # Stricter check for https URLs - domain must be valid DNS format
+        # Allows: github.com, api.github.com, etc.
+        if not re.match(r'^https://[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*(/[\w\-./]+)?\.git$', url):
             raise ValidationError(
                 f"Invalid HTTPS Git URL format: {url}"
             )
     elif url.startswith('git@'):
         # Basic check for git@ URLs
-        if not re.match(r'^git@[a-zA-Z0-9.-]+:[\w\-./]+\.git$', url):
+        if not re.match(r'^git@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*:[\w\-./]+\.git$', url):
             raise ValidationError(
                 f"Invalid git@ URL format: {url}"
             )

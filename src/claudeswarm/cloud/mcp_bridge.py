@@ -177,9 +177,11 @@ class MCPBridge:
             # Start container
             container_name = sanitize_container_name(f"{mcp_name}-mcp-{self.sandbox_id}")
 
-            # Sanitize environment variables for logging
+            # Security: Sanitize environment variables for logging
+            # Check for common credential patterns in environment variable names
+            credential_patterns = ['key', 'token', 'secret', 'password', 'auth', 'credential']
             safe_env = {
-                k: sanitize_api_key_for_logging(v) if 'key' in k.lower() or 'token' in k.lower() else v
+                k: sanitize_api_key_for_logging(v) if any(pattern in k.lower() for pattern in credential_patterns) else v
                 for k, v in config.environment.items()
             }
 
@@ -487,13 +489,17 @@ class MCPBridge:
         # Stop and remove containers
         for mcp_name, container_info in self.mcp_containers.items():
             try:
-                # TODO: Uncomment when using real containers
-                # container = self.docker_client.containers.get(container_info.container_id)
-                # container.stop(timeout=10)
-                # container.remove()
-                pass
+                # Get container and stop it gracefully
+                container = self.docker_client.containers.get(container_info.container_id)
+                print(f"Stopping MCP container: {mcp_name}")
+                container.stop(timeout=10)
+                print(f"Removing MCP container: {mcp_name}")
+                container.remove()
+            except docker.errors.NotFound:
+                # Container already removed, this is fine
+                print(f"MCP container {mcp_name} already removed")
             except docker.errors.DockerException as e:
-                # Log error but continue cleanup
+                # Log error but continue cleanup of other containers
                 print(f"Error cleaning up {mcp_name}: {e}")
 
         self.mcp_containers.clear()

@@ -306,8 +306,9 @@ class CloudSandbox:
         github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN") or os.getenv("GITHUB_TOKEN")
         if github_token:
             print("🔧 Configuring GitHub MCP server from Docker Hub...")
-            # Security: Use shell escaping for the token value (same pattern as Claude OAuth token)
-            escaped_github_token = github_token.replace("'", "'\\''")
+            # Security: Use proper shell escaping with shlex.quote for all token usage
+            import json
+            import shlex
 
             # Create MCP settings JSON for both root and user
             # Using Docker Hub MCP catalog image (mcp/github) as required by E2B hackathon
@@ -327,26 +328,27 @@ class CloudSandbox:
                 }
             }
 
-            import json
-            mcp_config_str = json.dumps(mcp_config_json).replace("'", "'\\''")
+            # Safely escape the JSON config string for shell
+            mcp_config_str = shlex.quote(json.dumps(mcp_config_json))
 
-            # Create export command for GitHub token (same pattern as Claude OAuth token)
-            token_export = f"export GITHUB_PERSONAL_ACCESS_TOKEN='{escaped_github_token}'"
+            # Security: Use shlex.quote for the token to prevent command injection
+            escaped_github_token = shlex.quote(github_token)
+            token_export = f"export GITHUB_PERSONAL_ACCESS_TOKEN={escaped_github_token}"
 
             # Add commands to write MCP config and export token
             # NOTE: .mcp.json must be in the PROJECT ROOT directory (not ~/.claude/)
             # Claude Code looks for .mcp.json in the current working directory
             mcp_commands = [
                 # Write .mcp.json to /workspace (project root) as 'user' for proper ownership
-                f"su - user -c \"echo '{mcp_config_str}' > /workspace/.mcp.json\"",
-                # Export GITHUB_PERSONAL_ACCESS_TOKEN in all shell configs (same pattern as Claude OAuth)
+                f"su - user -c \"echo {mcp_config_str} > /workspace/.mcp.json\"",
+                # Export GITHUB_PERSONAL_ACCESS_TOKEN in all shell configs
                 # Root user configs (for run_code operations)
-                f"echo '{token_export}' >> /root/.bashrc",
-                f"echo '{token_export}' >> /root/.bash_profile",
+                f"echo {shlex.quote(token_export)} >> /root/.bashrc",
+                f"echo {shlex.quote(token_export)} >> /root/.bash_profile",
                 # Regular user configs (for E2B CLI interactive sessions)
-                f"echo '{token_export}' >> /home/user/.bashrc",
-                f"echo '{token_export}' >> /home/user/.bash_profile",
-                f"echo '{token_export}' >> /home/user/.profile",
+                f"echo {shlex.quote(token_export)} >> /home/user/.bashrc",
+                f"echo {shlex.quote(token_export)} >> /home/user/.bash_profile",
+                f"echo {shlex.quote(token_export)} >> /home/user/.profile",
             ]
             commands.extend(mcp_commands)
         else:
