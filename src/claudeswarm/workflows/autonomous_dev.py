@@ -71,12 +71,20 @@ class AutonomousDevelopmentLoop:
         )
     """
 
+    # Maximum number of agents allowed to prevent resource exhaustion
+    MAX_AGENTS = 100
+
     def __init__(
         self,
         sandbox_id: str,
         num_agents: int = 4,
         mcp_bridge=None  # MCPBridge instance
     ):
+        if num_agents > self.MAX_AGENTS:
+            raise ValueError(f"num_agents must not exceed {self.MAX_AGENTS}")
+        if num_agents < 1:
+            raise ValueError("num_agents must be at least 1")
+
         self.sandbox_id = sandbox_id
         self.num_agents = num_agents
         self.mcp_bridge = mcp_bridge

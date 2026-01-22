@@ -98,7 +98,15 @@ class CodeReviewProtocol:
             await protocol.escalate_to_consensus(feedback)
     """
 
+    # Maximum number of agents allowed to prevent resource exhaustion
+    MAX_AGENTS = 100
+
     def __init__(self, num_agents: int = 4):
+        if num_agents > self.MAX_AGENTS:
+            raise ValueError(f"num_agents must not exceed {self.MAX_AGENTS}")
+        if num_agents < 1:
+            raise ValueError("num_agents must be at least 1")
+
         self.num_agents = num_agents
         self.reviews: Dict[str, ReviewFeedback] = {}
         self.disagreements: List[Disagreement] = []

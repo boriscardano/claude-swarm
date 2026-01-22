@@ -302,14 +302,24 @@ class CollaborativeDevelopmentWorkflow:
     async def _clone_repository(self, repo_url: str) -> Dict[str, Any]:
         """Clone repository using git command."""
         repo_name = repo_url.split("/")[-1].replace(".git", "")
-        repo_path = os.path.join(self.workspace, repo_name)
+
+        # Validate repo path stays within workspace (prevent path traversal)
+        workspace_path = Path(self.workspace).resolve()
+        repo_path = (workspace_path / repo_name).resolve()
+
+        # Ensure repo_path is within workspace
+        try:
+            repo_path.relative_to(workspace_path)
+        except ValueError:
+            return {"success": False, "error": "Invalid repository path - path traversal attempt detected"}
 
         # Use git command to clone
         # In real implementation, this would use GitHub MCP
         # For now, using shell command as placeholder
         try:
-            process = await asyncio.create_subprocess_shell(
-                f"git clone {repo_url} {repo_path}",
+            # Use create_subprocess_exec instead of create_subprocess_shell to prevent command injection
+            process = await asyncio.create_subprocess_exec(
+                "git", "clone", repo_url, str(repo_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -317,7 +327,7 @@ class CollaborativeDevelopmentWorkflow:
 
             return {
                 "success": process.returncode == 0,
-                "path": repo_path
+                "path": str(repo_path)
             }
         except Exception as e:
             return {"success": False, "error": str(e)}

@@ -104,11 +104,23 @@ class ConsensusEngine:
         print(f"Consensus: {result.winner} - {result.decision_rationale}")
     """
 
+    # Maximum number of agents allowed to prevent resource exhaustion
+    MAX_AGENTS = 100
+    # Maximum length for evidence lists to prevent DoS
+    MAX_EVIDENCE_ITEMS = 50
+    # Maximum length for topic/option strings
+    MAX_STRING_LENGTH = 1000
+
     def __init__(
         self,
         num_agents: int = 4,
         strategy: ConsensusStrategy = ConsensusStrategy.EVIDENCE_BASED
     ):
+        if num_agents > self.MAX_AGENTS:
+            raise ValueError(f"num_agents must not exceed {self.MAX_AGENTS}")
+        if num_agents < 1:
+            raise ValueError("num_agents must be at least 1")
+
         self.num_agents = num_agents
         self.strategy = strategy
         self.active_votes: Dict[str, List[Vote]] = {}
@@ -141,6 +153,20 @@ class ConsensusEngine:
         Returns:
             Vote ID for tracking
         """
+
+        # Validate string lengths to prevent DoS
+        if len(topic) > self.MAX_STRING_LENGTH:
+            raise ValueError(f"topic length must not exceed {self.MAX_STRING_LENGTH} characters")
+        if len(option_a) > self.MAX_STRING_LENGTH:
+            raise ValueError(f"option_a length must not exceed {self.MAX_STRING_LENGTH} characters")
+        if len(option_b) > self.MAX_STRING_LENGTH:
+            raise ValueError(f"option_b length must not exceed {self.MAX_STRING_LENGTH} characters")
+
+        # Validate evidence list lengths to prevent DoS
+        if evidence_a and len(evidence_a) > self.MAX_EVIDENCE_ITEMS:
+            raise ValueError(f"evidence_a must not exceed {self.MAX_EVIDENCE_ITEMS} items")
+        if evidence_b and len(evidence_b) > self.MAX_EVIDENCE_ITEMS:
+            raise ValueError(f"evidence_b must not exceed {self.MAX_EVIDENCE_ITEMS} items")
 
         # Create vote with thread safety
         with self._vote_lock:

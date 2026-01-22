@@ -56,7 +56,15 @@ class WorkDistributor:
         status = distributor.get_progress_summary()
     """
 
+    # Maximum number of agents allowed to prevent resource exhaustion
+    MAX_AGENTS = 100
+
     def __init__(self, num_agents: int = 4):
+        if num_agents > self.MAX_AGENTS:
+            raise ValueError(f"num_agents must not exceed {self.MAX_AGENTS}")
+        if num_agents < 1:
+            raise ValueError("num_agents must be at least 1")
+
         self.num_agents = num_agents
         self.tasks: Dict[str, Task] = {}
         self.messaging = MessagingSystem()
