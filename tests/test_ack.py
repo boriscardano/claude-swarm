@@ -132,10 +132,10 @@ class TestAckSystem:
         """Test AckSystem initialization."""
         assert ack_system.pending_file.exists()
 
-        # Check file contains empty list
+        # Check file contains empty list with version
         with open(ack_system.pending_file) as f:
             data = json.load(f)
-        assert data == {"pending_acks": []}
+        assert data == {"version": 0, "pending_acks": []}
 
     def test_ensure_pending_file_idempotent(self, ack_system: AckSystem) -> None:
         """Test that _ensure_pending_file is idempotent."""
@@ -143,10 +143,10 @@ class TestAckSystem:
         ack_system._ensure_pending_file()
         ack_system._ensure_pending_file()
 
-        # Should still have empty list
+        # Should still have empty list with version
         with open(ack_system.pending_file) as f:
             data = json.load(f)
-        assert data == {"pending_acks": []}
+        assert data == {"version": 0, "pending_acks": []}
 
     @patch("claudeswarm.ack.send_message")
     def test_send_with_ack_success(
@@ -305,7 +305,8 @@ class TestAckSystem:
                 next_retry_at=(now + timedelta(seconds=30)).isoformat(),
             )
 
-            ack_system._save_pending_acks(ack_system._load_pending_acks() + [ack])
+            acks, _ = ack_system._load_pending_acks()
+            ack_system._save_pending_acks(acks + [ack])
 
         # Check all
         all_pending = ack_system.check_pending_acks()
@@ -466,7 +467,8 @@ class TestAckSystem:
                 next_retry_at=(now + timedelta(seconds=30)).isoformat(),
             )
 
-            ack_system._save_pending_acks(ack_system._load_pending_acks() + [ack])
+            acks, _ = ack_system._load_pending_acks()
+            ack_system._save_pending_acks(acks + [ack])
 
         assert ack_system.get_pending_count() == 3
         assert ack_system.get_pending_count("agent-1") == 1
@@ -496,7 +498,8 @@ class TestAckSystem:
                 next_retry_at=(now + timedelta(seconds=30)).isoformat(),
             )
 
-            ack_system._save_pending_acks(ack_system._load_pending_acks() + [ack])
+            acks, _ = ack_system._load_pending_acks()
+            ack_system._save_pending_acks(acks + [ack])
 
         # Clear specific agent
         cleared = ack_system.clear_pending_acks("agent-1")
@@ -537,7 +540,7 @@ class TestAckSystem:
                 )
 
                 with ack_system._lock:
-                    acks = ack_system._load_pending_acks()
+                    acks, _ = ack_system._load_pending_acks()
                     acks.append(ack)
                     ack_system._save_pending_acks(acks)
             except Exception as e:
@@ -683,7 +686,8 @@ class TestModuleFunctions:
                 next_retry_at=(now + timedelta(seconds=30)).isoformat(),
             )
 
-            system._save_pending_acks(system._load_pending_acks() + [ack])
+            acks, _ = system._load_pending_acks()
+            system._save_pending_acks(acks + [ack])
 
         pending = check_pending_acks()
         assert len(pending) == 2
