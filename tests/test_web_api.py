@@ -38,19 +38,19 @@ class TestDashboardAPI:
             async def root():
                 return {"message": "Dashboard"}
 
-            @app.get("/api/agents")
+            @app.get("/api/v1/agents")
             async def get_agents():
                 return {"agents": []}
 
-            @app.get("/api/messages")
+            @app.get("/api/v1/messages")
             async def get_messages(limit: int = 50):
                 return {"messages": []}
 
-            @app.get("/api/locks")
+            @app.get("/api/v1/locks")
             async def get_locks():
                 return {"locks": []}
 
-            @app.get("/api/stats")
+            @app.get("/api/v1/stats")
             async def get_stats():
                 return {"agent_count": 0, "message_count": 0, "lock_count": 0, "uptime_seconds": 0}
 
@@ -74,7 +74,7 @@ class TestDashboardAPI:
     def test_get_agents_empty(self, client, tmp_path):
         """Test GET /api/agents with no agents."""
         with patch("src.claudeswarm.web.server.ACTIVE_AGENTS_FILE", tmp_path / "ACTIVE_AGENTS.json"):
-            response = client.get("/api/agents")
+            response = client.get("/api/v1/agents")
             assert response.status_code == 200
             data = response.json()
             assert "agents" in data
@@ -102,7 +102,7 @@ class TestDashboardAPI:
         agents_file.write_text(json.dumps(agents_data))
 
         with patch("src.claudeswarm.web.server.ACTIVE_AGENTS_FILE", agents_file):
-            response = client.get("/api/agents")
+            response = client.get("/api/v1/agents")
             assert response.status_code == 200
             data = response.json()
             assert "agents" in data
@@ -114,7 +114,7 @@ class TestDashboardAPI:
         """Test GET /api/agents when file missing."""
         non_existent = tmp_path / "non_existent.json"
         with patch("src.claudeswarm.web.server.ACTIVE_AGENTS_FILE", non_existent):
-            response = client.get("/api/agents")
+            response = client.get("/api/v1/agents")
             assert response.status_code == 200
             data = response.json()
             # Should return empty list, not error
@@ -127,7 +127,7 @@ class TestDashboardAPI:
         agents_file.write_text("{ invalid json }")
 
         with patch("src.claudeswarm.web.server.ACTIVE_AGENTS_FILE", agents_file):
-            response = client.get("/api/agents")
+            response = client.get("/api/v1/agents")
             # Should handle gracefully
             assert response.status_code in [200, 500]
             if response.status_code == 200:
@@ -140,7 +140,7 @@ class TestDashboardAPI:
         messages_file.write_text("")
 
         with patch("src.claudeswarm.web.server.MESSAGES_FILE", messages_file):
-            response = client.get("/api/messages")
+            response = client.get("/api/v1/messages")
             assert response.status_code == 200
             data = response.json()
             assert "messages" in data
@@ -157,7 +157,7 @@ class TestDashboardAPI:
         messages_file.write_text("\n".join(json.dumps(m) for m in messages))
 
         with patch("src.claudeswarm.web.server.MESSAGES_FILE", messages_file):
-            response = client.get("/api/messages")
+            response = client.get("/api/v1/messages")
             assert response.status_code == 200
             data = response.json()
             assert "messages" in data
@@ -173,7 +173,7 @@ class TestDashboardAPI:
         messages_file.write_text("\n".join(json.dumps(m) for m in messages))
 
         with patch("src.claudeswarm.web.server.MESSAGES_FILE", messages_file):
-            response = client.get("/api/messages?limit=10")
+            response = client.get("/api/v1/messages?limit=10")
             assert response.status_code == 200
             data = response.json()
             assert "messages" in data
@@ -184,7 +184,7 @@ class TestDashboardAPI:
         """Test GET /api/messages when file missing."""
         non_existent = tmp_path / "non_existent.log"
         with patch("src.claudeswarm.web.server.MESSAGES_FILE", non_existent):
-            response = client.get("/api/messages")
+            response = client.get("/api/v1/messages")
             assert response.status_code == 200
             data = response.json()
             # Should return empty list, not error
@@ -197,7 +197,7 @@ class TestDashboardAPI:
         locks_dir.mkdir()
 
         with patch("src.claudeswarm.web.server.LOCKS_DIR", locks_dir):
-            response = client.get("/api/locks")
+            response = client.get("/api/v1/locks")
             assert response.status_code == 200
             data = response.json()
             assert "locks" in data
@@ -220,7 +220,7 @@ class TestDashboardAPI:
         lock_file.write_text(json.dumps(lock_data))
 
         with patch("src.claudeswarm.web.server.LOCKS_DIR", locks_dir):
-            response = client.get("/api/locks")
+            response = client.get("/api/v1/locks")
             assert response.status_code == 200
             data = response.json()
             assert "locks" in data
@@ -231,7 +231,7 @@ class TestDashboardAPI:
         """Test GET /api/locks when directory missing."""
         non_existent = tmp_path / "non_existent_locks"
         with patch("src.claudeswarm.web.server.LOCKS_DIR", non_existent):
-            response = client.get("/api/locks")
+            response = client.get("/api/v1/locks")
             assert response.status_code == 200
             data = response.json()
             # Should return empty list, not error
@@ -240,7 +240,7 @@ class TestDashboardAPI:
 
     def test_get_stats_basic(self, client):
         """Test GET /api/stats."""
-        response = client.get("/api/stats")
+        response = client.get("/api/v1/stats")
         assert response.status_code == 200
         data = response.json()
 
@@ -266,7 +266,7 @@ class TestDashboardAPI:
         """Test GET /api/stream SSE endpoint exists."""
         # Note: Testing SSE streams requires special handling
         # This just verifies the endpoint exists
-        response = client.get("/api/stream", timeout=1)
+        response = client.get("/api/v1/stream", timeout=1)
         # SSE endpoints typically return 200 and keep connection open
         assert response.status_code in [200, 408]  # 408 if timeout
 
@@ -294,7 +294,7 @@ class TestDashboardSSE:
             async def event_generator():
                 yield "data: {\"type\": \"test\"}\n\n"
 
-            @app.get("/api/stream")
+            @app.get("/api/v1/stream")
             async def stream():
                 return StreamingResponse(
                     event_generator(),
@@ -312,7 +312,7 @@ class TestDashboardSSE:
         """Test SSE stream returns proper format."""
         # This is a basic test - real SSE testing requires more setup
         try:
-            response = client.get("/api/stream", timeout=1)
+            response = client.get("/api/v1/stream", timeout=1)
             if response.status_code == 200:
                 assert "text/event-stream" in response.headers.get("content-type", "")
         except Exception:
@@ -337,7 +337,7 @@ class TestDashboardErrorHandling:
         import concurrent.futures
 
         def make_request():
-            return client.get("/api/agents")
+            return client.get("/api/v1/agents")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(make_request) for _ in range(10)]
@@ -348,7 +348,7 @@ class TestDashboardErrorHandling:
 
     def test_large_message_limit(self, client):
         """Test handling very large limit parameter."""
-        response = client.get("/api/messages?limit=999999")
+        response = client.get("/api/v1/messages?limit=999999")
         assert response.status_code == 200
         data = response.json()
         # Should handle gracefully, possibly capping at max
@@ -356,13 +356,13 @@ class TestDashboardErrorHandling:
 
     def test_negative_limit(self, client):
         """Test handling negative limit parameter."""
-        response = client.get("/api/messages?limit=-1")
+        response = client.get("/api/v1/messages?limit=-1")
         # Should either reject or treat as 0/default
         assert response.status_code in [200, 400, 422]
 
     def test_invalid_limit_type(self, client):
         """Test handling non-integer limit."""
-        response = client.get("/api/messages?limit=invalid")
+        response = client.get("/api/v1/messages?limit=invalid")
         # FastAPI should reject with 422
         assert response.status_code == 422
 
@@ -381,7 +381,7 @@ class TestDashboardCORS:
 
     def test_cors_headers_present(self, client):
         """Test CORS headers if configured."""
-        response = client.get("/api/agents")
+        response = client.get("/api/v1/agents")
         # CORS headers may or may not be configured
         # This is informational
         headers = response.headers

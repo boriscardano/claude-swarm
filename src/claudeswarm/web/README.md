@@ -66,17 +66,27 @@ gunicorn claudeswarm.web.server:app \
 - `GET /` - Main dashboard interface (HTML)
 - `GET /static/{path}` - Static assets (CSS, JS)
 
-### REST API
+### REST API (v1)
 
-- `GET /api/agents` - List all active agents
-- `GET /api/locks` - List all active file locks
-- `GET /api/messages?limit=50` - Get recent messages (default: 50)
-- `GET /api/stats` - Get system statistics
+- `GET /api/v1/agents` - List all active agents
+- `GET /api/v1/locks` - List all active file locks
+- `GET /api/v1/messages?limit=50` - Get recent messages (default: 50)
+- `GET /api/v1/stats` - Get system statistics
 - `GET /health` - Health check endpoint
+
+### Legacy API (Redirects)
+
+For backwards compatibility, the following legacy endpoints redirect to v1:
+
+- `GET /api/agents` → `/api/v1/agents` (307 redirect)
+- `GET /api/locks` → `/api/v1/locks` (307 redirect)
+- `GET /api/messages` → `/api/v1/messages` (307 redirect)
+- `GET /api/stats` → `/api/v1/stats` (307 redirect)
+- `GET /api/stream` → `/api/v1/stream` (307 redirect)
 
 ### Real-time Streaming
 
-- `GET /api/stream` - Server-Sent Events stream for live updates
+- `GET /api/v1/stream` - Server-Sent Events stream for live updates
 
 ### API Documentation
 
@@ -104,7 +114,7 @@ The server monitors these files in the project root:
 ### Get Active Agents
 
 ```bash
-curl http://localhost:8000/api/agents
+curl http://localhost:8000/api/v1/agents
 ```
 
 Response:
@@ -127,7 +137,7 @@ Response:
 ### Get System Statistics
 
 ```bash
-curl http://localhost:8000/api/stats
+curl http://localhost:8000/api/v1/stats
 ```
 
 Response:
@@ -145,7 +155,7 @@ Response:
 ### Stream Live Updates
 
 ```bash
-curl -N http://localhost:8000/api/stream
+curl -N http://localhost:8000/api/v1/stream
 ```
 
 Response (SSE format):
@@ -277,7 +287,7 @@ async def verify_token(credentials = Security(security)):
     # Implement token verification
     pass
 
-@app.get("/api/agents", dependencies=[Depends(verify_token)])
+@api_v1.get("/agents", dependencies=[Depends(verify_token)])
 async def get_agents():
     ...
 ```
