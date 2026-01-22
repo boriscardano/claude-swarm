@@ -230,15 +230,27 @@ class TestRateLimiter:
 
     def test_rate_limiter_window_expiry(self):
         """Test rate limiter respects time window."""
+        from datetime import datetime, timedelta
+        from unittest.mock import patch
+
         # Use very short window for testing
         limiter = RateLimiter(max_messages=1, window_seconds=1)
 
-        limiter.record_message("agent-1")
-        assert limiter.check_rate_limit("agent-1") is False
+        # Mock datetime.now() to control time progression
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
 
-        # Wait for window to expire
-        time.sleep(1.1)
-        assert limiter.check_rate_limit("agent-1") is True
+        with patch("claudeswarm.messaging.datetime") as mock_datetime:
+            # First call: record message at base_time
+            mock_datetime.now.return_value = base_time
+            limiter.record_message("agent-1")
+
+            # Second call: check immediately (should be rate limited)
+            mock_datetime.now.return_value = base_time
+            assert limiter.check_rate_limit("agent-1") is False
+
+            # Third call: check after window expires (1.1 seconds later)
+            mock_datetime.now.return_value = base_time + timedelta(seconds=1.1)
+            assert limiter.check_rate_limit("agent-1") is True
 
 
 class TestTmuxMessageDelivery:
