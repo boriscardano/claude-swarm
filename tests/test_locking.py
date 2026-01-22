@@ -58,25 +58,32 @@ class TestFileLock:
 
     def test_is_stale_old_lock(self):
         """Test that an old lock is stale."""
-        lock = FileLock(
-            agent_id="agent-1",
-            filepath="test.py",
-            locked_at=time.time() - 400,  # 400 seconds ago
-            reason="testing",
-        )
-        assert lock.is_stale(timeout=300)
+        with patch("time.time") as mock_time:
+            # Set current time to 1000
+            mock_time.return_value = 1000.0
+            # Lock was created at time 600 (400 seconds ago)
+            lock = FileLock(
+                agent_id="agent-1",
+                filepath="test.py",
+                locked_at=600.0,
+                reason="testing",
+            )
+            assert lock.is_stale(timeout=300)
 
     def test_age_seconds(self):
         """Test lock age calculation."""
-        lock_time = time.time() - 10  # 10 seconds ago
-        lock = FileLock(
-            agent_id="agent-1",
-            filepath="test.py",
-            locked_at=lock_time,
-            reason="testing",
-        )
-        age = lock.age_seconds()
-        assert 9 < age < 11  # Allow small timing variance
+        with patch("time.time") as mock_time:
+            # Set current time to 1000
+            mock_time.return_value = 1000.0
+            # Lock was created at time 990 (10 seconds ago)
+            lock = FileLock(
+                agent_id="agent-1",
+                filepath="test.py",
+                locked_at=990.0,
+                reason="testing",
+            )
+            age = lock.age_seconds()
+            assert age == 10.0  # Exact match with mocked time
 
     def test_to_dict(self):
         """Test serialization to dictionary."""
