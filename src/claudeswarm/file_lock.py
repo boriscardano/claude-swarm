@@ -209,17 +209,24 @@ class FileLock:
             ) from e
 
         # Create lock file if it doesn't exist with secure permissions
-        if not self.file_path.exists():
-            try:
-                self.file_path.touch()
-                # Set permissions to 0o600 (rw-------) for user read/write only
-                # This prevents unauthorized access to lock files
-                os.chmod(self.file_path, stat.S_IRUSR | stat.S_IWUSR)
-            except PermissionError as e:
-                raise FileLockError(
-                    f"Permission denied creating lock file {self.file_path}. "
-                    "Ensure the directory is writable."
-                ) from e
+        # Use os.open with O_CREAT | O_EXCL for atomic file creation
+        try:
+            # Try to create file atomically with exclusive flag
+            fd = os.open(
+                self.file_path,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                stat.S_IRUSR | stat.S_IWUSR,  # 0o600 permissions
+            )
+            # Close the file descriptor immediately - we just needed to create it
+            os.close(fd)
+        except FileExistsError:
+            # File already exists - this is fine, another process may have created it
+            pass
+        except PermissionError as e:
+            raise FileLockError(
+                f"Permission denied creating lock file {self.file_path}. "
+                "Ensure the directory is writable."
+            ) from e
 
         start_time = time.time()
 
@@ -437,19 +444,24 @@ class FileLock:
         if self._lock_file is None:
             return
 
+        unlock_successful = False
+
         try:
             if _LOCK_MODULE == "fcntl":
                 self._release_fcntl()
             elif _LOCK_MODULE == "win32":
                 self._release_win32()
 
+            unlock_successful = True
             logger.debug(f"Released lock on {self.file_path}")
 
         except Exception as e:
             logger.warning(f"Error releasing lock on {self.file_path}: {e}")
+            # Re-raise to prevent marking lock as released on failure
+            raise
 
         finally:
-            # Always close the file and reset state
+            # Always close the file, but only reset lock state if unlock succeeded
             if self._lock_file:
                 try:
                     self._lock_file.close()
@@ -458,7 +470,10 @@ class FileLock:
                 self._lock_file = None
                 self._lock_fd = None
                 self._file_inode = None
-                self._is_locked = False
+
+                # Only mark as unlocked if the unlock operation succeeded
+                if unlock_successful:
+                    self._is_locked = False
 
     def _release_fcntl(self):
         """Release lock using fcntl (Unix)."""
@@ -466,12 +481,15 @@ class FileLock:
             fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
 
     def _release_win32(self):
-        """Release lock using Win32 API (Windows)."""
+        """Release lock using Win32 API (Windows).
+
+        Raises:
+            FileLockError: If lock cannot be released
+        """
         if self._lock_fd is not None:
             file_handle = msvcrt.get_osfhandle(self._lock_fd)
             if file_handle == -1:
-                logger.warning(f"Failed to get OS file handle for {self.file_path}")
-                return
+                raise FileLockError(f"Failed to get OS file handle for {self.file_path}")
 
             # Create OVERLAPPED structure for UnlockFileEx
             overlapped = wintypes.OVERLAPPED()
@@ -489,7 +507,7 @@ class FileLock:
 
             if not result:
                 error_code = kernel32.GetLastError()
-                logger.warning(
+                raise FileLockError(
                     f"Failed to release lock on {self.file_path}. "
                     f"Win32 error code: {error_code}"
                 )

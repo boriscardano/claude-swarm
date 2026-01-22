@@ -12,6 +12,7 @@ This workflow showcases true multi-agent coordination for the E2B hackathon.
 
 import asyncio
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -315,8 +316,17 @@ class CollaborativeDevelopmentWorkflow:
             )
             await process.communicate()
 
-            return {"success": process.returncode == 0, "path": str(repo_path)}
+            if process.returncode != 0:
+                # Clean up partially cloned directory on failure
+                if repo_path.exists():
+                    shutil.rmtree(repo_path)
+                return {"success": False, "error": "Git clone failed"}
+
+            return {"success": True, "path": str(repo_path)}
         except Exception as e:
+            # Clean up partially cloned directory on exception
+            if repo_path.exists():
+                shutil.rmtree(repo_path)
             return {"success": False, "error": str(e)}
 
     async def _analyze_codebase(self, repo_path: str) -> dict[str, Any]:
