@@ -652,7 +652,7 @@ class TestAckSystem:
 
     def test_cryptographic_temp_id(self, ack_system: AckSystem) -> None:
         """Test that temporary message IDs use cryptographically secure random values."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         with patch("claudeswarm.ack.send_message") as mock_send:
             now = datetime.now()
