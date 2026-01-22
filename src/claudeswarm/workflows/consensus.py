@@ -239,6 +239,24 @@ class ConsensusEngine:
             True if vote was accepted
         """
 
+        # Validate rationale length to prevent DoS
+        if len(rationale) > self.MAX_STRING_LENGTH:
+            raise ValueError(f"rationale length must not exceed {self.MAX_STRING_LENGTH} characters")
+
+        # Validate evidence list length to prevent DoS
+        if evidence and len(evidence) > self.MAX_EVIDENCE_ITEMS:
+            raise ValueError(f"evidence must not exceed {self.MAX_EVIDENCE_ITEMS} items")
+
+        # Validate individual evidence item lengths to prevent DoS
+        if evidence:
+            for item in evidence:
+                if len(item) > self.MAX_STRING_LENGTH:
+                    raise ValueError(f"evidence item length must not exceed {self.MAX_STRING_LENGTH} characters")
+
+        # Validate confidence range
+        if not (0.0 <= confidence <= 1.0):
+            raise ValueError("confidence must be between 0.0 and 1.0")
+
         # Use lock to prevent race conditions when multiple agents vote simultaneously
         with self._vote_lock:
             if vote_id not in self.active_votes:

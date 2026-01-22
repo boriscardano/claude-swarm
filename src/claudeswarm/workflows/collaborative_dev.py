@@ -455,16 +455,18 @@ class CollaborativeDevelopmentWorkflow:
         """Commit changes using git."""
         try:
             # Git add
-            process = await asyncio.create_subprocess_shell(
-                f"cd {repo_path} && git add .",
+            process = await asyncio.create_subprocess_exec(
+                "git", "add", ".",
+                cwd=repo_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             await process.communicate()
 
-            # Git commit
-            process = await asyncio.create_subprocess_shell(
-                f'cd {repo_path} && git commit -m "{message}"',
+            # Git commit - sanitize message by passing as argument (no shell interpretation)
+            process = await asyncio.create_subprocess_exec(
+                "git", "commit", "-m", message,
+                cwd=repo_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -487,8 +489,15 @@ class CollaborativeDevelopmentWorkflow:
     ) -> Dict[str, Any]:
         """Push changes to origin."""
         try:
-            process = await asyncio.create_subprocess_shell(
-                f"cd {repo_path} && git push origin {branch}",
+            # Validate branch name to prevent command injection
+            # Allow alphanumeric, hyphens, underscores, and forward slashes
+            import re
+            if not re.match(r'^[a-zA-Z0-9/_-]+$', branch):
+                return {"success": False, "error": "Invalid branch name"}
+
+            process = await asyncio.create_subprocess_exec(
+                "git", "push", "origin", branch,
+                cwd=repo_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )

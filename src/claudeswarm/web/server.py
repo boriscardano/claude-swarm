@@ -114,13 +114,26 @@ def get_current_user(credentials: HTTPBasicCredentials | None = Depends(security
 # CORS configuration - restrictive by default for security
 # To allow external origins, set ALLOWED_ORIGINS environment variable (comma-separated)
 default_origins = "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000"
-allowed_origins = os.getenv("ALLOWED_ORIGINS", default_origins).split(",")
+allowed_origins_str = os.getenv("ALLOWED_ORIGINS", default_origins)
+
+# Validate ALLOWED_ORIGINS to prevent wildcard injection
+if "*" in allowed_origins_str and allowed_origins_str.strip() != "*":
+    # If mixed with other origins, log warning and use default
+    import logging
+    logging.warning("ALLOWED_ORIGINS contains wildcard mixed with other origins - using default")
+    allowed_origins_str = default_origins
+
+allowed_origins = allowed_origins_str.split(",")
+
+# Enable credentials only if auth is configured
+auth_enabled = bool(os.environ.get("DASHBOARD_USERNAME") and os.environ.get("DASHBOARD_PASSWORD"))
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=False,  # Set to True only if using cookies/auth
+    allow_credentials=auth_enabled,  # Enable if auth is configured
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Accept"],
+    allow_headers=["Content-Type", "Accept", "Authorization"],
 )
 
 # Mount static files if directory exists
@@ -537,8 +550,12 @@ async def event_stream(user: str | None = Depends(get_current_user)) -> Streamin
                 # Client disconnected
                 break
             except Exception as e:
-                # Log error but continue
-                error_data = {"error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+                # Log the full error server-side for debugging
+                import logging
+                logging.error(f"SSE stream error: {e}", exc_info=True)
+
+                # Send generic error to client without exposing internal details
+                error_data = {"error": "An error occurred", "timestamp": datetime.now(timezone.utc).isoformat()}
                 yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
                 await asyncio.sleep(1.0)
 

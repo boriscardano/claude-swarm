@@ -119,18 +119,19 @@ def validate_git_url(url: str) -> str:
     if not url:
         raise ValidationError("Git URL cannot be empty")
 
-    # Only allow https:// and git@ URLs
-    allowed_prefixes = ('https://', 'git@')
+    # Only allow https://, git+https://, and git@ URLs
+    allowed_prefixes = ('https://', 'git+https://', 'git@')
     if not any(url.startswith(prefix) for prefix in allowed_prefixes):
         raise ValidationError(
-            f"Invalid Git URL '{url}'. Must start with https:// or git@"
+            f"Invalid Git URL '{url}'. Must start with https://, git+https://, or git@"
         )
 
-    # Prevent dangerous protocols
+    # Prevent dangerous protocols (check at START of URL only)
     dangerous_protocols = ('file://', 'ftp://', 'ssh://', 'ext::')
-    if any(protocol in url.lower() for protocol in dangerous_protocols):
+    url_lower = url.lower()
+    if any(url_lower.startswith(protocol) for protocol in dangerous_protocols):
         raise ValidationError(
-            f"Dangerous protocol in Git URL '{url}'. Only https:// and git@ allowed."
+            f"Dangerous protocol in Git URL '{url}'. Only https://, git+https://, and git@ allowed."
         )
 
     # Prevent command injection through URL
@@ -159,16 +160,19 @@ def validate_git_url(url: str) -> str:
             )
 
     # Validate basic URL structure with stricter domain validation
-    if url.startswith('https://'):
+    if url.startswith('https://') or url.startswith('git+https://'):
         # Stricter check for https URLs - domain must be valid DNS format
         # Allows: github.com, api.github.com, etc.
-        if not re.match(r'^https://[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*(/[\w\-./]+)?\.git$', url):
+        # Allow optional @ref suffix for commit refs (e.g., @abc123)
+        protocol_prefix = 'git+https://' if url.startswith('git+https://') else 'https://'
+        if not re.match(rf'^{re.escape(protocol_prefix)}[a-zA-Z0-9]([a-zA-Z0-9-]{{0,61}}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{{0,61}}[a-zA-Z0-9])?)*(/[\w\-./]+)?\.git(@[\w\-.]+)?$', url):
             raise ValidationError(
                 f"Invalid HTTPS Git URL format: {url}"
             )
     elif url.startswith('git@'):
         # Basic check for git@ URLs
-        if not re.match(r'^git@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*:[\w\-./]+\.git$', url):
+        # Allow optional @ref suffix for commit refs (e.g., @abc123)
+        if not re.match(r'^git@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*:[\w\-./]+\.git(@[\w\-.]+)?$', url):
             raise ValidationError(
                 f"Invalid git@ URL format: {url}"
             )
