@@ -21,6 +21,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+import stat
 import unicodedata
 from collections.abc import Callable
 from pathlib import Path, PurePath
@@ -411,19 +412,26 @@ def validate_file_path(
                     # We've already validated that resolved_path is within project_root_resolved
                     # So if there were symlinks, they're safe (they resolve to within the root)
 
-                    # Additional safety check: if path exists and is a symlink itself,
-                    # verify the symlink target using readlink (atomic operation)
-                    if path.exists() and path.is_symlink():
-                        # Use os.readlink for atomic symlink reading
-                        symlink_target = os.readlink(
-                            path if path.is_absolute() else project_root_resolved / path
-                        )
-                        # If symlink target is absolute, check it directly
-                        if os.path.isabs(symlink_target):
-                            target_path = Path(symlink_target).resolve(strict=False)
-                            target_path.relative_to(project_root_resolved)
-                        # Relative symlink targets are resolved relative to symlink location
-                        # They're already validated by the resolved_path check above
+                    # Additional safety check: if path is a symlink itself,
+                    # verify the symlink target using atomic lstat + readlink
+                    symlink_path = path if path.is_absolute() else project_root_resolved / path
+                    try:
+                        # Use os.lstat() to atomically check if it's a symlink
+                        # without following it (avoids TOCTOU race condition)
+                        lstat_result = os.lstat(symlink_path)
+                        if stat.S_ISLNK(lstat_result.st_mode):
+                            # Now safe to read the symlink target
+                            symlink_target = os.readlink(symlink_path)
+                            # If symlink target is absolute, check it directly
+                            if os.path.isabs(symlink_target):
+                                target_path = Path(symlink_target).resolve(strict=False)
+                                target_path.relative_to(project_root_resolved)
+                            # Relative symlink targets are resolved relative to symlink location
+                            # They're already validated by the resolved_path check above
+                    except FileNotFoundError:
+                        # Path doesn't exist yet - this is fine for validation purposes
+                        # The must_exist check will catch this if needed
+                        pass
                 except ValueError:
                     raise ValidationError(
                         f"Path traversal detected: symlink '{path}' points outside "
