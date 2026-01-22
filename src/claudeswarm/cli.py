@@ -1790,7 +1790,6 @@ def cmd_init(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
-
 def main() -> NoReturn:
     """Main entry point for the claudeswarm CLI.
 
