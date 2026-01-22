@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
+import site
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -835,7 +838,7 @@ def cmd_config_edit(args: argparse.Namespace) -> None:
     if not editor:
         # Try common editors
         for e in ["vim", "vi", "nano", "emacs"]:
-            if subprocess.run(["which", e], capture_output=True).returncode == 0:
+            if shutil.which(e):
                 editor = e
                 break
 
@@ -1515,25 +1518,26 @@ def cmd_reload(args: argparse.Namespace) -> None:
             )
 
         # Clear site-packages cache
-        subprocess.run(
-            [
-                "find",
-                "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages",
-                "-type",
-                "d",
-                "-name",
-                "__pycache__",
-                "-path",
-                "*/claudeswarm/*",
-                "-exec",
-                "rm",
-                "-rf",
-                "{}",
-                "+",
-            ],
-            capture_output=True,
-            timeout=10,
-        )
+        for site_packages_dir in site.getsitepackages():
+            subprocess.run(
+                [
+                    "find",
+                    site_packages_dir,
+                    "-type",
+                    "d",
+                    "-name",
+                    "__pycache__",
+                    "-path",
+                    "*/claudeswarm/*",
+                    "-exec",
+                    "rm",
+                    "-rf",
+                    "{}",
+                    "+",
+                ],
+                capture_output=True,
+                timeout=10,
+            )
         print("   ✓ Caches cleared")
     except Exception as e:
         print(f"   ⚠️  Warning: Cache clearing incomplete: {e}", file=sys.stderr)
