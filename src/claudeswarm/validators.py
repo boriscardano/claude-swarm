@@ -780,7 +780,7 @@ def validate_host(
     host = host.strip()
 
     # Check for dangerous all-interfaces binding
-    if host in ("0.0.0.0", "::") and not allow_all_interfaces:
+    if host in ("0.0.0.0", "::") and not allow_all_interfaces:  # nosec B104 - security check, not binding
         if warn_callback:
             warn_callback(
                 f"Warning: Binding to '{host}' exposes the service to all network interfaces. "

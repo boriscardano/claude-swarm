@@ -435,7 +435,7 @@ class Monitor:
 
     def clear_screen(self) -> None:
         """Clear the terminal screen."""
-        os.system("clear" if os.name != "nt" else "cls")
+        os.system("clear" if os.name != "nt" else "cls")  # nosec B605 - safe hardcoded commands
 
     def update_display(self) -> None:
         """Update the monitoring display."""

@@ -244,7 +244,7 @@ class CloudSandbox:
 
         print(f"📦 Uploading claudeswarm wheel ({wheel_path.stat().st_size // 1024}KB)...")
         wheel_bytes = wheel_path.read_bytes()
-        sandbox_wheel_path = "/tmp/claude_swarm-0.1.0-py3-none-any.whl"
+        sandbox_wheel_path = "/tmp/claude_swarm-0.1.0-py3-none-any.whl"  # nosec B108 - sandbox temp path
 
         # Upload wheel to sandbox
         await asyncio.to_thread(
