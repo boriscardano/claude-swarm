@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from pathlib import Path, PurePath
 from typing import Any, Optional
 
@@ -231,16 +232,19 @@ def validate_file_path(
     - Be valid path strings or Path objects
     - Not be empty
     - Not contain path traversal attempts (if check_traversal=True)
+    - Not contain null bytes or other injection patterns
+    - Be within project_root (if check_traversal=True)
+    - Not be symlinks pointing outside project_root (if check_traversal=True)
     - Exist (if must_exist=True)
     - Be relative (if must_be_relative=True)
-    - Be within project_root if specified
 
     Args:
         filepath: Path to validate
         must_exist: If True, path must exist on filesystem
         must_be_relative: If True, path must be relative (not absolute)
-        project_root: If provided, path must be within this directory
-        check_traversal: If True, check for path traversal attempts
+        project_root: If provided, path must be within this directory.
+                     If check_traversal=True and project_root=None, will use get_project_root()
+        check_traversal: If True, check for path traversal attempts and ensure path is within project_root
 
     Returns:
         Validated Path object
@@ -263,6 +267,29 @@ def validate_file_path(
     if isinstance(filepath, str):
         if not filepath.strip():
             raise ValidationError("File path cannot be empty")
+
+        # Check for null bytes (common injection technique)
+        if '\x00' in filepath:
+            raise ValidationError(
+                f"Path contains null bytes: '{filepath}'"
+            )
+
+        # Normalize Unicode to prevent homoglyph attacks
+        # NFC (Canonical Decomposition, followed by Canonical Composition)
+        filepath = unicodedata.normalize('NFC', filepath)
+
+        # Normalize backslashes to forward slashes for cross-platform path traversal detection
+        # On Windows, Path() handles both automatically, but on POSIX, backslashes are
+        # treated as valid filename characters, which can bypass traversal detection
+        if '\\' in filepath:
+            # Check if this looks like a Windows-style path traversal
+            if '..\\' in filepath or '\\..\\' in filepath or filepath.endswith('\\..'):
+                raise ValidationError(
+                    f"Potentially dangerous path pattern detected: '{filepath}'"
+                )
+            # Also normalize backslashes for consistent handling
+            filepath = filepath.replace('\\', '/')
+
         try:
             path = Path(filepath)
         except (TypeError, ValueError) as e:
@@ -280,31 +307,77 @@ def validate_file_path(
             f"File path must be relative, got absolute path: {path}"
         )
 
-    # Path traversal check
+    # Enhanced path traversal check using resolve() and relative_to()
     if check_traversal:
-        # Check for obvious traversal patterns
-        path_str = str(path)
-        if '..' in path.parts:
-            raise ValidationError(
-                f"Path traversal detected (contains '..'): {path}"
-            )
+        # Only check relative paths for traversal by default
+        # If project_root is explicitly provided, check all paths
+        should_check_containment = project_root is not None or not path.is_absolute()
 
-        # Additional checks for common attack patterns
-        dangerous_patterns = ['../', '..\\', '%2e%2e']
-        if any(pattern in path_str.lower() for pattern in dangerous_patterns):
-            raise ValidationError(
-                f"Potentially dangerous path pattern detected: {path}"
-            )
+        if should_check_containment:
+            # Get project root
+            if project_root is None:
+                from .project import get_project_root
+                project_root = get_project_root()
 
-    # Project root containment check
-    if project_root is not None:
+            try:
+                # Resolve project root
+                project_root_resolved = Path(project_root).resolve(strict=False)
+
+                # Convert to absolute and resolve
+                if path.is_absolute():
+                    resolved_path = path.resolve(strict=False)
+                else:
+                    resolved_path = (project_root_resolved / path).resolve(strict=False)
+
+                # Check containment using relative_to() - most secure method
+                try:
+                    resolved_path.relative_to(project_root_resolved)
+                except ValueError:
+                    raise ValidationError(
+                        f"Path traversal detected: '{path}' resolves to '{resolved_path}' "
+                        f"which is outside project root '{project_root_resolved}'"
+                    )
+
+                # Check for symlinks pointing outside project root
+                if resolved_path.is_symlink():
+                    try:
+                        # Resolve the symlink target
+                        symlink_target = resolved_path.resolve(strict=True)
+                        symlink_target.relative_to(project_root_resolved)
+                    except ValueError:
+                        raise ValidationError(
+                            f"Path traversal detected: symlink '{path}' -> '{symlink_target}' "
+                            f"points outside project root '{project_root_resolved}'"
+                        )
+                    except (OSError, RuntimeError):
+                        # Can't resolve symlink, fail safe
+                        raise ValidationError(
+                            f"Cannot resolve symlink '{path}'. "
+                            f"Path validation requires resolvable paths for security."
+                        )
+
+                # Validation passed - path is safe
+                # Note: We don't modify the original path here, we just validated it
+
+            except ValidationError:
+                # Re-raise validation errors
+                raise
+            except (OSError, RuntimeError) as e:
+                # If path resolution fails, fail closed
+                raise ValidationError(
+                    f"Cannot resolve path '{filepath}': {e}. "
+                    f"Path validation requires resolvable paths for security."
+                )
+
+    # Legacy project root check (for backward compatibility when check_traversal=False)
+    elif project_root is not None:
         try:
-            project_root = Path(project_root).resolve()
-            resolved_path = path.resolve() if path.is_absolute() else (project_root / path).resolve()
+            project_root_resolved = Path(project_root).resolve()
+            resolved_path = path.resolve() if path.is_absolute() else (project_root_resolved / path).resolve()
 
             # Check if resolved path is within project root
             try:
-                resolved_path.relative_to(project_root)
+                resolved_path.relative_to(project_root_resolved)
             except ValueError:
                 raise ValidationError(
                     f"File path is outside project root: {path}"

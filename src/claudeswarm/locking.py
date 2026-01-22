@@ -202,31 +202,14 @@ class LockManager:
 
         except (OSError, RuntimeError) as e:
             # If path resolution fails (e.g., broken symlinks, permission errors),
-            # fall back to string-based validation for glob patterns
-
-            # For glob patterns and non-existent paths, validate the string representation
-            path_str = str(filepath)
-
-            # Check for obvious traversal patterns
-            if '..' in Path(path_str).parts:
-                raise ValueError(
-                    f"Path contains parent directory references (..): '{filepath}'"
-                )
-
-            # For absolute paths, verify they start with project root
-            if path_obj.is_absolute():
-                if not path_str.startswith(str(project_root_resolved)):
-                    raise ValueError(
-                        f"Absolute path '{filepath}' is outside project root '{project_root_resolved}'"
-                    )
-
-            # For relative paths with special characters, be conservative
-            # Only allow alphanumeric, hyphens, underscores, dots (not ..), slashes, and glob chars
-            import re
-            if not re.match(r'^[a-zA-Z0-9/_.\-*?\[\]]+$', path_str):
-                raise ValueError(
-                    f"Path contains potentially unsafe characters: '{filepath}'"
-                )
+            # FAIL CLOSED for security. Do not attempt string-based validation.
+            # Rationale: String validation can be bypassed with Unicode homoglyphs,
+            # null bytes, and other encoding tricks. The safe approach is to reject
+            # any path that cannot be properly resolved and validated.
+            raise ValueError(
+                f"Cannot resolve path '{filepath}': {e}. "
+                f"Path validation requires resolvable paths for security."
+            )
 
     def _get_lock_filename(self, filepath: str) -> str:
         """Generate a unique lock filename for a given filepath.
