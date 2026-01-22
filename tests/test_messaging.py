@@ -28,7 +28,10 @@ from claudeswarm.messaging import (
     RateLimiter,
     TmuxMessageDelivery,
     MessageLogger,
-    MessagingSystem
+    MessagingSystem,
+    TmuxError,
+    TmuxTimeoutError,
+    RateLimitExceeded
 )
 from claudeswarm.discovery import Agent as MockAgent
 
@@ -275,24 +278,35 @@ class TestTmuxMessageDelivery:
     @patch('subprocess.run')
     def test_send_to_pane_success(self, mock_run):
         """Test successful message delivery to pane."""
-        mock_run.return_value = Mock(returncode=0, stderr="")
+        # Mock for both verify_pane_exists and send_keys calls
+        mock_run.return_value = Mock(
+            returncode=0,
+            stderr="",
+            stdout="session:0.1\n"  # For verify_pane_exists
+        )
 
         result = TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
 
         assert result is True
-        # Should be called twice: once for command, once for Enter key
-        assert mock_run.call_count == 2
+        # Should be called three times: verify, send command, send Enter key
+        assert mock_run.call_count == 3
 
-        # First call: send the command
-        first_call_args = mock_run.call_args_list[0][0][0]
+        # First call: verify pane exists (list-panes)
+        verify_call_args = mock_run.call_args_list[0][0][0]
+        assert verify_call_args[0] == 'tmux'
+        assert verify_call_args[1] == 'list-panes'
+
+        # Second call: send the command with -l flag
+        first_call_args = mock_run.call_args_list[1][0][0]
         assert first_call_args[0] == 'tmux'
         assert first_call_args[1] == 'send-keys'
-        assert first_call_args[2] == '-t'
-        assert first_call_args[3] == 'session:0.1'
-        assert first_call_args[4].startswith('# [MESSAGE]')
+        assert first_call_args[2] == '-l'  # Literal interpretation flag
+        assert first_call_args[3] == '-t'
+        assert first_call_args[4] == 'session:0.1'
+        assert first_call_args[5].startswith('# [MESSAGE]')
 
-        # Second call: send Enter key
-        second_call_args = mock_run.call_args_list[1][0][0]
+        # Third call: send Enter key
+        second_call_args = mock_run.call_args_list[2][0][0]
         assert second_call_args[0] == 'tmux'
         assert second_call_args[1] == 'send-keys'
         assert second_call_args[2] == '-t'
@@ -302,21 +316,27 @@ class TestTmuxMessageDelivery:
     @patch('subprocess.run')
     def test_send_to_pane_failure(self, mock_run):
         """Test failed message delivery to pane."""
-        mock_run.return_value = Mock(returncode=1, stderr="Pane not found")
+        # First call (verify) succeeds, second call (send-keys) fails
+        mock_run.side_effect = [
+            Mock(returncode=0, stderr="", stdout="session:0.1\n"),  # verify succeeds
+            Mock(returncode=1, stderr="Pane not found")  # send-keys fails
+        ]
 
-        result = TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
-
-        assert result is False
+        with pytest.raises(TmuxError):
+            TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
 
     @patch('subprocess.run')
     def test_send_to_pane_timeout(self, mock_run):
         """Test timeout handling in message delivery."""
         import subprocess
-        mock_run.side_effect = subprocess.TimeoutExpired('tmux', 5)
+        # First call (verify) succeeds, second call (send-keys) times out
+        mock_run.side_effect = [
+            Mock(returncode=0, stderr="", stdout="session:0.1\n"),  # verify succeeds
+            subprocess.TimeoutExpired('tmux', 5)  # send-keys times out
+        ]
 
-        result = TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
-
-        assert result is False
+        with pytest.raises(TmuxTimeoutError):
+            TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
 
     @patch('subprocess.run')
     def test_verify_pane_exists(self, mock_run):
@@ -480,8 +500,8 @@ class TestMessagingSystem:
             assert result2 is not None
 
             # Third message should fail due to rate limit
-            result3 = system.send_message("agent-1", "agent-2", MessageType.INFO, "Msg 3")
-            assert result3 is None
+            with pytest.raises(RateLimitExceeded):
+                system.send_message("agent-1", "agent-2", MessageType.INFO, "Msg 3")
 
     @patch('claudeswarm.messaging.MessagingSystem._get_agent_pane')
     @patch('claudeswarm.messaging.MessagingSystem._load_agent_registry')

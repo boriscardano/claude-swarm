@@ -211,14 +211,13 @@ class FileLock:
                 "Ensure the directory is writable or exists with proper permissions."
             ) from e
 
-        # Create lock file if it doesn't exist with proper permissions
+        # Create lock file if it doesn't exist with secure permissions
         if not self.file_path.exists():
             try:
                 self.file_path.touch()
-                # Set permissions to 0o666 (rw-rw-rw-) for multi-user access
-                # The actual permissions will be modified by umask
-                os.chmod(self.file_path, stat.S_IRUSR | stat.S_IWUSR |
-                        stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH)
+                # Set permissions to 0o600 (rw-------) for user read/write only
+                # This prevents unauthorized access to lock files
+                os.chmod(self.file_path, stat.S_IRUSR | stat.S_IWUSR)
             except PermissionError as e:
                 raise FileLockError(
                     f"Permission denied creating lock file {self.file_path}. "

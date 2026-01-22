@@ -339,22 +339,38 @@ def validate_file_path(
                     )
 
                 # Check for symlinks pointing outside project root
-                if resolved_path.is_symlink():
-                    try:
-                        # Resolve the symlink target
-                        symlink_target = resolved_path.resolve(strict=True)
-                        symlink_target.relative_to(project_root_resolved)
-                    except ValueError:
-                        raise ValidationError(
-                            f"Path traversal detected: symlink '{path}' -> '{symlink_target}' "
-                            f"points outside project root '{project_root_resolved}'"
-                        )
-                    except (OSError, RuntimeError):
-                        # Can't resolve symlink, fail safe
-                        raise ValidationError(
-                            f"Cannot resolve symlink '{path}'. "
-                            f"Path validation requires resolvable paths for security."
-                        )
+                # The resolve() call above already followed symlinks, so resolved_path
+                # represents the final destination. The containment check validates this.
+                # For additional safety, check if original path contains symlinks
+                try:
+                    # Atomically check symlinks by comparing resolved vs unresolved paths
+                    # If the path contains symlinks, resolve() will have followed them
+                    # We've already validated that resolved_path is within project_root_resolved
+                    # So if there were symlinks, they're safe (they resolve to within the root)
+
+                    # Additional safety check: if path exists and is a symlink itself,
+                    # verify the symlink target using readlink (atomic operation)
+                    if path.exists() and path.is_symlink():
+                        # Use os.readlink for atomic symlink reading
+                        symlink_target = os.readlink(path if path.is_absolute() else project_root_resolved / path)
+                        # If symlink target is absolute, check it directly
+                        if os.path.isabs(symlink_target):
+                            target_path = Path(symlink_target).resolve(strict=False)
+                            target_path.relative_to(project_root_resolved)
+                        # Relative symlink targets are resolved relative to symlink location
+                        # They're already validated by the resolved_path check above
+                except ValueError:
+                    raise ValidationError(
+                        f"Path traversal detected: symlink '{path}' points outside "
+                        f"project root '{project_root_resolved}'"
+                    )
+                except (OSError, RuntimeError) as e:
+                    # Can't read symlink - fail safe
+                    # Note: OSError here means broken symlink or permission issue
+                    raise ValidationError(
+                        f"Cannot verify symlink '{path}': {e}. "
+                        f"Path validation requires readable paths for security."
+                    )
 
                 # Validation passed - path is safe
                 # Note: We don't modify the original path here, we just validated it

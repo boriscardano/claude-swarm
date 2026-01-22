@@ -561,21 +561,33 @@ class TmuxMessageDelivery:
             TmuxError: For other tmux errors
         """
         try:
+            # Validate pane ID format to prevent command injection
+            # Pane IDs should not contain shell metacharacters
+            if not isinstance(pane_id, str) or not pane_id:
+                raise TmuxError(f"Invalid pane ID: must be a non-empty string")
+
+            # Check for shell metacharacters that could cause injection
+            # Tmux accepts multiple formats: session:window.pane or %number
+            # We just need to ensure no shell metacharacters
+            dangerous_chars = set(';&|`$(){}[]<>*?!')
+            if any(c in pane_id for c in dangerous_chars):
+                raise TmuxError(
+                    f"Invalid pane ID '{pane_id}': contains shell metacharacters"
+                )
+
             # First verify pane exists to give better error messages
             if not TmuxMessageDelivery.verify_pane_exists(pane_id):
                 raise TmuxPaneNotFoundError(
                     f"Tmux pane {pane_id} not found. It may have been closed or the agent terminated."
                 )
 
-            # Escape the message
-            escaped = TmuxMessageDelivery.escape_for_tmux(message)
+            # Format message for display (no escaping needed with -l flag)
+            cmd = f"# [MESSAGE] {message}"
 
-            # Use bash comment to display message (no execution, no approval needed)
-            cmd = f"# [MESSAGE] {escaped}"
-
-            # Send command text to tmux pane
+            # Send command text to tmux pane using -l for literal interpretation
+            # The -l flag treats the text literally, preventing command injection
             result = subprocess.run(
-                ['tmux', 'send-keys', '-t', pane_id, cmd],
+                ['tmux', 'send-keys', '-l', '-t', pane_id, cmd],
                 capture_output=True,
                 text=True,
                 timeout=timeout
@@ -806,8 +818,12 @@ class MessageLogger:
                         recipients = msg.get('recipients', [])
                         if agent_id in recipients or 'all' in recipients:
                             messages.append(msg)
-                    except json.JSONDecodeError:
-                        # Skip invalid JSON lines
+                    except json.JSONDecodeError as e:
+                        # Log corrupted JSON entries for debugging
+                        logger.warning(
+                            f"Skipping corrupted JSON entry in {self.log_file}: {e}. "
+                            f"Line content (truncated): {line[:100]}"
+                        )
                         continue
 
         except (IOError, OSError) as e:
