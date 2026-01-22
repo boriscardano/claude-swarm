@@ -697,9 +697,9 @@ class TestAuthentication:
         # Verify secrets module is imported
         import claudeswarm.web.server as server_module
 
-        assert hasattr(server_module, "secrets"), (
-            "Server module should import secrets module for secure comparison"
-        )
+        assert hasattr(
+            server_module, "secrets"
+        ), "Server module should import secrets module for secure comparison"
 
     def test_www_authenticate_header_format(self, client, monkeypatch):
         """Test WWW-Authenticate header has correct format."""

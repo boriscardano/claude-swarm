@@ -603,9 +603,10 @@ class TestTmuxPaneCreation:
 
     def test_create_tmux_pane_logs_error_on_failure(self, caplog):
         """Test that create_tmux_monitoring_pane logs errors when pane creation fails."""
-        from unittest.mock import patch
-        from claudeswarm.monitoring import create_tmux_monitoring_pane
         import subprocess
+        from unittest.mock import patch
+
+        from claudeswarm.monitoring import create_tmux_monitoring_pane
 
         with patch("subprocess.run") as mock_run:
             # Simulate command returning non-zero
@@ -621,9 +622,10 @@ class TestTmuxPaneCreation:
 
     def test_create_tmux_pane_logs_timeout(self, caplog):
         """Test that create_tmux_monitoring_pane logs timeout errors."""
-        from unittest.mock import patch
-        from claudeswarm.monitoring import create_tmux_monitoring_pane
         import subprocess
+        from unittest.mock import patch
+
+        from claudeswarm.monitoring import create_tmux_monitoring_pane
 
         with patch("subprocess.run") as mock_run:
             # Simulate timeout
@@ -639,6 +641,7 @@ class TestTmuxPaneCreation:
     def test_create_tmux_pane_logs_not_found(self, caplog):
         """Test that create_tmux_monitoring_pane logs when tmux is not found."""
         from unittest.mock import patch
+
         from claudeswarm.monitoring import create_tmux_monitoring_pane
 
         with patch("subprocess.run") as mock_run:

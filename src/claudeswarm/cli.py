@@ -72,6 +72,7 @@ def positive_int(value: str) -> int:
 
     return ivalue
 
+
 # Stale threshold validation bounds (in seconds)
 # These align with DiscoveryConfig validation in config.py
 MIN_STALE_THRESHOLD = 1
