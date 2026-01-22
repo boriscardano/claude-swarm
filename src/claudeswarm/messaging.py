@@ -392,10 +392,49 @@ class RateLimiter:
 
             return True
 
-    def record_message(self, agent_id: str):
-        """Record that a message was sent by an agent."""
+    def check_rate_limit_bulk(self, agent_id: str, count: int) -> bool:
+        """Check if agent can send multiple messages within rate limit.
+
+        This method is used for broadcasts to ensure that sending a message
+        to N recipients counts as N messages toward the rate limit, preventing
+        broadcast DoS attacks where an agent could send 10 broadcasts to 100
+        recipients each (1000 effective messages) while appearing to stay
+        within a 10 msg/min limit.
+
+        Args:
+            agent_id: ID of the agent to check
+            count: Number of messages to check (e.g., number of broadcast recipients)
+
+        Returns:
+            True if sending count messages would be within limit, False otherwise
+        """
         with self._lock:
-            self._message_times[agent_id].append(datetime.now())
+            now = datetime.now()
+            cutoff = now - timedelta(seconds=self.window_seconds)
+
+            # Remove old timestamps
+            times = self._message_times[agent_id]
+            while times and times[0] < cutoff:
+                times.popleft()
+
+            # Check if we have room for count more messages
+            if len(times) + count > self.max_messages:
+                return False
+
+            return True
+
+    def record_message(self, agent_id: str, count: int = 1):
+        """Record that message(s) were sent by an agent.
+
+        Args:
+            agent_id: ID of the agent
+            count: Number of messages to record (default: 1)
+        """
+        with self._lock:
+            now = datetime.now()
+            # Record count timestamps for rate limiting
+            for _ in range(count):
+                self._message_times[agent_id].append(now)
 
     def reset_agent(self, agent_id: str):
         """Reset rate limit for a specific agent."""
@@ -1059,17 +1098,7 @@ class MessagingSystem:
             MessageDeliveryError: If broadcast validation fails
             FileLockTimeout: If cannot acquire registry lock
         """
-        # Check rate limit first
-        if not self.rate_limiter.check_rate_limit(sender_id):
-            max_messages = self.rate_limiter.max_messages
-            window_seconds = self.rate_limiter.window_seconds
-            raise RateLimitExceeded(
-                f"Rate limit exceeded for {sender_id}. "
-                f"Maximum {max_messages} messages per {window_seconds} seconds. "
-                f"Please wait before sending more messages."
-            )
-
-        # Load agent registry with file locking
+        # Load agent registry with file locking first to get recipient count
         registry = self._load_agent_registry()
         if not registry:
             raise AgentNotFoundError(
@@ -1105,6 +1134,17 @@ class MessagingSystem:
             raise MessageDeliveryError(
                 f"Too many recipients ({len(recipients)}) for broadcast. "
                 f"Maximum is {max_recipients}. Consider using targeted messages instead."
+            )
+
+        # Check rate limit for EACH recipient (prevents broadcast DoS)
+        # This ensures broadcasting to N recipients counts as N messages toward the rate limit
+        if not self.rate_limiter.check_rate_limit_bulk(sender_id, len(recipients)):
+            max_messages = self.rate_limiter.max_messages
+            window_seconds = self.rate_limiter.window_seconds
+            raise RateLimitExceeded(
+                f"Rate limit exceeded for {sender_id}: broadcasting to {len(recipients)} recipients "
+                f"would exceed {max_messages} msg/{window_seconds}s limit. "
+                f"Please wait before sending more messages."
             )
 
         logger.info(f"Broadcasting to {len(recipients)} recipients: {', '.join(recipients)}")
@@ -1181,11 +1221,12 @@ class MessagingSystem:
         # - Monitor agent health/reachability
         #
         # RATE LIMITING:
-        # Rate limit is recorded AFTER delivery loop, not before each send:
-        # - One rate limit "charge" per broadcast, not per recipient
-        # - Prevents broadcasts from being expensive in rate limit budget
-        # - Fair policy: broadcasting to 10 agents costs same as to 1 agent
+        # Rate limit is recorded AFTER delivery loop, counting each recipient:
+        # - Each recipient counts as one message toward the rate limit
+        # - Prevents broadcast DoS: can't send 10 broadcasts × 100 recipients = 1000 messages
+        # - Fair policy: broadcasting to 10 agents costs 10× more than to 1 agent
         # - Recorded even if all deliveries fail (we attempted the broadcast)
+        # - Check is done BEFORE delivery using check_rate_limit_bulk()
         #
         # PERFORMANCE CHARACTERISTICS:
         # - Best case (all succeed): ~100ms for 10 recipients
@@ -1228,8 +1269,9 @@ class MessagingSystem:
                 logger.error(f"Unexpected error delivering broadcast to {recipient_id}: {e}")
                 delivery_status[recipient_id] = False
 
-        # Always record rate limit (we attempted the broadcast)
-        self.rate_limiter.record_message(sender_id)
+        # Always record rate limit for EACH recipient (we attempted the broadcast)
+        # This ensures broadcasting to N recipients counts as N messages toward the rate limit
+        self.rate_limiter.record_message(sender_id, len(recipients))
 
         # Store delivery status in message for CLI access
         message.delivery_status = delivery_status
