@@ -21,7 +21,6 @@ import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 from .logging_config import get_logger
 from .messaging import MessageType, broadcast_message, send_message
@@ -29,9 +28,8 @@ from .utils import load_json, save_json
 from .validators import (
     ValidationError,
     validate_agent_id,
-    validate_retry_count,
-    validate_timeout,
     validate_message_content,
+    validate_timeout,
 )
 
 __all__ = [
@@ -102,7 +100,7 @@ class AckSystem:
     MAX_RETRIES = 3
     RETRY_DELAYS = [30, 60, 120]  # Exponential backoff in seconds
 
-    def __init__(self, pending_file: Optional[Path] = None):
+    def __init__(self, pending_file: Path | None = None):
         """Initialize ACK system.
 
         Args:
@@ -135,7 +133,7 @@ class AckSystem:
             return [], 0
 
     def _save_pending_acks(
-        self, acks: list[PendingAck], expected_version: Optional[int] = None
+        self, acks: list[PendingAck], expected_version: int | None = None
     ) -> bool:
         """Save pending ACKs to file with optimistic locking.
 
@@ -176,7 +174,7 @@ class AckSystem:
         msg_type: MessageType,
         content: str,
         timeout: int = 30,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Send a message that requires acknowledgment.
 
         The message will be sent with [REQUIRES-ACK] prefix and tracked
@@ -202,7 +200,7 @@ class AckSystem:
             content = validate_message_content(content)
             timeout = validate_timeout(timeout, min_val=1, max_val=300)
         except ValidationError as e:
-            raise ValueError(f"Invalid input: {e}")
+            raise ValueError(f"Invalid input: {e}") from e
 
         # Prefix content with [REQUIRES-ACK]
         ack_content = f"[REQUIRES-ACK] {content}"
@@ -307,7 +305,7 @@ class AckSystem:
             logger.warning(f"No pending ACK found for message {msg_id}")
             return False
 
-    def check_pending_acks(self, agent_id: Optional[str] = None) -> list[PendingAck]:
+    def check_pending_acks(self, agent_id: str | None = None) -> list[PendingAck]:
         """Check for messages awaiting acknowledgment.
 
         Args:
@@ -432,8 +430,7 @@ class AckSystem:
             ack: PendingAck entry to escalate
         """
         logger.warning(
-            f"Escalating unacknowledged message {ack.msg_id} after "
-            f"{self.MAX_RETRIES} retries"
+            f"Escalating unacknowledged message {ack.msg_id} after " f"{self.MAX_RETRIES} retries"
         )
 
         msg_dict = ack.message
@@ -450,7 +447,7 @@ class AckSystem:
             exclude_self=False,  # Include sender in escalation
         )
 
-    def get_pending_count(self, agent_id: Optional[str] = None) -> int:
+    def get_pending_count(self, agent_id: str | None = None) -> int:
         """Get count of pending ACKs.
 
         Args:
@@ -462,7 +459,7 @@ class AckSystem:
         acks = self.check_pending_acks(agent_id)
         return len(acks)
 
-    def clear_pending_acks(self, agent_id: Optional[str] = None) -> int:
+    def clear_pending_acks(self, agent_id: str | None = None) -> int:
         """Clear pending ACKs (for testing/admin purposes).
 
         Args:
@@ -487,7 +484,7 @@ class AckSystem:
 
 
 # Module-level singleton instance
-_default_ack_system: Optional[AckSystem] = None
+_default_ack_system: AckSystem | None = None
 _system_lock = threading.Lock()
 
 
@@ -561,7 +558,7 @@ def receive_ack(msg_id: str, agent_id: str) -> bool:
     return acknowledge_message(msg_id, agent_id)
 
 
-def check_pending_acks(agent_id: Optional[str] = None) -> list[PendingAck]:
+def check_pending_acks(agent_id: str | None = None) -> list[PendingAck]:
     """Check for messages awaiting acknowledgment.
 
     Args:

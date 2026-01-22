@@ -6,14 +6,12 @@ including API endpoints, SSE streaming, error handling, security headers, and CO
 Author: Code Review Expert
 """
 
+import json
+import time
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock, mock_open, AsyncMock
-import json
-import os
-import time
-from pathlib import Path
-from datetime import datetime
 
 
 # Mock the project paths before importing
@@ -25,8 +23,12 @@ def mock_paths(tmp_path, monkeypatch):
     or included as a dependency of the client fixture for integration tests.
     """
     monkeypatch.setattr("claudeswarm.web.server.PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr("claudeswarm.web.server.ACTIVE_AGENTS_FILE", tmp_path / "ACTIVE_AGENTS.json")
-    monkeypatch.setattr("claudeswarm.web.server.AGENT_MESSAGES_LOG", tmp_path / "agent_messages.log")
+    monkeypatch.setattr(
+        "claudeswarm.web.server.ACTIVE_AGENTS_FILE", tmp_path / "ACTIVE_AGENTS.json"
+    )
+    monkeypatch.setattr(
+        "claudeswarm.web.server.AGENT_MESSAGES_LOG", tmp_path / "agent_messages.log"
+    )
     monkeypatch.setattr("claudeswarm.web.server.AGENT_LOCKS_DIR", tmp_path / ".agent_locks")
     monkeypatch.setattr("claudeswarm.web.server.STATIC_DIR", tmp_path / "static")
 
@@ -45,6 +47,7 @@ def client(mock_paths):
     before creating the FastAPI app instance.
     """
     from claudeswarm.web.server import app
+
     return TestClient(app)
 
 
@@ -98,8 +101,8 @@ class TestAgentsEndpoint:
             "updated_at": "2026-01-22T12:00:00Z",
             "agents": [
                 {"agent_id": "agent-0", "pid": 1234, "status": "active"},
-                {"agent_id": "agent-1", "pid": 5678, "status": "active"}
-            ]
+                {"agent_id": "agent-1", "pid": 5678, "status": "active"},
+            ],
         }
         (tmp_path / "ACTIVE_AGENTS.json").write_text(json.dumps(agents_data))
 
@@ -130,6 +133,7 @@ class TestAgentsEndpoint:
         # Mock FileLock to raise timeout
         with patch("claudeswarm.web.server.FileLock") as mock_lock:
             from claudeswarm.file_lock import FileLockTimeout
+
             mock_lock.return_value.__enter__.side_effect = FileLockTimeout("timeout")
 
             response = client.get("/api/agents")
@@ -161,13 +165,13 @@ class TestLocksEndpoint:
             "agent_id": "agent-0",
             "filepath": "test1.py",
             "reason": "editing",
-            "locked_at": time.time()
+            "locked_at": time.time(),
         }
         lock2 = {
             "agent_id": "agent-1",
             "filepath": "test2.py",
             "reason": "reviewing",
-            "locked_at": time.time()
+            "locked_at": time.time(),
         }
 
         (locks_dir / "test1.py.lock").write_text(json.dumps(lock1))
@@ -229,9 +233,24 @@ class TestMessagesEndpoint:
     def test_returns_messages_from_log(self, client, tmp_path):
         """Test returns messages from agent_messages.log."""
         messages = [
-            {"sender_id": "agent-0", "msg_type": "INFO", "content": "Test 1", "timestamp": "2026-01-22T12:00:00Z"},
-            {"sender_id": "agent-1", "msg_type": "QUESTION", "content": "Test 2", "timestamp": "2026-01-22T12:01:00Z"},
-            {"sender_id": "agent-2", "msg_type": "ANSWER", "content": "Test 3", "timestamp": "2026-01-22T12:02:00Z"}
+            {
+                "sender_id": "agent-0",
+                "msg_type": "INFO",
+                "content": "Test 1",
+                "timestamp": "2026-01-22T12:00:00Z",
+            },
+            {
+                "sender_id": "agent-1",
+                "msg_type": "QUESTION",
+                "content": "Test 2",
+                "timestamp": "2026-01-22T12:01:00Z",
+            },
+            {
+                "sender_id": "agent-2",
+                "msg_type": "ANSWER",
+                "content": "Test 3",
+                "timestamp": "2026-01-22T12:02:00Z",
+            },
         ]
 
         log_content = "\n".join(json.dumps(msg) for msg in messages)
@@ -247,7 +266,12 @@ class TestMessagesEndpoint:
     def test_respects_limit_parameter(self, client, tmp_path):
         """Test respects limit parameter for message count."""
         messages = [
-            {"sender_id": f"agent-{i}", "msg_type": "INFO", "content": f"Test {i}", "timestamp": f"2026-01-22T12:00:{i:02d}Z"}
+            {
+                "sender_id": f"agent-{i}",
+                "msg_type": "INFO",
+                "content": f"Test {i}",
+                "timestamp": f"2026-01-22T12:00:{i:02d}Z",
+            }
             for i in range(100)
         ]
 
@@ -319,7 +343,7 @@ class TestStatsEndpoint:
         agents_data = {
             "session_name": "test-session",
             "updated_at": "2026-01-22T12:00:00Z",
-            "agents": [{"agent_id": "agent-0"}, {"agent_id": "agent-1"}]
+            "agents": [{"agent_id": "agent-0"}, {"agent_id": "agent-1"}],
         }
         (tmp_path / "ACTIVE_AGENTS.json").write_text(json.dumps(agents_data))
 
@@ -332,7 +356,7 @@ class TestStatsEndpoint:
         messages = [
             {"msg_type": "INFO", "content": "Test 1"},
             {"msg_type": "INFO", "content": "Test 2"},
-            {"msg_type": "QUESTION", "content": "Test 3"}
+            {"msg_type": "QUESTION", "content": "Test 3"},
         ]
         log_content = "\n".join(json.dumps(msg) for msg in messages)
         (tmp_path / "agent_messages.log").write_text(log_content)
@@ -419,10 +443,11 @@ class TestDashboardRootEndpoint:
 
         # Mock open to raise IOError - patch at the module level
         original_open = open
+
         def mock_open_error(*args, **kwargs):
             # Only raise error for index.html, let other files through
             if len(args) > 0 and "index.html" in str(args[0]):
-                raise IOError("Test error")
+                raise OSError("Test error")
             return original_open(*args, **kwargs)
 
         with patch("builtins.open", side_effect=mock_open_error):
@@ -436,7 +461,6 @@ class TestSecurityHeaders:
 
     def test_cors_middleware_configured(self, client):
         """Test CORS middleware is configured in the app."""
-        from claudeswarm.web.server import app
         # Check that CORS middleware is added
         # CORS headers only appear with proper Origin header
         response = client.get("/api/v1/agents", headers={"Origin": "http://localhost:3000"})
@@ -447,8 +471,9 @@ class TestSecurityHeaders:
     def test_cors_allows_credentials(self, client):
         """Test CORS configuration allows credentials."""
         from claudeswarm.web.server import app
+
         # Verify CORS middleware is in the middleware stack
-        has_cors = any(
+        _ = any(
             "CORSMiddleware" in str(type(middleware))
             for middleware in getattr(app, "user_middleware", [])
         )
@@ -482,7 +507,7 @@ class TestSecurityHeaders:
             "/api/v1/agents",
             "/api/v1/locks",
             "/api/v1/messages",
-            "/api/v1/stats"
+            "/api/v1/stats",
         ]
 
         for endpoint in endpoints:
@@ -532,7 +557,7 @@ class TestAuthentication:
             "/api/v1/agents",
             "/api/v1/locks",
             "/api/v1/messages",
-            "/api/v1/stats"
+            "/api/v1/stats",
         ]
 
         for endpoint in endpoints:
@@ -586,13 +611,7 @@ class TestAuthentication:
         monkeypatch.setenv("DASHBOARD_PASSWORD", "secret123")
 
         # Test non-streaming endpoints
-        endpoints = [
-            "/",
-            "/api/v1/agents",
-            "/api/v1/locks",
-            "/api/v1/messages",
-            "/api/v1/stats"
-        ]
+        endpoints = ["/", "/api/v1/agents", "/api/v1/locks", "/api/v1/messages", "/api/v1/stats"]
 
         for endpoint in endpoints:
             # Without auth
@@ -625,7 +644,7 @@ class TestAuthentication:
             "/api/locks",
             "/api/messages",
             "/api/stats",
-            "/api/stream"
+            "/api/stream",
         ]
 
         for endpoint in legacy_endpoints:
@@ -726,8 +745,12 @@ class TestErrorHandling:
     def test_handles_missing_files_gracefully(self, client, tmp_path, monkeypatch):
         """Test endpoints handle missing files gracefully."""
         # Point to non-existent files
-        monkeypatch.setattr("claudeswarm.web.server.ACTIVE_AGENTS_FILE", tmp_path / "nonexistent.json")
-        monkeypatch.setattr("claudeswarm.web.server.AGENT_MESSAGES_LOG", tmp_path / "nonexistent.log")
+        monkeypatch.setattr(
+            "claudeswarm.web.server.ACTIVE_AGENTS_FILE", tmp_path / "nonexistent.json"
+        )
+        monkeypatch.setattr(
+            "claudeswarm.web.server.AGENT_MESSAGES_LOG", tmp_path / "nonexistent.log"
+        )
 
         # Should return empty data, not errors
         response = client.get("/api/agents")
@@ -767,10 +790,7 @@ class TestCORSHandling:
         """Test CORS preflight OPTIONS request."""
         response = client.options(
             "/api/agents",
-            headers={
-                "Origin": "http://localhost:3000",
-                "Access-Control-Request-Method": "GET"
-            }
+            headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "GET"},
         )
         # Should handle preflight
         assert response.status_code in [200, 204]
@@ -780,7 +800,9 @@ class TestCORSHandling:
         response = client.get("/api/agents")
         headers = response.headers
         # Check if credentials are allowed
-        allow_credentials = headers.get("access-control-allow-credentials") or headers.get("Access-Control-Allow-Credentials")
+        allow_credentials = headers.get("access-control-allow-credentials") or headers.get(
+            "Access-Control-Allow-Credentials"
+        )
         # FastAPI CORS with allow_credentials=True should set this
         if allow_credentials:
             assert allow_credentials.lower() == "true"
@@ -822,10 +844,7 @@ class TestUtilityFunctions:
         from claudeswarm.web.server import tail_log_file
 
         log_file = tmp_path / "test.log"
-        messages = [
-            {"id": i, "msg": f"Message {i}"}
-            for i in range(100)
-        ]
+        messages = [{"id": i, "msg": f"Message {i}"} for i in range(100)]
         log_file.write_text("\n".join(json.dumps(m) for m in messages))
 
         result = tail_log_file(log_file, limit=10)
@@ -950,10 +969,7 @@ class TestPerformance:
     def test_large_message_log_handling(self, client, tmp_path):
         """Test handling large message logs efficiently."""
         # Create log with many messages
-        messages = [
-            {"id": i, "msg_type": "INFO", "content": f"Message {i}"}
-            for i in range(5000)
-        ]
+        messages = [{"id": i, "msg_type": "INFO", "content": f"Message {i}"} for i in range(5000)]
         log_content = "\n".join(json.dumps(m) for m in messages)
         (tmp_path / "agent_messages.log").write_text(log_content)
 

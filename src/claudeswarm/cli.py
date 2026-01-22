@@ -11,31 +11,29 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import List, NoReturn, Optional
+from typing import NoReturn
 
-from claudeswarm.locking import LockManager
-from claudeswarm.discovery import refresh_registry, list_active_agents
-from claudeswarm.logging_config import get_logger, setup_logging
-from claudeswarm.monitoring import start_monitoring
 from claudeswarm.config import (
-    load_config,
-    get_config,
-    ClaudeSwarmConfig,
     ConfigValidationError,
     _find_config_file,
+    get_config,
+    load_config,
 )
-from claudeswarm.project import get_project_root, find_project_root
+from claudeswarm.discovery import list_active_agents, refresh_registry
+from claudeswarm.locking import LockManager
+from claudeswarm.logging_config import get_logger, setup_logging
+from claudeswarm.monitoring import start_monitoring
+from claudeswarm.project import find_project_root
 from claudeswarm.validators import (
     ValidationError,
     validate_agent_id,
     validate_file_path,
-    validate_timeout,
-    validate_message_content,
-    validate_tmux_pane_id,
     validate_host,
+    validate_message_content,
     validate_port,
+    validate_tmux_pane_id,
 )
 
 __all__ = ["main"]
@@ -63,11 +61,11 @@ WHOAMI_MESSAGE_PREVIEW_LIMIT = 3
 
 def format_timestamp(ts: float) -> str:
     """Format a Unix timestamp as a human-readable string."""
-    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    dt = datetime.fromtimestamp(ts, tz=UTC)
     return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def get_cached_sandbox_id() -> Optional[str]:
+def get_cached_sandbox_id() -> str | None:
     """Get cached sandbox ID with fallback chain.
 
     Checks in order:
@@ -134,21 +132,25 @@ def cmd_acquire_file_lock(args: argparse.Namespace) -> None:
                 agent_id = detected_id
             else:
                 print("Error: Could not auto-detect agent identity", file=sys.stderr)
-                print("Please provide agent_id or run 'claudeswarm whoami' to verify registration", file=sys.stderr)
+                print(
+                    "Please provide agent_id or run 'claudeswarm whoami' to verify registration",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
 
         # Validate inputs
         validated_agent_id = validate_agent_id(agent_id)
         validated_filepath = validate_file_path(
-            args.filepath,
-            must_be_relative=False,
-            check_traversal=True
+            args.filepath, must_be_relative=False, check_traversal=True
         )
 
         # Validate reason if provided
         reason = args.reason or ""
         if reason and len(reason) > MAX_LOCK_REASON_LENGTH:
-            print(f"Error: Lock reason too long (max {MAX_LOCK_REASON_LENGTH} characters)", file=sys.stderr)
+            print(
+                f"Error: Lock reason too long (max {MAX_LOCK_REASON_LENGTH} characters)",
+                file=sys.stderr,
+            )
             sys.exit(1)
     except ValidationError as e:
         print(f"Validation error: {e}", file=sys.stderr)
@@ -193,15 +195,16 @@ def cmd_release_file_lock(args: argparse.Namespace) -> None:
                 agent_id = detected_id
             else:
                 print("Error: Could not auto-detect agent identity", file=sys.stderr)
-                print("Please provide agent_id or run 'claudeswarm whoami' to verify registration", file=sys.stderr)
+                print(
+                    "Please provide agent_id or run 'claudeswarm whoami' to verify registration",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
 
         # Validate inputs
         validated_agent_id = validate_agent_id(agent_id)
         validated_filepath = validate_file_path(
-            args.filepath,
-            must_be_relative=False,
-            check_traversal=True
+            args.filepath, must_be_relative=False, check_traversal=True
         )
     except ValidationError as e:
         print(f"Validation error: {e}", file=sys.stderr)
@@ -219,9 +222,7 @@ def cmd_release_file_lock(args: argparse.Namespace) -> None:
         sys.exit(0)
     else:
         print(f"Failed to release lock on: {args.filepath}", file=sys.stderr)
-        print(
-            "  (Lock may not exist or is owned by another agent)", file=sys.stderr
-        )
+        print("  (Lock may not exist or is owned by another agent)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -230,9 +231,7 @@ def cmd_who_has_lock(args: argparse.Namespace) -> None:
     try:
         # Validate filepath
         validated_filepath = validate_file_path(
-            args.filepath,
-            must_be_relative=False,
-            check_traversal=True
+            args.filepath, must_be_relative=False, check_traversal=True
         )
     except ValidationError as e:
         print(f"Validation error: {e}", file=sys.stderr)
@@ -297,10 +296,16 @@ def cmd_discover_agents(args: argparse.Namespace) -> None:
     # Validate stale_threshold
     try:
         if args.stale_threshold < MIN_STALE_THRESHOLD or args.stale_threshold > MAX_STALE_THRESHOLD:
-            print(f"Error: stale_threshold must be between {MIN_STALE_THRESHOLD} and {MAX_STALE_THRESHOLD} seconds", file=sys.stderr)
+            print(
+                f"Error: stale_threshold must be between {MIN_STALE_THRESHOLD} and {MAX_STALE_THRESHOLD} seconds",
+                file=sys.stderr,
+            )
             sys.exit(1)
         if args.watch and (args.interval < MIN_INTERVAL or args.interval > MAX_INTERVAL):
-            print(f"Error: interval must be between {MIN_INTERVAL} and {MAX_INTERVAL} seconds", file=sys.stderr)
+            print(
+                f"Error: interval must be between {MIN_INTERVAL} and {MAX_INTERVAL} seconds",
+                file=sys.stderr,
+            )
             sys.exit(1)
     except (TypeError, AttributeError) as e:
         print(f"Error: Invalid argument type: {e}", file=sys.stderr)
@@ -321,8 +326,14 @@ def cmd_discover_agents(args: argparse.Namespace) -> None:
                         print()
 
                         for agent in registry.agents:
-                            status_symbol = "✓" if agent.status == "active" else "⚠" if agent.status == "stale" else "✗"
-                            print(f"  {status_symbol} {agent.id:<12} | {agent.pane_index:<20} | PID: {agent.pid:<8} | {agent.status}")
+                            status_symbol = (
+                                "✓"
+                                if agent.status == "active"
+                                else "⚠" if agent.status == "stale" else "✗"
+                            )
+                            print(
+                                f"  {status_symbol} {agent.id:<12} | {agent.pane_index:<20} | PID: {agent.pid:<8} | {agent.status}"
+                            )
                     else:
                         print(json.dumps(registry.to_dict(), indent=2))
 
@@ -346,11 +357,17 @@ def cmd_discover_agents(args: argparse.Namespace) -> None:
                     print("  No agents discovered.")
                 else:
                     for agent in registry.agents:
-                        status_symbol = "✓" if agent.status == "active" else "⚠" if agent.status == "stale" else "✗"
-                        print(f"  {status_symbol} {agent.id:<12} | {agent.pane_index:<20} | PID: {agent.pid:<8} | {agent.status}")
+                        status_symbol = (
+                            "✓"
+                            if agent.status == "active"
+                            else "⚠" if agent.status == "stale" else "✗"
+                        )
+                        print(
+                            f"  {status_symbol} {agent.id:<12} | {agent.pane_index:<20} | PID: {agent.pid:<8} | {agent.status}"
+                        )
 
                 print()
-                print(f"Registry saved to: ACTIVE_AGENTS.json")
+                print("Registry saved to: ACTIVE_AGENTS.json")
 
         sys.exit(0)
 
@@ -384,17 +401,18 @@ def cmd_list_agents(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def _detect_current_agent() -> tuple[Optional[str], Optional[dict]]:
+def _detect_current_agent() -> tuple[str | None, dict | None]:
     """Detect the current agent from TMUX_PANE environment variable.
 
     Returns:
         Tuple of (agent_id, agent_dict) if found, (None, None) otherwise
     """
     import os
+
     from claudeswarm.project import get_active_agents_path
 
     # Check if running in tmux
-    tmux_pane_id = os.environ.get('TMUX_PANE')
+    tmux_pane_id = os.environ.get("TMUX_PANE")
     if not tmux_pane_id:
         return None, None
 
@@ -411,32 +429,38 @@ def _detect_current_agent() -> tuple[Optional[str], Optional[dict]]:
         return None, None
 
     try:
-        with open(registry_path, 'r', encoding='utf-8') as f:
+        with open(registry_path, encoding="utf-8") as f:
             registry = json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return None, None
 
-    agents = registry.get('agents', [])
+    agents = registry.get("agents", [])
 
     # Try matching by TMUX_PANE env var (works in sandboxed environments!)
     for agent in agents:
-        if agent.get('tmux_pane_id') == tmux_pane_id:
-            return agent.get('id'), agent
+        if agent.get("tmux_pane_id") == tmux_pane_id:
+            return agent.get("id"), agent
 
     # Fallback: Try converting TMUX_PANE to pane index format
     try:
         result = subprocess.run(
-            ['tmux', 'display-message', '-p', '-t', tmux_pane_id,
-             '#{session_name}:#{window_index}.#{pane_index}'],
+            [
+                "tmux",
+                "display-message",
+                "-p",
+                "-t",
+                tmux_pane_id,
+                "#{session_name}:#{window_index}.#{pane_index}",
+            ],
             capture_output=True,
             text=True,
-            timeout=2.0
+            timeout=2.0,
         )
         if result.returncode == 0:
             current_pane = result.stdout.strip()
             for agent in agents:
-                if agent.get('pane_index') == current_pane:
-                    return agent.get('id'), agent
+                if agent.get("pane_index") == current_pane:
+                    return agent.get("id"), agent
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
 
@@ -457,7 +481,7 @@ def cmd_send_message(args: argparse.Namespace) -> None:
         0: Success - message sent
         1: Failure - validation error, recipient not found, or send failed
     """
-    from claudeswarm.messaging import send_message, MessageType
+    from claudeswarm.messaging import MessageType, send_message
     from claudeswarm.validators import sanitize_message_content
 
     try:
@@ -469,7 +493,10 @@ def cmd_send_message(args: argparse.Namespace) -> None:
                 sender_id = detected_id
             else:
                 print("Error: Could not auto-detect agent identity", file=sys.stderr)
-                print("Please provide sender_id or run 'claudeswarm whoami' to verify registration", file=sys.stderr)
+                print(
+                    "Please provide sender_id or run 'claudeswarm whoami' to verify registration",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
 
         # Validate agent IDs (validators handle all validation including length)
@@ -490,7 +517,7 @@ def cmd_send_message(args: argparse.Namespace) -> None:
             valid_types_display = [t.replace("_", "-").lower() for t in valid_types]
             print(f"Error: Invalid message type '{args.type}'", file=sys.stderr)
             print(f"Valid types: {', '.join(valid_types_display)}", file=sys.stderr)
-            print(f"  (case-insensitive, use hyphens or underscores)", file=sys.stderr)
+            print("  (case-insensitive, use hyphens or underscores)", file=sys.stderr)
             sys.exit(1)
 
         # Send message (messaging layer validates recipient exists via _get_agent_pane)
@@ -498,16 +525,16 @@ def cmd_send_message(args: argparse.Namespace) -> None:
             sender_id=validated_sender,
             recipient_id=validated_recipient,
             message_type=msg_type,
-            content=sanitized_content
+            content=sanitized_content,
         )
 
         if message:
-            delivered = message.to_dict().get('delivery_status', {}).get(validated_recipient, False)
+            delivered = message.to_dict().get("delivery_status", {}).get(validated_recipient, False)
             if delivered:
                 print(f"✓ Message delivered to {args.recipient_id} (real-time)")
             else:
                 print(f"✓ Message sent to inbox: {args.recipient_id}")
-                print(f"  ℹ️  Message logged to inbox (real-time delivery attempted)")
+                print("  ℹ️  Message logged to inbox (real-time delivery attempted)")
             if args.json:
                 # Serialize JSON and fail hard if serialization fails
                 try:
@@ -524,8 +551,11 @@ def cmd_send_message(args: argparse.Namespace) -> None:
     except ValidationError as e:
         print(f"Validation error: {e}", file=sys.stderr)
         sys.exit(1)
-    except FileNotFoundError as e:
-        print(f"Error: Agent registry not found. Run 'claudeswarm discover-agents' first", file=sys.stderr)
+    except FileNotFoundError:
+        print(
+            "Error: Agent registry not found. Run 'claudeswarm discover-agents' first",
+            file=sys.stderr,
+        )
         sys.exit(1)
     except KeyboardInterrupt:
         print("\nOperation cancelled by user", file=sys.stderr)
@@ -550,7 +580,7 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
         0: Success - at least one agent reached
         1: Failure - validation error, no agents found, or all deliveries failed
     """
-    from claudeswarm.messaging import broadcast_message, MessageType
+    from claudeswarm.messaging import MessageType, broadcast_message
     from claudeswarm.validators import sanitize_message_content
 
     try:
@@ -562,7 +592,10 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
                 sender_id = detected_id
             else:
                 print("Error: Could not auto-detect agent identity", file=sys.stderr)
-                print("Please provide sender_id or run 'claudeswarm whoami' to verify registration", file=sys.stderr)
+                print(
+                    "Please provide sender_id or run 'claudeswarm whoami' to verify registration",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
 
         # Validate sender ID (validators handle all validation including length)
@@ -582,7 +615,7 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
             valid_types_display = [t.replace("_", "-").lower() for t in valid_types]
             print(f"Error: Invalid message type '{args.type}'", file=sys.stderr)
             print(f"Valid types: {', '.join(valid_types_display)}", file=sys.stderr)
-            print(f"  (case-insensitive, use hyphens or underscores)", file=sys.stderr)
+            print("  (case-insensitive, use hyphens or underscores)", file=sys.stderr)
             sys.exit(1)
 
         # Broadcast message
@@ -590,13 +623,15 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
             sender_id=validated_sender,
             message_type=msg_type,
             content=sanitized_content,
-            exclude_self=not args.include_self
+            exclude_self=not args.include_self,
         )
 
         # Check if any agents were found in registry
         if not results:
             print("Error: No active agents found for broadcast", file=sys.stderr)
-            print("Run 'claudeswarm discover-agents' to refresh the agent registry", file=sys.stderr)
+            print(
+                "Run 'claudeswarm discover-agents' to refresh the agent registry", file=sys.stderr
+            )
             sys.exit(1)
 
         # Count successful deliveries (tmux send-keys)
@@ -607,10 +642,12 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
         if success_count == total_count:
             print(f"✓ Broadcast delivered to {total_count}/{total_count} agents (real-time)")
         elif success_count > 0:
-            print(f"✓ Message broadcast: {success_count}/{total_count} real-time, {total_count - success_count}/{total_count} inbox")
+            print(
+                f"✓ Message broadcast: {success_count}/{total_count} real-time, {total_count - success_count}/{total_count} inbox"
+            )
         else:
             print(f"✓ Message sent to inbox: {total_count}/{total_count} agents")
-            print(f"  ℹ️  Messages logged to inbox (real-time delivery attempted)")
+            print("  ℹ️  Messages logged to inbox (real-time delivery attempted)")
 
         if args.json:
             # Serialize JSON and fail hard if serialization fails
@@ -631,8 +668,11 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
     except ValidationError as e:
         print(f"Validation error: {e}", file=sys.stderr)
         sys.exit(1)
-    except FileNotFoundError as e:
-        print(f"Error: Agent registry not found. Run 'claudeswarm discover-agents' first", file=sys.stderr)
+    except FileNotFoundError:
+        print(
+            "Error: Agent registry not found. Run 'claudeswarm discover-agents' first",
+            file=sys.stderr,
+        )
         sys.exit(1)
     except PermissionError as e:
         print(f"Error: Permission denied: {e}", file=sys.stderr)
@@ -659,9 +699,7 @@ def cmd_start_monitoring(args: argparse.Namespace) -> None:
     """Start the monitoring dashboard."""
     try:
         start_monitoring(
-            filter_type=args.filter_type,
-            filter_agent=args.filter_agent,
-            use_tmux=not args.no_tmux
+            filter_type=args.filter_type, filter_agent=args.filter_agent, use_tmux=not args.no_tmux
         )
         sys.exit(0)
     except RuntimeError as e:
@@ -740,8 +778,8 @@ project_root: null
         print(f"Created config file: {config_path.resolve()}")
         print()
         print("Default configuration created. Edit this file to customize settings.")
-        print(f"View with: claudeswarm config show")
-        print(f"Edit with: claudeswarm config edit")
+        print("View with: claudeswarm config show")
+        print("Edit with: claudeswarm config edit")
         sys.exit(0)
     except Exception as e:
         print(f"Error creating config file: {e}", file=sys.stderr)
@@ -809,7 +847,7 @@ def cmd_config_validate(args: argparse.Namespace) -> None:
 
         # Try to load and validate
         try:
-            config = load_config(config_path)
+            load_config(config_path)
             print("✓ Syntax: Valid")
             print("✓ Values: Valid")
             print()
@@ -898,6 +936,7 @@ def cmd_start_dashboard(args: argparse.Namespace) -> None:
     except Exception:
         # Fall back to defaults if config loading fails
         from claudeswarm.config import DashboardConfig
+
         config = argparse.Namespace(dashboard=DashboardConfig())
 
     # Use command-line args if provided, otherwise use config
@@ -923,10 +962,7 @@ def cmd_start_dashboard(args: argparse.Namespace) -> None:
 
     try:
         start_dashboard_server(
-            port=validated_port,
-            host=validated_host,
-            auto_open=auto_open,
-            reload=reload
+            port=validated_port, host=validated_host, auto_open=auto_open, reload=reload
         )
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -964,7 +1000,7 @@ def _discover_agents_for_onboarding(args: argparse.Namespace) -> list:
         return agents
 
     except subprocess.CalledProcessError as e:
-        print(f"Error: tmux command failed. Is tmux running?", file=sys.stderr)
+        print("Error: tmux command failed. Is tmux running?", file=sys.stderr)
         print(f"Details: {e}", file=sys.stderr)
         sys.exit(1)
     except FileNotFoundError as e:
@@ -984,7 +1020,7 @@ def _prepare_onboarding_content(agents: list) -> list[str]:
     Returns:
         List of onboarding messages to send
     """
-    agent_list = ', '.join(a.id for a in agents)
+    agent_list = ", ".join(a.id for a in agents)
 
     # Single comprehensive onboarding message
     return [
@@ -1054,7 +1090,9 @@ COORDINATION READY! 🎉"""
     ]
 
 
-def _send_onboarding_messages(agents: list, messages: list[str], args: argparse.Namespace) -> tuple[int, int]:
+def _send_onboarding_messages(
+    agents: list, messages: list[str], args: argparse.Namespace
+) -> tuple[int, int]:
     """Send onboarding messages to all agents.
 
     Args:
@@ -1066,7 +1104,8 @@ def _send_onboarding_messages(agents: list, messages: list[str], args: argparse.
         Tuple of (messages_sent, failed_messages) counts
     """
     import time
-    from claudeswarm.messaging import broadcast_message, MessageType
+
+    from claudeswarm.messaging import MessageType, broadcast_message
 
     print("Step 2: Broadcasting onboarding messages to project agents...")
 
@@ -1076,7 +1115,7 @@ def _send_onboarding_messages(agents: list, messages: list[str], args: argparse.
 
     for i, msg in enumerate(messages, 1):
         # Progress indication
-        print(f"  Sending message {i}/{len(messages)}...", end='\r')
+        print(f"  Sending message {i}/{len(messages)}...", end="\r")
         sys.stdout.flush()
 
         try:
@@ -1084,7 +1123,7 @@ def _send_onboarding_messages(agents: list, messages: list[str], args: argparse.
                 sender_id="system",
                 message_type=MessageType.INFO,
                 content=msg,
-                exclude_self=True  # System doesn't need its own messages
+                exclude_self=True,  # System doesn't need its own messages
             )
 
             delivered = sum(result.values())
@@ -1107,7 +1146,9 @@ def _send_onboarding_messages(agents: list, messages: list[str], args: argparse.
     return messages_sent, failed_messages
 
 
-def _report_onboarding_results(agents: list, messages_sent: int, failed_messages: int, total_messages: int) -> None:
+def _report_onboarding_results(
+    agents: list, messages_sent: int, failed_messages: int, total_messages: int
+) -> None:
     """Report onboarding results.
 
     Args:
@@ -1139,8 +1180,6 @@ def _report_onboarding_results(agents: list, messages_sent: int, failed_messages
 
     print()
     print("Agents are now ready to coordinate!")
-
-
 
 
 def cmd_onboard(args: argparse.Namespace) -> None:
@@ -1181,7 +1220,6 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
-
 def cmd_check_messages(args: argparse.Namespace) -> None:
     """Check messages for the current agent.
 
@@ -1196,7 +1234,7 @@ def cmd_check_messages(args: argparse.Namespace) -> None:
     from claudeswarm.project import get_messages_log_path
 
     # Auto-detect current agent (or use explicit agent-id for testing)
-    agent_id = getattr(args, 'agent_id', None)
+    agent_id = getattr(args, "agent_id", None)
     if not agent_id:
         detected_id, _ = _detect_current_agent()
         if detected_id:
@@ -1209,13 +1247,13 @@ def cmd_check_messages(args: argparse.Namespace) -> None:
     # Read messages log
     messages_log = get_messages_log_path()
     if not messages_log.exists():
-        print(f"No messages found (log file doesn't exist)")
+        print("No messages found (log file doesn't exist)")
         sys.exit(0)
 
     try:
-        with open(messages_log, 'r', encoding='utf-8') as f:
+        with open(messages_log, encoding="utf-8") as f:
             lines = f.readlines()
-    except (IOError, OSError) as e:
+    except OSError as e:
         print(f"Error reading messages: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -1230,8 +1268,8 @@ def cmd_check_messages(args: argparse.Namespace) -> None:
             msg = json.loads(line)
 
             # Check if this message is for us
-            recipients = msg.get('recipients', [])
-            if agent_id in recipients or 'all' in recipients:
+            recipients = msg.get("recipients", [])
+            if agent_id in recipients or "all" in recipients:
                 my_messages.append(msg)
         except json.JSONDecodeError:
             continue
@@ -1242,18 +1280,18 @@ def cmd_check_messages(args: argparse.Namespace) -> None:
         sys.exit(0)
 
     # Show last N messages (default 10)
-    limit = args.limit if hasattr(args, 'limit') and args.limit else 10
+    limit = args.limit if hasattr(args, "limit") and args.limit else 10
     recent_messages = my_messages[-limit:]
 
     print(f"=== Messages for {agent_id} ({len(recent_messages)} recent) ===")
     print()
 
     for msg in recent_messages:
-        sender = msg.get('sender', 'unknown')
-        timestamp = msg.get('timestamp', 'unknown')
-        msg_type = msg.get('msg_type', 'INFO')
-        content = msg.get('content', '')
-        msg_id = msg.get('msg_id', '')[:8]  # Short ID
+        sender = msg.get("sender", "unknown")
+        timestamp = msg.get("timestamp", "unknown")
+        msg_type = msg.get("msg_type", "INFO")
+        content = msg.get("content", "")
+        msg_id = msg.get("msg_id", "")[:8]  # Short ID
 
         print(f"[{timestamp}] From: {sender} ({msg_type})")
         print(f"  {content}")
@@ -1276,11 +1314,12 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         0: Success (agent found or not)
         1: Error (not in tmux, registry not found, etc.)
     """
-    from claudeswarm.project import get_active_agents_path
-
     # Check if running in tmux by checking TMUX_PANE environment variable
     import os
-    tmux_pane_id = os.environ.get('TMUX_PANE')
+
+    from claudeswarm.project import get_active_agents_path
+
+    tmux_pane_id = os.environ.get("TMUX_PANE")
 
     if not tmux_pane_id:
         print("Not running in a tmux session.", file=sys.stderr)
@@ -1296,23 +1335,28 @@ def cmd_whoami(args: argparse.Namespace) -> None:
 
     # Convert tmux pane ID (like %2) to session:window.pane format (like 0:1.1)
     current_pane = None
-    pane_lookup_error = None
 
     try:
         result = subprocess.run(
-            ['tmux', 'display-message', '-p', '-t', tmux_pane_id,
-             '#{session_name}:#{window_index}.#{pane_index}'],
+            [
+                "tmux",
+                "display-message",
+                "-p",
+                "-t",
+                tmux_pane_id,
+                "#{session_name}:#{window_index}.#{pane_index}",
+            ],
             capture_output=True,
             text=True,
-            timeout=2.0
+            timeout=2.0,
         )
         if result.returncode == 0:
             current_pane = result.stdout.strip()
         else:
             # Store error for optional display (permission errors are expected in sandboxed environments)
-            pane_lookup_error = result.stderr.strip()
+            _ = result.stderr.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        pane_lookup_error = str(e)
+        _ = str(e)
 
     # Load active agents registry
     registry_path = get_active_agents_path()
@@ -1326,26 +1370,26 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         sys.exit(0)
 
     try:
-        with open(registry_path, 'r', encoding='utf-8') as f:
+        with open(registry_path, encoding="utf-8") as f:
             registry = json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
+    except (OSError, json.JSONDecodeError) as e:
         print(f"Error reading agent registry: {e}", file=sys.stderr)
         sys.exit(1)
 
     # Search for current pane in registry
-    agents = registry.get('agents', [])
+    agents = registry.get("agents", [])
     current_agent = None
 
     # Try matching by TMUX_PANE env var first (works in sandboxed environments!)
     for agent in agents:
-        if agent.get('tmux_pane_id') == tmux_pane_id:
+        if agent.get("tmux_pane_id") == tmux_pane_id:
             current_agent = agent
             break
 
     # Fallback 1: Try matching by pane index (if we successfully converted it)
     if not current_agent and current_pane:
         for agent in agents:
-            if agent.get('pane_index') == current_pane:
+            if agent.get("pane_index") == current_pane:
                 current_agent = agent
                 break
 
@@ -1358,7 +1402,7 @@ def cmd_whoami(args: argparse.Namespace) -> None:
 
         # Try both current PID and parent PID
         for agent in agents:
-            agent_pid = agent.get('pid')
+            agent_pid = agent.get("pid")
             if agent_pid and agent_pid in (current_pid, parent_pid):
                 current_agent = agent
                 break
@@ -1373,7 +1417,7 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         print(f"  Status: {current_agent.get('status', 'unknown')}")
         print(f"  Session: {current_agent.get('session_name', 'unknown')}")
 
-        last_seen = current_agent.get('last_seen')
+        last_seen = current_agent.get("last_seen")
         if last_seen:
             print(f"  Last Seen: {last_seen}")
 
@@ -1397,22 +1441,27 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         print("=" * 68)
         try:
             from claudeswarm.messaging import MessageLogger
+
             msg_logger: MessageLogger = MessageLogger()
-            messages: List[dict] = msg_logger.get_messages_for_agent(
-                current_agent['id'],
-                limit=WHOAMI_MESSAGE_PREVIEW_LIMIT
+            messages: list[dict] = msg_logger.get_messages_for_agent(
+                current_agent["id"], limit=WHOAMI_MESSAGE_PREVIEW_LIMIT
             )
             if messages:
                 for msg in messages:
-                    timestamp = msg['timestamp'][:19]  # Trim to YYYY-MM-DDTHH:MM:SS
+                    timestamp = msg["timestamp"][:19]  # Trim to YYYY-MM-DDTHH:MM:SS
                     print(f"\n[{timestamp}] From: {msg['sender']} ({msg['msg_type']})")
                     print(f"  {msg['content']}")
                 if len(messages) >= WHOAMI_MESSAGE_PREVIEW_LIMIT:
-                    print(f"\n(Showing {WHOAMI_MESSAGE_PREVIEW_LIMIT} most recent. Use 'claudeswarm check-messages' for more)")
+                    print(
+                        f"\n(Showing {WHOAMI_MESSAGE_PREVIEW_LIMIT} most recent. Use 'claudeswarm check-messages' for more)"
+                    )
             else:
                 print("\n  No messages.")
         except Exception as e:
-            logger.debug(f"Failed to check messages for agent {current_agent.get('id', 'unknown')}: {e}", exc_info=True)
+            logger.debug(
+                f"Failed to check messages for agent {current_agent.get('id', 'unknown')}: {e}",
+                exc_info=True,
+            )
             print(f"\n  (Could not check messages: {e})")
         print()
     else:
@@ -1425,7 +1474,9 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         print("Registered agents in this session:")
         if agents:
             for agent in agents:
-                print(f"  - {agent.get('id', 'unknown')} (pane: {agent.get('pane_index', 'unknown')}, PID: {agent.get('pid', 'unknown')})")
+                print(
+                    f"  - {agent.get('id', 'unknown')} (pane: {agent.get('pane_index', 'unknown')}, PID: {agent.get('pid', 'unknown')})"
+                )
         else:
             print("  (none)")
         print()
@@ -1458,7 +1509,8 @@ def cmd_reload(args: argparse.Namespace) -> None:
     # Find the claude-swarm installation directory
     try:
         import claudeswarm
-        package_path = Path(claudeswarm.__file__)
+
+        _ = Path(claudeswarm.__file__)
 
         # Try to find the source directory (for editable installs)
         editable_location = None
@@ -1475,7 +1527,7 @@ def cmd_reload(args: argparse.Namespace) -> None:
                         # Read the path from the .pth file
                         pth_content = pth_file.read_text().strip()
                         # The path points to src/, we want the parent directory
-                        if pth_content.endswith('/src'):
+                        if pth_content.endswith("/src"):
                             editable_location = str(Path(pth_content).parent)
                         else:
                             editable_location = pth_content
@@ -1484,7 +1536,9 @@ def cmd_reload(args: argparse.Namespace) -> None:
 
         if source == "local" and not editable_location:
             print("⚠️  No editable installation found.", file=sys.stderr)
-            print("   Run 'uv tool install --editable /path/to/claude-swarm' first", file=sys.stderr)
+            print(
+                "   Run 'uv tool install --editable /path/to/claude-swarm' first", file=sys.stderr
+            )
             sys.exit(1)
 
     except Exception as e:
@@ -1496,22 +1550,47 @@ def cmd_reload(args: argparse.Namespace) -> None:
     try:
         if editable_location:
             subprocess.run(
-                ["find", editable_location, "-type", "d", "-name", "__pycache__", "-exec", "rm", "-rf", "{}", "+"],
+                [
+                    "find",
+                    editable_location,
+                    "-type",
+                    "d",
+                    "-name",
+                    "__pycache__",
+                    "-exec",
+                    "rm",
+                    "-rf",
+                    "{}",
+                    "+",
+                ],
                 capture_output=True,
-                timeout=10
+                timeout=10,
             )
             subprocess.run(
                 ["find", editable_location, "-type", "f", "-name", "*.pyc", "-delete"],
                 capture_output=True,
-                timeout=10
+                timeout=10,
             )
 
         # Clear site-packages cache
         subprocess.run(
-            ["find", "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages",
-             "-type", "d", "-name", "__pycache__", "-path", "*/claudeswarm/*", "-exec", "rm", "-rf", "{}", "+"],
+            [
+                "find",
+                "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages",
+                "-type",
+                "d",
+                "-name",
+                "__pycache__",
+                "-path",
+                "*/claudeswarm/*",
+                "-exec",
+                "rm",
+                "-rf",
+                "{}",
+                "+",
+            ],
             capture_output=True,
-            timeout=10
+            timeout=10,
         )
         print("   ✓ Caches cleared")
     except Exception as e:
@@ -1530,7 +1609,7 @@ def cmd_reload(args: argparse.Namespace) -> None:
                 ["uv", "tool", "install", "--force", "--editable", f"{editable_location}[cloud]"],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
 
             if result.returncode == 0:
@@ -1538,20 +1617,32 @@ def cmd_reload(args: argparse.Namespace) -> None:
             else:
                 # Check for uv cache permission errors
                 if "Operation not permitted" in result.stderr and ".cache/uv" in result.stderr:
-                    print(f"   ⚠️  uv cache permission error detected", file=sys.stderr)
-                    print(f"   Attempting to clear cache and retry...", file=sys.stderr)
+                    print("   ⚠️  uv cache permission error detected", file=sys.stderr)
+                    print("   Attempting to clear cache and retry...", file=sys.stderr)
                     # Clear the problematic cache directory
-                    subprocess.run(["rm", "-rf", os.path.expanduser("~/.cache/uv/sdists-v9/.git")],
-                                   capture_output=True, timeout=5)
+                    subprocess.run(
+                        ["rm", "-rf", os.path.expanduser("~/.cache/uv/sdists-v9/.git")],
+                        capture_output=True,
+                        timeout=5,
+                    )
                     # Retry installation
                     result = subprocess.run(
-                        ["uv", "tool", "install", "--force", "--editable", f"{editable_location}[cloud]"],
+                        [
+                            "uv",
+                            "tool",
+                            "install",
+                            "--force",
+                            "--editable",
+                            f"{editable_location}[cloud]",
+                        ],
                         capture_output=True,
                         text=True,
-                        timeout=60
+                        timeout=60,
                     )
                     if result.returncode == 0:
-                        print(f"   ✓ Installed from {editable_location} (editable mode with cloud extras) after cache clear")
+                        print(
+                            f"   ✓ Installed from {editable_location} (editable mode with cloud extras) after cache clear"
+                        )
                     else:
                         print(f"   ✗ Installation failed: {result.stderr}", file=sys.stderr)
                         sys.exit(1)
@@ -1560,10 +1651,16 @@ def cmd_reload(args: argparse.Namespace) -> None:
                     sys.exit(1)
         else:  # github
             result = subprocess.run(
-                ["uv", "tool", "install", "--force", "git+https://github.com/borisbanach/claude-swarm.git[cloud]"],
+                [
+                    "uv",
+                    "tool",
+                    "install",
+                    "--force",
+                    "git+https://github.com/borisbanach/claude-swarm.git[cloud]",
+                ],
                 capture_output=True,
                 text=True,
-                timeout=120
+                timeout=120,
             )
 
             if result.returncode == 0:
@@ -1586,7 +1683,7 @@ def cmd_reload(args: argparse.Namespace) -> None:
             ["python3", "-c", "import claudeswarm; print(claudeswarm.__version__)"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
         version = result.stdout.strip()
         print(f"   ✓ Version: {version}")
@@ -1622,7 +1719,7 @@ def _init_detect_project_root() -> Path:
         if detected_root != current_dir:
             print(f"  (You're currently in: {current_dir})")
     else:
-        print(f"⚠ No project markers found (e.g., .git, pyproject.toml)")
+        print("⚠ No project markers found (e.g., .git, pyproject.toml)")
         print(f"  Using current directory: {current_dir}")
         detected_root = current_dir
 
@@ -1643,20 +1740,17 @@ def _init_check_and_create_config(project_root: Path, auto_yes: bool) -> None:
     if config_path.exists():
         print(f"✓ Configuration already exists: {config_path}")
     else:
-        print(f"⚠ No configuration file found")
+        print("⚠ No configuration file found")
 
         # Ask user if they want to create config
         should_create = auto_yes
         if not auto_yes:
             response = input("  Create default configuration? [Y/n]: ").strip().lower()
-            should_create = not response or response in ['y', 'yes']
+            should_create = not response or response in ["y", "yes"]
 
         if should_create:
             # Create config using existing cmd_config_init
-            init_args = argparse.Namespace(
-                output=str(config_path),
-                force=False
-            )
+            init_args = argparse.Namespace(output=str(config_path), force=False)
             try:
                 cmd_config_init(init_args)
             except SystemExit:
@@ -1671,13 +1765,9 @@ def _init_check_tmux_status() -> None:
     """Check tmux installation and running status."""
     print("Step 3: Checking tmux...")
     try:
-        result = subprocess.run(
-            ["tmux", "list-sessions"],
-            capture_output=True,
-            timeout=2
-        )
+        result = subprocess.run(["tmux", "list-sessions"], capture_output=True, timeout=2)
         if result.returncode == 0:
-            sessions = result.stdout.decode().strip().split('\n')
+            sessions = result.stdout.decode().strip().split("\n")
             print(f"✓ tmux is running with {len(sessions)} session(s)")
         else:
             print("⚠ tmux is installed but no sessions are running")
@@ -1707,7 +1797,7 @@ def _init_display_next_steps(project_root: Path) -> None:
     print()
     print("2. Split panes and start Claude Code agents:")
     print("   Ctrl+b %    # Split vertically")
-    print("   Ctrl+b \"    # Split horizontally")
+    print('   Ctrl+b "    # Split horizontally')
     print()
     print("3. Discover agents:")
     print("   claudeswarm discover-agents")
@@ -1762,15 +1852,16 @@ def cmd_cloud_deploy(args: argparse.Namespace) -> None:
     """Deploy multi-agent swarm to E2B sandbox."""
     import asyncio
     import os
+
     from claudeswarm.cloud.e2b_launcher import CloudSandbox
     from claudeswarm.cloud.mcp_config import (
-        parse_mcp_list,
         attach_multiple_mcps,
+        parse_mcp_list,
     )
 
     async def deploy() -> None:
         """Async deployment logic."""
-        print(f"🚀 Deploying Claude Swarm to E2B cloud...")
+        print("🚀 Deploying Claude Swarm to E2B cloud...")
         print(f"   Agents: {args.agents}")
         print(f"   MCPs: {args.mcps}")
         print()
@@ -1792,6 +1883,7 @@ def cmd_cloud_deploy(args: argparse.Namespace) -> None:
                 if bridge is None:
                     # Create bridge by attaching first MCP manually
                     from claudeswarm.cloud.mcp_bridge import MCPBridge
+
                     bridge = MCPBridge(sandbox_id=sandbox_id)
                     sandbox.mcp_bridge = bridge
 
@@ -1812,9 +1904,9 @@ def cmd_cloud_deploy(args: argparse.Namespace) -> None:
             save_sandbox_id(sandbox_id)
 
             print()
-            print(f"✅ Deployment complete!")
+            print("✅ Deployment complete!")
             print(f"   Sandbox ID: {sandbox_id}")
-            print(f"   Cached: .e2b_session and ~/.claudeswarm/last_sandbox_id")
+            print("   Cached: .e2b_session and ~/.claudeswarm/last_sandbox_id")
             print()
             print("📦 Installed in sandbox:")
             print("   ✓ Python + claudeswarm")
@@ -1852,14 +1944,15 @@ def cmd_cloud_deploy(args: argparse.Namespace) -> None:
         # If sandbox_id returned and auto-connect enabled, start shell
         if sandbox_id and not args.no_connect:
             print()
-            print("="*60)
+            print("=" * 60)
             print("🔌 Connecting to sandbox shell...")
             print("Type 'exit' or press Ctrl+C to disconnect")
-            print("="*60)
+            print("=" * 60)
             print()
 
             # Create a mock args object for the shell command
             import argparse as ap
+
             shell_args = ap.Namespace(sandbox_id=sandbox_id)
 
             # Call the shell command
@@ -1873,6 +1966,7 @@ def cmd_cloud_deploy(args: argparse.Namespace) -> None:
 def cmd_cloud_status(args: argparse.Namespace) -> None:
     """Show status of cloud sandbox and agents."""
     import asyncio
+
     from e2b_code_interpreter import Sandbox
 
     async def get_status() -> None:
@@ -1884,7 +1978,10 @@ def cmd_cloud_status(args: argparse.Namespace) -> None:
             sandbox_id = get_cached_sandbox_id()
             if not sandbox_id:
                 print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
-                print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+                print(
+                    "  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             if not args.json:
                 print(f"Using cached sandbox: {sandbox_id}\n")
@@ -1907,7 +2004,7 @@ def cmd_cloud_status(args: argparse.Namespace) -> None:
                 "host": None,
                 "tmux_sessions": [],
                 "active_agents": [],
-                "mcp_containers": []
+                "mcp_containers": [],
             }
 
             # Get sandbox host info
@@ -1927,7 +2024,7 @@ def cmd_cloud_status(args: argparse.Namespace) -> None:
             if not args.json:
                 print("🖥️  Tmux Sessions:")
             result = await asyncio.to_thread(sandbox.run_code, "!/usr/bin/tmux list-sessions 2>&1")
-            if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+            if hasattr(result, "logs") and result.logs and result.logs.stdout:
                 sessions = [line.rstrip() for line in result.logs.stdout if line.strip()]
                 status_data["tmux_sessions"] = sessions
                 if not args.json:
@@ -1945,9 +2042,12 @@ def cmd_cloud_status(args: argparse.Namespace) -> None:
             # Check active agents
             if not args.json:
                 print("🤖 Active Agents:")
-            result = await asyncio.to_thread(sandbox.run_code, "!source ~/.bashrc 2>/dev/null; cd /workspace && claudeswarm list-agents 2>&1")
-            if hasattr(result, 'logs') and result.logs and result.logs.stdout:
-                agent_output = ''.join(result.logs.stdout)
+            result = await asyncio.to_thread(
+                sandbox.run_code,
+                "!source ~/.bashrc 2>/dev/null; cd /workspace && claudeswarm list-agents 2>&1",
+            )
+            if hasattr(result, "logs") and result.logs and result.logs.stdout:
+                agent_output = "".join(result.logs.stdout)
                 if "No active agents" not in agent_output:
                     agents = [line.rstrip() for line in result.logs.stdout if line.strip()]
                     status_data["active_agents"] = agents
@@ -1968,9 +2068,12 @@ def cmd_cloud_status(args: argparse.Namespace) -> None:
             # Check MCP containers
             if not args.json:
                 print("🔌 MCP Containers:")
-            result = await asyncio.to_thread(sandbox.run_code, "!docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}' 2>&1")
-            if hasattr(result, 'logs') and result.logs and result.logs.stdout:
-                output = ''.join(result.logs.stdout)
+            result = await asyncio.to_thread(
+                sandbox.run_code,
+                "!docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}' 2>&1",
+            )
+            if hasattr(result, "logs") and result.logs and result.logs.stdout:
+                output = "".join(result.logs.stdout)
                 if output.strip():
                     containers = [line.rstrip() for line in result.logs.stdout if line.strip()]
                     status_data["mcp_containers"] = containers
@@ -2006,7 +2109,7 @@ def cmd_cloud_status(args: argparse.Namespace) -> None:
 def cmd_cloud_monitor(args: argparse.Namespace) -> None:
     """Monitor live agent activity in cloud sandbox."""
     import asyncio
-    import time
+
     from e2b_code_interpreter import Sandbox
 
     async def monitor_sandbox() -> None:
@@ -2018,7 +2121,10 @@ def cmd_cloud_monitor(args: argparse.Namespace) -> None:
             sandbox_id = get_cached_sandbox_id()
             if not sandbox_id:
                 print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
-                print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+                print(
+                    "  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             print(f"Using cached sandbox: {sandbox_id}\n")
 
@@ -2043,10 +2149,12 @@ def cmd_cloud_monitor(args: argparse.Namespace) -> None:
                 last_size = 0
 
                 # Get initial file size
-                result = await asyncio.to_thread(sandbox.run_code, f"!wc -c {log_path} 2>&1 | awk '{{print $1}}'")
-                if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                result = await asyncio.to_thread(
+                    sandbox.run_code, f"!wc -c {log_path} 2>&1 | awk '{{print $1}}'"
+                )
+                if hasattr(result, "logs") and result.logs and result.logs.stdout:
                     try:
-                        last_size = int(''.join(result.logs.stdout).strip())
+                        last_size = int("".join(result.logs.stdout).strip())
                     except ValueError:
                         last_size = 0
 
@@ -2054,10 +2162,12 @@ def cmd_cloud_monitor(args: argparse.Namespace) -> None:
 
                 while True:
                     # Get current file size
-                    result = await asyncio.to_thread(sandbox.run_code, f"!wc -c {log_path} 2>&1 | awk '{{print $1}}'")
-                    if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                    result = await asyncio.to_thread(
+                        sandbox.run_code, f"!wc -c {log_path} 2>&1 | awk '{{print $1}}'"
+                    )
+                    if hasattr(result, "logs") and result.logs and result.logs.stdout:
                         try:
-                            current_size = int(''.join(result.logs.stdout).strip())
+                            current_size = int("".join(result.logs.stdout).strip())
                         except ValueError:
                             current_size = last_size
 
@@ -2065,10 +2175,9 @@ def cmd_cloud_monitor(args: argparse.Namespace) -> None:
                         if current_size > last_size:
                             bytes_to_read = current_size - last_size
                             result = await asyncio.to_thread(
-                                sandbox.run_code,
-                                f"!tail -c {bytes_to_read} {log_path} 2>&1"
+                                sandbox.run_code, f"!tail -c {bytes_to_read} {log_path} 2>&1"
                             )
-                            if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                            if hasattr(result, "logs") and result.logs and result.logs.stdout:
                                 for line in result.logs.stdout:
                                     print(line.rstrip())
                             last_size = current_size
@@ -2078,12 +2187,9 @@ def cmd_cloud_monitor(args: argparse.Namespace) -> None:
             else:
                 # One-shot mode: show recent messages
                 print("📬 Recent Agent Messages:\n")
-                result = await asyncio.to_thread(
-                    sandbox.run_code,
-                    f"!tail -n 50 {log_path} 2>&1"
-                )
-                if hasattr(result, 'logs') and result.logs and result.logs.stdout:
-                    output = ''.join(result.logs.stdout)
+                result = await asyncio.to_thread(sandbox.run_code, f"!tail -n 50 {log_path} 2>&1")
+                if hasattr(result, "logs") and result.logs and result.logs.stdout:
+                    output = "".join(result.logs.stdout)
                     if output.strip():
                         for line in result.logs.stdout:
                             print(line.rstrip())
@@ -2111,7 +2217,6 @@ def cmd_cloud_monitor(args: argparse.Namespace) -> None:
 def cmd_cloud_shutdown(args: argparse.Namespace) -> None:
     """Shutdown cloud sandbox and cleanup resources."""
     import asyncio
-    from claudeswarm.cloud.e2b_launcher import CloudSandbox
 
     async def shutdown() -> None:
         """Async shutdown logic."""
@@ -2122,13 +2227,18 @@ def cmd_cloud_shutdown(args: argparse.Namespace) -> None:
             sandbox_id = get_cached_sandbox_id()
             if not sandbox_id:
                 print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
-                print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+                print(
+                    "  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             print(f"Using cached sandbox: {sandbox_id}\n")
 
         if not args.force:
-            response = input(f"⚠️  Are you sure you want to shutdown sandbox {sandbox_id}? (yes/no): ")
-            if response.lower() not in ['yes', 'y']:
+            response = input(
+                f"⚠️  Are you sure you want to shutdown sandbox {sandbox_id}? (yes/no): "
+            )
+            if response.lower() not in ["yes", "y"]:
                 print("Shutdown cancelled")
                 return
 
@@ -2151,9 +2261,8 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
     Uses the E2B CLI for full interactive terminal support with tmux, vim, etc.
     Falls back to Python-based shell if E2B CLI is not available.
     """
-    import subprocess
     import shutil
-    import os
+    import subprocess
 
     sandbox_id = args.sandbox_id
 
@@ -2162,12 +2271,15 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
         sandbox_id = get_cached_sandbox_id()
         if not sandbox_id:
             print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
-            print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+            print(
+                "  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id",
+                file=sys.stderr,
+            )
             sys.exit(1)
         print(f"Using cached sandbox: {sandbox_id}\n")
 
     # Check if E2B CLI is available
-    e2b_cli = shutil.which('e2b')
+    e2b_cli = shutil.which("e2b")
 
     if e2b_cli:
         # Use E2B CLI for full interactive terminal
@@ -2175,18 +2287,21 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
         print("✓ Using E2B CLI for full interactive terminal support")
         print("  (tmux, vim, claude, and all TUI apps will work!)\n")
 
-        print("="*60)
+        print("=" * 60)
         print("Full Interactive Terminal")
         print("Press Ctrl+D or type 'exit' to disconnect.")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")
 
         try:
             # Run e2b sandbox connect with the API key from environment
             # The E2B_API_KEY should already be set
-            subprocess.run(['e2b', 'sandbox', 'connect', sandbox_id], check=True)
+            subprocess.run(["e2b", "sandbox", "connect", sandbox_id], check=True)
         except subprocess.CalledProcessError as e:
             print(f"\n❌ E2B CLI connection failed: {e}", file=sys.stderr)
-            print("Note: Sandbox is still running. Use 'claudeswarm cloud shutdown' to clean up.", file=sys.stderr)
+            print(
+                "Note: Sandbox is still running. Use 'claudeswarm cloud shutdown' to clean up.",
+                file=sys.stderr,
+            )
             sys.exit(1)
         except KeyboardInterrupt:
             print("\n\n👋 Disconnected from sandbox")
@@ -2199,19 +2314,19 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
     print(f"🔌 Connecting to E2B sandbox: {sandbox_id}")
     print("⚠️  Using fallback command shell (limited functionality)\n")
 
-    import asyncio
     import threading
-    from e2b_code_interpreter import Sandbox
+
     from e2b import PtySize
+    from e2b_code_interpreter import Sandbox
 
     def simple_shell_session() -> None:
         """Fallback simple shell session."""
         try:
             # Connect to existing sandbox (sync mode)
             sandbox = Sandbox.connect(sandbox_id)
-            print(f"✓ Connected to sandbox!")
+            print("✓ Connected to sandbox!")
 
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("Interactive E2B Shell")
             print("⚠️  Note: PTY mode is experimental and may not show output")
             print("⚠️  Falling back to simple command mode...")
@@ -2220,7 +2335,7 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
             print("  - tmux capture-pane -p -t claude-swarm:0  # View pane 0")
             print("  - tmux send-keys -t claude-swarm:0 'cmd' Enter  # Send to pane 0")
             print("Press Ctrl+C to disconnect.")
-            print("="*60 + "\n")
+            print("=" * 60 + "\n")
 
             # Skip PTY mode for now and use simple command mode
             print("⚠️  Skipping PTY mode - using simple command shell instead\n")
@@ -2230,7 +2345,7 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
                 try:
                     command = input(f"{sandbox_id[:8]}$ ").strip()
 
-                    if command.lower() in ['exit', 'quit']:
+                    if command.lower() in ["exit", "quit"]:
                         print("\n👋 Disconnecting...")
                         break
 
@@ -2245,21 +2360,21 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
 
                     # Print output
                     had_output = False
-                    if hasattr(result, 'logs') and result.logs:
+                    if hasattr(result, "logs") and result.logs:
                         if result.logs.stdout:
                             for line in result.logs.stdout:
-                                print(line, end='')
+                                print(line, end="")
                                 had_output = True
                         if result.logs.stderr:
                             for line in result.logs.stderr:
-                                print(line, end='', file=sys.stderr)
+                                print(line, end="", file=sys.stderr)
                                 had_output = True
 
-                    if hasattr(result, 'text') and result.text:
-                        print(result.text, end='')
+                    if hasattr(result, "text") and result.text:
+                        print(result.text, end="")
                         had_output = True
 
-                    if hasattr(result, 'error') and result.error:
+                    if hasattr(result, "error") and result.error:
                         print(f"Error: {result.error}", file=sys.stderr)
                         had_output = True
 
@@ -2279,9 +2394,10 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
 
             # Get terminal size
             import shutil
+
             try:
                 cols, rows = shutil.get_terminal_size()
-            except:
+            except Exception:
                 cols, rows = 80, 24
 
             # Start a PTY session with bash
@@ -2293,7 +2409,7 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
             def on_pty_output(output):
                 """Callback for PTY output."""
                 with output_lock:
-                    if hasattr(output, 'data'):
+                    if hasattr(output, "data"):
                         sys.stdout.write(output.data)
                         sys.stdout.flush()
 
@@ -2302,7 +2418,7 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
                 size=PtySize(rows=rows, cols=cols),
                 cwd="/workspace",
                 envs={"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"},
-                timeout=None  # No timeout for interactive session
+                timeout=None,  # No timeout for interactive session
             )
 
             print(f"✓ PTY session started (PID: {pty_handle.pid})")
@@ -2311,6 +2427,7 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
             # Simple command loop (not full PTY passthrough yet)
             import termios
             import tty
+
             stdin_fd = sys.stdin.fileno()
             old_settings = termios.tcgetattr(stdin_fd)
 
@@ -2325,6 +2442,7 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
 
                 # Create a queue for output
                 import queue
+
                 output_queue = queue.Queue()
                 stop_event = threading.Event()
 
@@ -2335,7 +2453,7 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
                             if stop_event.is_set():
                                 break
                             # PtyOutput events have a 'data' attribute
-                            if hasattr(event, 'data') and event.data:
+                            if hasattr(event, "data") and event.data:
                                 output_queue.put(event.data)
                     except Exception as e:
                         output_queue.put(f"\n[PTY Error: {e}]\n")
@@ -2346,6 +2464,7 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
 
                 # Main I/O loop
                 import select
+
                 while True:
                     # Print any queued output
                     try:
@@ -2366,7 +2485,7 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
                             break
 
                         # Send to PTY (convert str to bytes)
-                        sandbox.pty.send_stdin(pty_handle.pid, char.encode('utf-8'))
+                        sandbox.pty.send_stdin(pty_handle.pid, char.encode("utf-8"))
 
             finally:
                 # Cleanup
@@ -2376,7 +2495,7 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
                 # Kill PTY
                 try:
                     sandbox.pty.kill(pty_handle.pid)
-                except:
+                except Exception:
                     pass
 
             print("\n\n👋 Disconnected from PTY session")
@@ -2385,6 +2504,7 @@ def cmd_cloud_shell(args: argparse.Namespace) -> None:
         except Exception as e:
             print(f"❌ Failed to start PTY session: {e}", file=sys.stderr)
             import traceback
+
             traceback.print_exc()
             sys.exit(1)
 
@@ -2435,7 +2555,8 @@ def main() -> NoReturn:
         help="Initialize Claude Swarm in current project (guided setup)",
     )
     init_parser.add_argument(
-        "-y", "--yes",
+        "-y",
+        "--yes",
         action="store_true",
         help="Auto-accept all prompts",
     )
@@ -2576,9 +2697,7 @@ def main() -> NoReturn:
         help="Acquire a lock on a file",
     )
     acquire_parser.add_argument("filepath", help="Path to the file to lock")
-    acquire_parser.add_argument(
-        "reason", nargs="?", default="", help="Reason for the lock"
-    )
+    acquire_parser.add_argument("reason", nargs="?", default="", help="Reason for the lock")
     acquire_parser.add_argument(
         "--agent-id",
         dest="agent_id",
@@ -2615,9 +2734,7 @@ def main() -> NoReturn:
         "list-all-locks",
         help="List all active locks",
     )
-    list_parser.add_argument(
-        "--include-stale", action="store_true", help="Include stale locks"
-    )
+    list_parser.add_argument("--include-stale", action="store_true", help="Include stale locks")
     list_parser.add_argument("--json", action="store_true", help="Output as JSON")
     list_parser.set_defaults(func=cmd_list_all_locks)
 
@@ -2691,12 +2808,14 @@ def main() -> NoReturn:
         help="Create default configuration file",
     )
     config_init_parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         type=str,
         help="Output path (default: .claudeswarm.yaml)",
     )
     config_init_parser.add_argument(
-        "-f", "--force",
+        "-f",
+        "--force",
         action="store_true",
         help="Overwrite existing file",
     )
@@ -2745,101 +2864,73 @@ def main() -> NoReturn:
 
     # cloud command (E2B integration)
     cloud_parser = subparsers.add_parser(
-        "cloud",
-        help="E2B cloud sandbox operations (multi-agent in cloud)"
+        "cloud", help="E2B cloud sandbox operations (multi-agent in cloud)"
     )
     cloud_subparsers = cloud_parser.add_subparsers(dest="cloud_command", help="Cloud command")
 
     # cloud deploy
     cloud_deploy_parser = cloud_subparsers.add_parser(
-        "deploy",
-        help="Deploy multi-agent swarm to E2B sandbox"
+        "deploy", help="Deploy multi-agent swarm to E2B sandbox"
     )
     cloud_deploy_parser.add_argument(
-        "--agents",
-        type=int,
-        default=4,
-        help="Number of agent panes to create (default: 4)"
+        "--agents", type=int, default=4, help="Number of agent panes to create (default: 4)"
     )
     cloud_deploy_parser.add_argument(
         "--mcps",
         type=str,
         default="github,filesystem",
-        help="Comma-separated list of MCPs to attach (e.g., 'github,exa,filesystem')"
+        help="Comma-separated list of MCPs to attach (e.g., 'github,exa,filesystem')",
     )
     cloud_deploy_parser.add_argument(
-        "--feature",
-        type=str,
-        help="Feature description to implement autonomously (optional)"
+        "--feature", type=str, help="Feature description to implement autonomously (optional)"
     )
     cloud_deploy_parser.add_argument(
         "--no-connect",
         action="store_true",
-        help="Don't automatically connect to sandbox shell after deployment"
+        help="Don't automatically connect to sandbox shell after deployment",
     )
     cloud_deploy_parser.set_defaults(func=cmd_cloud_deploy)
 
     # cloud status
     cloud_status_parser = cloud_subparsers.add_parser(
-        "status",
-        help="Show status of cloud sandbox and agents"
+        "status", help="Show status of cloud sandbox and agents"
     )
     cloud_status_parser.add_argument(
-        "--sandbox-id",
-        type=str,
-        help="Sandbox ID (auto-detected if omitted)"
+        "--sandbox-id", type=str, help="Sandbox ID (auto-detected if omitted)"
     )
-    cloud_status_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output in JSON format"
-    )
+    cloud_status_parser.add_argument("--json", action="store_true", help="Output in JSON format")
     cloud_status_parser.set_defaults(func=cmd_cloud_status)
 
     # cloud monitor
     cloud_monitor_parser = cloud_subparsers.add_parser(
-        "monitor",
-        help="Monitor live agent activity in cloud sandbox"
+        "monitor", help="Monitor live agent activity in cloud sandbox"
     )
     cloud_monitor_parser.add_argument(
-        "--sandbox-id",
-        type=str,
-        help="Sandbox ID (auto-detected if omitted)"
+        "--sandbox-id", type=str, help="Sandbox ID (auto-detected if omitted)"
     )
     cloud_monitor_parser.add_argument(
-        "--follow",
-        "-f",
-        action="store_true",
-        help="Follow mode: continuously show new activity"
+        "--follow", "-f", action="store_true", help="Follow mode: continuously show new activity"
     )
     cloud_monitor_parser.set_defaults(func=cmd_cloud_monitor)
 
     # cloud shutdown
     cloud_shutdown_parser = cloud_subparsers.add_parser(
-        "shutdown",
-        help="Shutdown cloud sandbox and cleanup resources"
+        "shutdown", help="Shutdown cloud sandbox and cleanup resources"
     )
     cloud_shutdown_parser.add_argument(
-        "--sandbox-id",
-        type=str,
-        help="Sandbox ID to shutdown (auto-detected if omitted)"
+        "--sandbox-id", type=str, help="Sandbox ID to shutdown (auto-detected if omitted)"
     )
     cloud_shutdown_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Force shutdown without confirmation"
+        "--force", action="store_true", help="Force shutdown without confirmation"
     )
     cloud_shutdown_parser.set_defaults(func=cmd_cloud_shutdown)
 
     # cloud shell
     cloud_shell_parser = cloud_subparsers.add_parser(
-        "shell",
-        help="Open interactive shell inside E2B sandbox"
+        "shell", help="Open interactive shell inside E2B sandbox"
     )
     cloud_shell_parser.add_argument(
-        "--sandbox-id",
-        type=str,
-        help="Sandbox ID to connect to (auto-detected if omitted)"
+        "--sandbox-id", type=str, help="Sandbox ID to connect to (auto-detected if omitted)"
     )
     cloud_shell_parser.set_defaults(func=cmd_cloud_shell)
 
@@ -2873,7 +2964,8 @@ def main() -> NoReturn:
 
 def print_help() -> None:
     """Print CLI help message."""
-    print("""
+    print(
+        """
 Claude Swarm - Multi-agent coordination system
 
 Usage:
@@ -2920,12 +3012,14 @@ Other:
 
 For detailed help on each command, run:
     claudeswarm <command> --help
-""")
+"""
+    )
 
 
 def print_version() -> None:
     """Print version information."""
     from claudeswarm import __version__
+
     print(f"claudeswarm {__version__}")
 
 
