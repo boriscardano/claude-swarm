@@ -402,8 +402,8 @@ class AutonomousDevelopmentLoop:
 
             # Simulate review (in real implementation, AI would review code)
             review_feedback = ReviewFeedback(
-                reviewer=reviewer_id,
-                author=author_id,
+                reviewer_id=reviewer_id,
+                author_id=author_id,
                 files=impl["task"].files,
                 issues=[],
                 suggestions=["Consider adding error handling"],
