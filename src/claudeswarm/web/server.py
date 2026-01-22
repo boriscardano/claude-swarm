@@ -13,9 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 # Import project utilities
@@ -53,6 +53,9 @@ app.add_middleware(
 # Mount static files if directory exists
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Create versioned API router
+api_v1 = APIRouter(prefix="/api/v1", tags=["v1"])
 
 
 # Utility functions
@@ -208,7 +211,7 @@ class StateTracker:
         return changes
 
 
-# API Endpoints
+# Root and health endpoints (not versioned)
 @app.get("/", response_class=HTMLResponse)
 async def dashboard() -> HTMLResponse:
     """Serve the dashboard HTML page.
@@ -274,11 +277,11 @@ async def dashboard() -> HTMLResponse:
             <div class="endpoints">
                 <h3>Available Endpoints:</h3>
                 <ul>
-                    <li><code>GET /api/agents</code> - Active agents</li>
-                    <li><code>GET /api/locks</code> - Active locks</li>
-                    <li><code>GET /api/messages</code> - Recent messages</li>
-                    <li><code>GET /api/stats</code> - System statistics</li>
-                    <li><code>GET /api/stream</code> - SSE live updates</li>
+                    <li><code>GET /api/v1/agents</code> - Active agents</li>
+                    <li><code>GET /api/v1/locks</code> - Active locks</li>
+                    <li><code>GET /api/v1/messages</code> - Recent messages</li>
+                    <li><code>GET /api/v1/stats</code> - System statistics</li>
+                    <li><code>GET /api/v1/stream</code> - SSE live updates</li>
                     <li><code>GET /docs</code> - API documentation</li>
                 </ul>
             </div>
@@ -289,7 +292,7 @@ async def dashboard() -> HTMLResponse:
     return HTMLResponse(content=placeholder_html)
 
 
-@app.get("/api/agents")
+@api_v1.get("/agents")
 async def get_agents() -> dict[str, Any]:
     """Get list of active agents.
 
@@ -311,7 +314,7 @@ async def get_agents() -> dict[str, Any]:
     }
 
 
-@app.get("/api/locks")
+@api_v1.get("/locks")
 async def get_locks() -> dict[str, Any]:
     """Get list of active file locks.
 
@@ -325,7 +328,7 @@ async def get_locks() -> dict[str, Any]:
     }
 
 
-@app.get("/api/messages")
+@api_v1.get("/messages")
 async def get_messages(limit: int = 50) -> dict[str, Any]:
     """Get recent messages from log file.
 
@@ -348,7 +351,7 @@ async def get_messages(limit: int = 50) -> dict[str, Any]:
     }
 
 
-@app.get("/api/stats")
+@api_v1.get("/stats")
 async def get_stats() -> dict[str, Any]:
     """Get aggregated system statistics.
 
@@ -389,7 +392,7 @@ async def get_stats() -> dict[str, Any]:
     }
 
 
-@app.get("/api/stream")
+@api_v1.get("/stream")
 async def event_stream() -> StreamingResponse:
     """Server-Sent Events endpoint for real-time updates.
 
@@ -456,6 +459,41 @@ async def event_stream() -> StreamingResponse:
             "X-Accel-Buffering": "no",  # Disable nginx buffering
         },
     )
+
+
+# Register the v1 API router
+app.include_router(api_v1)
+
+
+# Legacy API redirects for backwards compatibility
+@app.get("/api/agents")
+async def legacy_agents_redirect() -> RedirectResponse:
+    """Redirect legacy /api/agents to /api/v1/agents."""
+    return RedirectResponse(url="/api/v1/agents", status_code=307)
+
+
+@app.get("/api/locks")
+async def legacy_locks_redirect() -> RedirectResponse:
+    """Redirect legacy /api/locks to /api/v1/locks."""
+    return RedirectResponse(url="/api/v1/locks", status_code=307)
+
+
+@app.get("/api/messages")
+async def legacy_messages_redirect() -> RedirectResponse:
+    """Redirect legacy /api/messages to /api/v1/messages."""
+    return RedirectResponse(url="/api/v1/messages", status_code=307)
+
+
+@app.get("/api/stats")
+async def legacy_stats_redirect() -> RedirectResponse:
+    """Redirect legacy /api/stats to /api/v1/stats."""
+    return RedirectResponse(url="/api/v1/stats", status_code=307)
+
+
+@app.get("/api/stream")
+async def legacy_stream_redirect() -> RedirectResponse:
+    """Redirect legacy /api/stream to /api/v1/stream."""
+    return RedirectResponse(url="/api/v1/stream", status_code=307)
 
 
 @app.get("/health")
