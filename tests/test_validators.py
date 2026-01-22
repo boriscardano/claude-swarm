@@ -7,25 +7,26 @@ This module tests all validation functions to ensure:
 - Security validations work correctly
 """
 
-import pytest
-from pathlib import Path
-import tempfile
 import os
+import tempfile
+from pathlib import Path
+
+import pytest
 
 from src.claudeswarm.validators import (
     ValidationError,
+    contains_dangerous_unicode,
+    normalize_path,
+    sanitize_message_content,
     validate_agent_id,
-    validate_message_content,
     validate_file_path,
-    validate_timeout,
-    validate_retry_count,
+    validate_host,
+    validate_message_content,
+    validate_port,
     validate_rate_limit_config,
     validate_recipient_list,
-    validate_host,
-    validate_port,
-    sanitize_message_content,
-    normalize_path,
-    contains_dangerous_unicode,
+    validate_retry_count,
+    validate_timeout,
 )
 
 
@@ -406,43 +407,43 @@ class TestMessageContentSanitization:
     def test_bidirectional_override_removed(self):
         """Test that bidirectional override characters are removed."""
         # RIGHT-TO-LEFT OVERRIDE
-        content = "Hello\u202EWorld"
+        content = "Hello\u202eWorld"
         result = sanitize_message_content(content)
-        assert "\u202E" not in result
+        assert "\u202e" not in result
         assert result == "HelloWorld"
 
         # LEFT-TO-RIGHT EMBEDDING
-        content = "Test\u202ACode"
+        content = "Test\u202aCode"
         result = sanitize_message_content(content)
-        assert "\u202A" not in result
+        assert "\u202a" not in result
         assert result == "TestCode"
 
         # Multiple bidi characters
-        content = "\u202DHello\u202EWorld\u202C"
+        content = "\u202dHello\u202eWorld\u202c"
         result = sanitize_message_content(content)
-        assert "\u202D" not in result
-        assert "\u202E" not in result
-        assert "\u202C" not in result
+        assert "\u202d" not in result
+        assert "\u202e" not in result
+        assert "\u202c" not in result
         assert result == "HelloWorld"
 
     def test_zero_width_characters_removed(self):
         """Test that zero-width characters are removed."""
         # ZERO WIDTH SPACE
-        content = "Hello\u200BWorld"
+        content = "Hello\u200bWorld"
         result = sanitize_message_content(content)
-        assert "\u200B" not in result
+        assert "\u200b" not in result
         assert result == "HelloWorld"
 
         # ZERO WIDTH NON-JOINER
-        content = "Test\u200CCode"
+        content = "Test\u200cCode"
         result = sanitize_message_content(content)
-        assert "\u200C" not in result
+        assert "\u200c" not in result
         assert result == "TestCode"
 
         # ZERO WIDTH JOINER
-        content = "My\u200DText"
+        content = "My\u200dText"
         result = sanitize_message_content(content)
-        assert "\u200D" not in result
+        assert "\u200d" not in result
         assert result == "MyText"
 
         # WORD JOINER
@@ -452,9 +453,9 @@ class TestMessageContentSanitization:
         assert result == "SomeText"
 
         # ZERO WIDTH NO-BREAK SPACE (BOM)
-        content = "\uFEFFHello"
+        content = "\ufeffHello"
         result = sanitize_message_content(content)
-        assert "\uFEFF" not in result
+        assert "\ufeff" not in result
         assert result == "Hello"
 
     def test_normal_unicode_preserved(self):
@@ -488,29 +489,29 @@ class TestMessageContentSanitization:
     def test_mixed_dangerous_and_safe_unicode(self):
         """Test content with both dangerous and safe Unicode."""
         # Mix of emoji and bidi override
-        content = "Hello 👋\u202E World"
+        content = "Hello 👋\u202e World"
         result = sanitize_message_content(content)
         assert "👋" in result
-        assert "\u202E" not in result
+        assert "\u202e" not in result
         assert "Hello" in result
         assert "World" in result
 
         # Mix of international text and zero-width
-        content = "你好\u200B世界"
+        content = "你好\u200b世界"
         result = sanitize_message_content(content)
         assert "你好" in result
         assert "世界" in result
-        assert "\u200B" not in result
+        assert "\u200b" not in result
 
     def test_trojan_source_attack_prevented(self):
         """Test prevention of Trojan Source attack (CVE-2021-42574)."""
         # Example of a potential attack where code appears different than it executes
         # The bidi override can make "/* comment */" look like code
-        malicious_content = "access = \u202Efalse\u202C = true"
+        malicious_content = "access = \u202efalse\u202c = true"
         result = sanitize_message_content(malicious_content)
         # All bidi characters should be removed
-        assert "\u202E" not in result
-        assert "\u202C" not in result
+        assert "\u202e" not in result
+        assert "\u202c" not in result
         # Content should be readable left-to-right
         assert "access = false = true" in result or "access =  = true" in result
 
@@ -527,32 +528,32 @@ class TestDangerousUnicodeDetection:
     def test_detect_bidi_override(self):
         """Test detection of bidirectional override characters."""
         # RIGHT-TO-LEFT OVERRIDE
-        has_dangerous, found = contains_dangerous_unicode("Hello\u202EWorld")
+        has_dangerous, found = contains_dangerous_unicode("Hello\u202eWorld")
         assert has_dangerous is True
         assert len(found) > 0
         assert any("RIGHT-TO-LEFT OVERRIDE" in name for name in found)
 
         # LEFT-TO-RIGHT EMBEDDING
-        has_dangerous, found = contains_dangerous_unicode("Test\u202ACode")
+        has_dangerous, found = contains_dangerous_unicode("Test\u202aCode")
         assert has_dangerous is True
         assert len(found) > 0
 
     def test_detect_zero_width_chars(self):
         """Test detection of zero-width characters."""
         # ZERO WIDTH SPACE
-        has_dangerous, found = contains_dangerous_unicode("Hello\u200BWorld")
+        has_dangerous, found = contains_dangerous_unicode("Hello\u200bWorld")
         assert has_dangerous is True
         assert len(found) > 0
         assert any("ZERO WIDTH SPACE" in name for name in found)
 
         # ZERO WIDTH NON-JOINER
-        has_dangerous, found = contains_dangerous_unicode("Test\u200CCode")
+        has_dangerous, found = contains_dangerous_unicode("Test\u200cCode")
         assert has_dangerous is True
         assert len(found) > 0
 
     def test_detect_multiple_dangerous_chars(self):
         """Test detection of multiple dangerous characters."""
-        text = "Hello\u202E\u200BWorld"
+        text = "Hello\u202e\u200bWorld"
         has_dangerous, found = contains_dangerous_unicode(text)
         assert has_dangerous is True
         assert len(found) >= 2
@@ -576,7 +577,7 @@ class TestDangerousUnicodeDetection:
 
     def test_character_names_reported(self):
         """Test that character names are properly reported."""
-        text = "Test\u202ECode"
+        text = "Test\u202eCode"
         has_dangerous, found = contains_dangerous_unicode(text)
         assert has_dangerous is True
         assert len(found) == 1

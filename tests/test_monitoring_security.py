@@ -7,14 +7,12 @@ Author: Agent-SecurityFix
 Phase: Security Fix
 """
 
-import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 from claudeswarm.monitoring import start_monitoring
-from claudeswarm.validators import ValidationError
 
 
 class TestMonitoringSecurityFix:
@@ -135,7 +133,7 @@ class TestMonitoringSecurityFix:
 
             with patch("subprocess.run") as mock_subprocess:
                 with patch("pathlib.Path.cwd") as mock_cwd:
-                    with patch("claudeswarm.monitoring.LockManager") as mock_lock_manager:
+                    with patch("claudeswarm.monitoring.LockManager"):
                         # Test with a path containing spaces
                         mock_cwd.return_value = Path("/path/with spaces/to/project")
 
@@ -156,11 +154,7 @@ class TestMonitoringSecurityFix:
             mock_pane.return_value = "%1"
 
             with patch("subprocess.run") as mock_subprocess:
-                start_monitoring(
-                    filter_type="BLOCKED",
-                    filter_agent="agent-1",
-                    use_tmux=True
-                )
+                start_monitoring(filter_type="BLOCKED", filter_agent="agent-1", use_tmux=True)
 
                 # Verify subprocess was called
                 assert mock_subprocess.called
@@ -178,9 +172,7 @@ class TestMonitoringSecurityFix:
             # Valid filter_type but invalid filter_agent
             with pytest.raises(SystemExit) as exc_info:
                 start_monitoring(
-                    filter_type="BLOCKED",
-                    filter_agent="agent-1; rm -rf /",
-                    use_tmux=True
+                    filter_type="BLOCKED", filter_agent="agent-1; rm -rf /", use_tmux=True
                 )
 
             assert exc_info.value.code == 1
@@ -190,9 +182,7 @@ class TestMonitoringSecurityFix:
             # Valid filter_agent but invalid filter_type
             with pytest.raises(SystemExit) as exc_info:
                 start_monitoring(
-                    filter_type="BLOCKED && rm -rf /",
-                    filter_agent="agent-1",
-                    use_tmux=True
+                    filter_type="BLOCKED && rm -rf /", filter_agent="agent-1", use_tmux=True
                 )
 
             assert exc_info.value.code == 1
@@ -242,11 +232,7 @@ class TestMonitoringSecurityFix:
             mock_monitor_class.return_value = mock_monitor
 
             # This should work without any issues (no subprocess calls)
-            start_monitoring(
-                filter_type="INFO",
-                filter_agent="agent-1",
-                use_tmux=False
-            )
+            start_monitoring(filter_type="INFO", filter_agent="agent-1", use_tmux=False)
 
             # Verify monitor was created with proper filter
             assert mock_monitor_class.called

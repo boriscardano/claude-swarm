@@ -14,31 +14,35 @@ Author: Agent-4 (Test Engineer)
 
 import time
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, call
+from unittest.mock import patch
 
 import pytest
 
+from claudeswarm.discovery import refresh_registry
+from claudeswarm.locking import STALE_LOCK_TIMEOUT, LockManager
 from claudeswarm.messaging import MessagingSystem, RateLimiter
-from claudeswarm.locking import LockManager, STALE_LOCK_TIMEOUT
-from claudeswarm.discovery import AgentRegistry, refresh_registry
 
 # Config module imports (will be available after Agent 1 completes)
 try:
-    from claudeswarm.config import Config, load_config, get_default_config
+    from claudeswarm.config import Config, get_default_config, load_config
+
     CONFIG_MODULE_EXISTS = True
 except ImportError:
+
     class Config:
         pass
+
     def load_config(*args, **kwargs):
         pass
+
     def get_default_config():
         pass
+
     CONFIG_MODULE_EXISTS = False
 
 
 pytestmark = pytest.mark.skipif(
-    not CONFIG_MODULE_EXISTS,
-    reason="Config module not yet implemented by Agent 1"
+    not CONFIG_MODULE_EXISTS, reason="Config module not yet implemented by Agent 1"
 )
 
 
@@ -58,11 +62,9 @@ class TestMessagingSystemWithConfig:
         config = load_config(config_path)
 
         # Create messaging system with config
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             messaging = MessagingSystem(
-                agent_id="test-agent",
-                project_root=str(mock_project_root),
-                config=config
+                agent_id="test-agent", project_root=str(mock_project_root), config=config
             )
 
             # Verify rate limiter uses config values
@@ -83,11 +85,9 @@ class TestMessagingSystemWithConfig:
 
         config = load_config(config_path)
 
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             messaging = MessagingSystem(
-                agent_id="test-agent",
-                project_root=str(mock_project_root),
-                config=config
+                agent_id="test-agent", project_root=str(mock_project_root), config=config
             )
 
             # Should be able to send 3 messages
@@ -101,11 +101,8 @@ class TestMessagingSystemWithConfig:
 
     def test_messaging_system_without_config_uses_defaults(self, mock_project_root):
         """Test that MessagingSystem works without config (backward compat)."""
-        with patch('claudeswarm.messaging.subprocess.run'):
-            messaging = MessagingSystem(
-                agent_id="test-agent",
-                project_root=str(mock_project_root)
-            )
+        with patch("claudeswarm.messaging.subprocess.run"):
+            messaging = MessagingSystem(agent_id="test-agent", project_root=str(mock_project_root))
 
             # Should have default rate limits
             assert messaging.rate_limiter.max_messages > 0
@@ -125,13 +122,13 @@ class TestMessagingSystemWithConfig:
 
         config = load_config(config_path)
 
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             # Override with constructor params
             messaging = MessagingSystem(
                 agent_id="test-agent",
                 project_root=str(mock_project_root),
                 config=config,
-                rate_limit_override={'max_messages': 20, 'time_window_seconds': 120}
+                rate_limit_override={"max_messages": 20, "time_window_seconds": 120},
             )
 
             # Should use override values
@@ -171,10 +168,7 @@ class TestLockManagerWithConfig:
 
         config = load_config(config_path)
 
-        lock_manager = LockManager(
-            project_root=str(mock_project_root),
-            config=config
-        )
+        lock_manager = LockManager(project_root=str(mock_project_root), config=config)
 
         assert lock_manager.stale_timeout == 600
         assert lock_manager.refresh_interval == 120
@@ -192,16 +186,11 @@ class TestLockManagerWithConfig:
 
         config = load_config(config_path)
 
-        lock_manager = LockManager(
-            project_root=str(mock_project_root),
-            config=config
-        )
+        lock_manager = LockManager(project_root=str(mock_project_root), config=config)
 
         # Acquire a lock
         success, _ = lock_manager.acquire_lock(
-            filepath="test.txt",
-            agent_id="agent-1",
-            reason="test"
+            filepath="test.txt", agent_id="agent-1", reason="test"
         )
         assert success
 
@@ -233,9 +222,7 @@ class TestLockManagerWithConfig:
         config = load_config(config_path)
 
         lock_manager = LockManager(
-            project_root=str(mock_project_root),
-            config=config,
-            stale_timeout=600  # Override
+            project_root=str(mock_project_root), config=config, stale_timeout=600  # Override
         )
 
         assert lock_manager.stale_timeout == 600
@@ -250,16 +237,11 @@ class TestLockManagerWithConfig:
 
         config = load_config(config_path)
 
-        lock_manager = LockManager(
-            project_root=str(mock_project_root),
-            config=config
-        )
+        lock_manager = LockManager(project_root=str(mock_project_root), config=config)
 
         # Acquire lock
         success, _ = lock_manager.acquire_lock(
-            filepath="test.txt",
-            agent_id="agent-1",
-            reason="test"
+            filepath="test.txt", agent_id="agent-1", reason="test"
         )
         assert success
 
@@ -287,15 +269,13 @@ class TestDiscoveryWithConfig:
         config = load_config(config_path)
 
         # Mock the tmux parsing
-        with patch('claudeswarm.discovery._parse_tmux_panes', return_value=[]):
+        with patch("claudeswarm.discovery._parse_tmux_panes", return_value=[]):
             registry = refresh_registry(config=config)
 
             # Verify config was applied (depends on Agent 1's implementation)
             assert registry is not None
 
-    def test_discovery_stale_detection_respects_config(
-        self, temp_config_dir, mock_project_root
-    ):
+    def test_discovery_stale_detection_respects_config(self, temp_config_dir, mock_project_root):
         """Test that agent staleness detection uses config threshold."""
         config_content = """discovery:
   stale_threshold_seconds: 60
@@ -303,7 +283,7 @@ class TestDiscoveryWithConfig:
         config_path = temp_config_dir / "config.yaml"
         config_path.write_text(config_content)
 
-        config = load_config(config_path)
+        load_config(config_path)
 
         # This test would verify that agents are marked stale
         # based on the config threshold - implementation depends on Agent 1
@@ -311,7 +291,7 @@ class TestDiscoveryWithConfig:
 
     def test_discovery_without_config_uses_defaults(self):
         """Test that discovery works without config (backward compat)."""
-        with patch('claudeswarm.discovery._parse_tmux_panes', return_value=[]):
+        with patch("claudeswarm.discovery._parse_tmux_panes", return_value=[]):
             registry = refresh_registry()
             assert registry is not None
 
@@ -334,11 +314,9 @@ class TestConfigChangePropagation:
 
         config1 = load_config(config_path)
 
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             messaging1 = MessagingSystem(
-                agent_id="test-agent",
-                project_root=str(mock_project_root),
-                config=config1
+                agent_id="test-agent", project_root=str(mock_project_root), config=config1
             )
             assert messaging1.rate_limiter.max_messages == 10
 
@@ -351,17 +329,13 @@ class TestConfigChangePropagation:
 
         config2 = load_config(config_path)
 
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             messaging2 = MessagingSystem(
-                agent_id="test-agent",
-                project_root=str(mock_project_root),
-                config=config2
+                agent_id="test-agent", project_root=str(mock_project_root), config=config2
             )
             assert messaging2.rate_limiter.max_messages == 20
 
-    def test_config_reload_updates_module_behavior(
-        self, temp_config_dir, mock_project_root
-    ):
+    def test_config_reload_updates_module_behavior(self, temp_config_dir, mock_project_root):
         """Test that reloading config can update module behavior."""
         config_path = temp_config_dir / "config.yaml"
         config_path.write_text("""locking:
@@ -369,8 +343,7 @@ class TestConfigChangePropagation:
 """)
 
         lock_manager = LockManager(
-            project_root=str(mock_project_root),
-            config=load_config(config_path)
+            project_root=str(mock_project_root), config=load_config(config_path)
         )
 
         assert lock_manager.stale_timeout == 300
@@ -381,8 +354,7 @@ class TestConfigChangePropagation:
 """)
 
         lock_manager2 = LockManager(
-            project_root=str(mock_project_root),
-            config=load_config(config_path)
+            project_root=str(mock_project_root), config=load_config(config_path)
         )
 
         assert lock_manager2.stale_timeout == 600
@@ -404,11 +376,9 @@ class TestModuleConfigValidation:
         # Should raise validation error when loading
         with pytest.raises(Exception):  # ConfigError or ValidationError
             config = load_config(config_path)
-            with patch('claudeswarm.messaging.subprocess.run'):
+            with patch("claudeswarm.messaging.subprocess.run"):
                 MessagingSystem(
-                    agent_id="test-agent",
-                    project_root=str(mock_project_root),
-                    config=config
+                    agent_id="test-agent", project_root=str(mock_project_root), config=config
                 )
 
     def test_lock_manager_validates_timeout_config(self, temp_config_dir, mock_project_root):
@@ -422,10 +392,7 @@ class TestModuleConfigValidation:
         # Should raise validation error
         with pytest.raises(Exception):  # ConfigError or ValidationError
             config = load_config(config_path)
-            LockManager(
-                project_root=str(mock_project_root),
-                config=config
-            )
+            LockManager(project_root=str(mock_project_root), config=config)
 
     def test_discovery_validates_threshold_config(self, temp_config_dir):
         """Test that discovery validates threshold config."""
@@ -438,7 +405,7 @@ class TestModuleConfigValidation:
         # Should raise validation error
         with pytest.raises(Exception):  # ConfigError or ValidationError
             config = load_config(config_path)
-            with patch('claudeswarm.discovery._parse_tmux_panes', return_value=[]):
+            with patch("claudeswarm.discovery._parse_tmux_panes", return_value=[]):
                 refresh_registry(config=config)
 
 
@@ -447,15 +414,12 @@ class TestBackwardCompatibility:
 
     def test_messaging_system_works_without_config_module(self, mock_project_root):
         """Test MessagingSystem works when config module not imported."""
-        with patch('claudeswarm.messaging.subprocess.run'):
-            messaging = MessagingSystem(
-                agent_id="test-agent",
-                project_root=str(mock_project_root)
-            )
+        with patch("claudeswarm.messaging.subprocess.run"):
+            messaging = MessagingSystem(agent_id="test-agent", project_root=str(mock_project_root))
 
             # Should work with default behavior
             assert messaging.agent_id == "test-agent"
-            assert hasattr(messaging, 'rate_limiter')
+            assert hasattr(messaging, "rate_limiter")
 
     def test_lock_manager_works_without_config_module(self, mock_project_root):
         """Test LockManager works when config module not imported."""
@@ -467,24 +431,24 @@ class TestBackwardCompatibility:
     def test_all_modules_maintain_existing_api(self, mock_project_root):
         """Test that existing API surface is maintained."""
         # MessagingSystem
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             messaging = MessagingSystem(agent_id="test", project_root=str(mock_project_root))
-            assert hasattr(messaging, 'send_message')
-            assert hasattr(messaging, 'broadcast')
+            assert hasattr(messaging, "send_message")
+            assert hasattr(messaging, "broadcast")
 
         # LockManager
         lock_mgr = LockManager(project_root=str(mock_project_root))
-        assert hasattr(lock_mgr, 'acquire_lock')
-        assert hasattr(lock_mgr, 'release_lock')
-        assert hasattr(lock_mgr, 'list_locks')
+        assert hasattr(lock_mgr, "acquire_lock")
+        assert hasattr(lock_mgr, "release_lock")
+        assert hasattr(lock_mgr, "list_locks")
 
     def test_config_is_optional_parameter(self, mock_project_root):
         """Test that config parameter is optional for all modules."""
         # Should not raise errors
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             MessagingSystem(agent_id="test", project_root=str(mock_project_root))
 
         LockManager(project_root=str(mock_project_root))
 
-        with patch('claudeswarm.discovery._parse_tmux_panes', return_value=[]):
+        with patch("claudeswarm.discovery._parse_tmux_panes", return_value=[]):
             refresh_registry()

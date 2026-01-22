@@ -10,15 +10,14 @@ Multi-agent workflow for collaborative feature development:
 This workflow showcases true multi-agent coordination for the E2B hackathon.
 """
 
-import json
-import os
 import asyncio
-from typing import Dict, List, Optional, Any
+import os
 from pathlib import Path
+from typing import Any
 
-from ..messaging import AgentMessaging
-from ..discovery import AgentDiscovery
 from ..coordination import AgentCoordinator
+from ..discovery import AgentDiscovery
+from ..messaging import AgentMessaging
 
 
 class CollaborativeDevelopmentWorkflow:
@@ -37,7 +36,7 @@ class CollaborativeDevelopmentWorkflow:
         messaging: AgentMessaging,
         discovery: AgentDiscovery,
         coordinator: AgentCoordinator,
-        workspace: str = "/workspace"
+        workspace: str = "/workspace",
     ):
         self.messaging = messaging
         self.discovery = discovery
@@ -46,11 +45,8 @@ class CollaborativeDevelopmentWorkflow:
         self.agent_id = os.getenv("CLAUDESWARM_AGENT_ID", "agent-0")
 
     async def run_workflow(
-        self,
-        repo_url: str,
-        feature_description: str,
-        branch_name: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, repo_url: str, feature_description: str, branch_name: str | None = None
+    ) -> dict[str, Any]:
         """
         Execute the collaborative development workflow.
 
@@ -71,7 +67,7 @@ class CollaborativeDevelopmentWorkflow:
             "agent-0": "project-manager",
             "agent-1": "backend-developer",
             "agent-2": "frontend-developer",
-            "agent-3": "qa-engineer"
+            "agent-3": "qa-engineer",
         }
         role = agent_roles.get(self.agent_id, "developer")
 
@@ -90,11 +86,8 @@ class CollaborativeDevelopmentWorkflow:
             return await self._run_generic_developer(feature_description)
 
     async def _run_project_manager(
-        self,
-        repo_url: str,
-        feature_description: str,
-        branch_name: str
-    ) -> Dict[str, Any]:
+        self, repo_url: str, feature_description: str, branch_name: str
+    ) -> dict[str, Any]:
         """
         Project Manager: Clone repo, analyze, and coordinate task distribution.
         """
@@ -119,14 +112,16 @@ class CollaborativeDevelopmentWorkflow:
 
         # Step 4: Broadcast tasks to other agents
         print("📢 [PM] Broadcasting tasks to agents...")
-        await self.messaging.broadcast({
-            "type": "task_assignment",
-            "feature": feature_description,
-            "branch": branch_name,
-            "repo_path": repo_path,
-            "tasks": tasks,
-            "analysis": analysis
-        })
+        await self.messaging.broadcast(
+            {
+                "type": "task_assignment",
+                "feature": feature_description,
+                "branch": branch_name,
+                "repo_path": repo_path,
+                "tasks": tasks,
+                "analysis": analysis,
+            }
+        )
 
         # Step 5: Wait for agents to complete their tasks
         print("⏳ [PM] Waiting for agents to complete tasks...")
@@ -137,10 +132,10 @@ class CollaborativeDevelopmentWorkflow:
             "role": "project-manager",
             "tasks_created": len(tasks),
             "completion_status": completion_status,
-            "repo_path": repo_path
+            "repo_path": repo_path,
         }
 
-    async def _run_backend_developer(self, feature_description: str) -> Dict[str, Any]:
+    async def _run_backend_developer(self, feature_description: str) -> dict[str, Any]:
         """
         Backend Developer: Implement backend changes.
         """
@@ -166,21 +161,15 @@ class CollaborativeDevelopmentWorkflow:
             changes_made.append(result)
 
         # Notify PM of completion
-        await self.messaging.broadcast({
-            "type": "task_completed",
-            "role": "backend",
-            "changes": changes_made
-        })
+        await self.messaging.broadcast(
+            {"type": "task_completed", "role": "backend", "changes": changes_made}
+        )
 
         print("✅ [Backend] Backend tasks completed!")
 
-        return {
-            "success": True,
-            "role": "backend-developer",
-            "changes_made": len(changes_made)
-        }
+        return {"success": True, "role": "backend-developer", "changes_made": len(changes_made)}
 
-    async def _run_frontend_developer(self, feature_description: str) -> Dict[str, Any]:
+    async def _run_frontend_developer(self, feature_description: str) -> dict[str, Any]:
         """
         Frontend Developer: Implement frontend changes.
         """
@@ -206,21 +195,15 @@ class CollaborativeDevelopmentWorkflow:
             changes_made.append(result)
 
         # Notify PM of completion
-        await self.messaging.broadcast({
-            "type": "task_completed",
-            "role": "frontend",
-            "changes": changes_made
-        })
+        await self.messaging.broadcast(
+            {"type": "task_completed", "role": "frontend", "changes": changes_made}
+        )
 
         print("✅ [Frontend] Frontend tasks completed!")
 
-        return {
-            "success": True,
-            "role": "frontend-developer",
-            "changes_made": len(changes_made)
-        }
+        return {"success": True, "role": "frontend-developer", "changes_made": len(changes_made)}
 
-    async def _run_qa_engineer(self, branch_name: str) -> Dict[str, Any]:
+    async def _run_qa_engineer(self, branch_name: str) -> dict[str, Any]:
         """
         QA Engineer: Write tests, validate, commit, and push.
         """
@@ -246,30 +229,31 @@ class CollaborativeDevelopmentWorkflow:
 
         if not test_passed:
             print("❌ [QA] Tests failed! Notifying team...")
-            await self.messaging.broadcast({
-                "type": "test_failed",
-                "message": "Tests failed, please review changes"
-            })
+            await self.messaging.broadcast(
+                {"type": "test_failed", "message": "Tests failed, please review changes"}
+            )
             return {"success": False, "error": "Tests failed"}
 
         # Commit changes
         print("💾 [QA] Committing changes...")
         commit_result = await self._commit_changes(
             repo_path,
-            f"feat: {task_msg['feature']}\n\nImplemented by Claude Swarm multi-agent system"
+            f"feat: {task_msg['feature']}\n\nImplemented by Claude Swarm multi-agent system",
         )
 
         # Push to origin
         print("🚀 [QA] Pushing to origin...")
-        push_result = await self._push_changes(repo_path, branch_name)
+        await self._push_changes(repo_path, branch_name)
 
         # Notify completion
-        await self.messaging.broadcast({
-            "type": "workflow_completed",
-            "commit": commit_result,
-            "branch": branch_name,
-            "tests_passed": True
-        })
+        await self.messaging.broadcast(
+            {
+                "type": "workflow_completed",
+                "commit": commit_result,
+                "branch": branch_name,
+                "tests_passed": True,
+            }
+        )
 
         print("✅ [QA] All QA tasks completed!")
 
@@ -279,10 +263,10 @@ class CollaborativeDevelopmentWorkflow:
             "tests_written": test_results["count"],
             "tests_passed": True,
             "commit_hash": commit_result.get("hash"),
-            "branch": branch_name
+            "branch": branch_name,
         }
 
-    async def _run_generic_developer(self, feature_description: str) -> Dict[str, Any]:
+    async def _run_generic_developer(self, feature_description: str) -> dict[str, Any]:
         """
         Generic developer role for extra agents.
         """
@@ -299,7 +283,7 @@ class CollaborativeDevelopmentWorkflow:
 
     # Helper methods for actual implementation
 
-    async def _clone_repository(self, repo_url: str) -> Dict[str, Any]:
+    async def _clone_repository(self, repo_url: str) -> dict[str, Any]:
         """Clone repository using git command."""
         repo_name = repo_url.split("/")[-1].replace(".git", "")
 
@@ -311,7 +295,10 @@ class CollaborativeDevelopmentWorkflow:
         try:
             repo_path.relative_to(workspace_path)
         except ValueError:
-            return {"success": False, "error": "Invalid repository path - path traversal attempt detected"}
+            return {
+                "success": False,
+                "error": "Invalid repository path - path traversal attempt detected",
+            }
 
         # Use git command to clone
         # In real implementation, this would use GitHub MCP
@@ -319,27 +306,22 @@ class CollaborativeDevelopmentWorkflow:
         try:
             # Use create_subprocess_exec instead of create_subprocess_shell to prevent command injection
             process = await asyncio.create_subprocess_exec(
-                "git", "clone", repo_url, str(repo_path),
+                "git",
+                "clone",
+                repo_url,
+                str(repo_path),
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             await process.communicate()
 
-            return {
-                "success": process.returncode == 0,
-                "path": str(repo_path)
-            }
+            return {"success": process.returncode == 0, "path": str(repo_path)}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def _analyze_codebase(self, repo_path: str) -> Dict[str, Any]:
+    async def _analyze_codebase(self, repo_path: str) -> dict[str, Any]:
         """Analyze codebase structure."""
-        analysis = {
-            "languages": [],
-            "directories": [],
-            "key_files": [],
-            "structure": {}
-        }
+        analysis = {"languages": [], "directories": [], "key_files": [], "structure": {}}
 
         # Walk through repository
         path_obj = Path(repo_path)
@@ -359,85 +341,70 @@ class CollaborativeDevelopmentWorkflow:
                 ".tsx": "React TypeScript",
                 ".go": "Go",
                 ".rs": "Rust",
-                ".java": "Java"
+                ".java": "Java",
             }
-            analysis["languages"] = list(set(lang_map.get(ext, ext) for ext in extensions if ext in lang_map))
+            analysis["languages"] = list(
+                {lang_map.get(ext, ext) for ext in extensions if ext in lang_map}
+            )
 
             # Find key directories
             analysis["directories"] = [
-                d.name for d in path_obj.iterdir()
-                if d.is_dir() and not d.name.startswith(".")
+                d.name for d in path_obj.iterdir() if d.is_dir() and not d.name.startswith(".")
             ]
 
         return analysis
 
     async def _create_task_breakdown(
-        self,
-        analysis: Dict[str, Any],
-        feature_description: str
-    ) -> List[Dict[str, Any]]:
+        self, analysis: dict[str, Any], feature_description: str
+    ) -> list[dict[str, Any]]:
         """Create task breakdown based on codebase analysis."""
         tasks = []
 
         # Determine if we need backend/frontend split
         languages = analysis.get("languages", [])
-        has_frontend = any(lang in ["JavaScript", "TypeScript", "React", "React TypeScript"] for lang in languages)
+        has_frontend = any(
+            lang in ["JavaScript", "TypeScript", "React", "React TypeScript"] for lang in languages
+        )
         has_backend = any(lang in ["Python", "Go", "Rust", "Java"] for lang in languages)
 
         if has_backend:
-            tasks.append({
-                "role": "backend",
-                "description": f"Implement backend logic for: {feature_description}",
-                "priority": 1
-            })
+            tasks.append(
+                {
+                    "role": "backend",
+                    "description": f"Implement backend logic for: {feature_description}",
+                    "priority": 1,
+                }
+            )
 
         if has_frontend:
-            tasks.append({
-                "role": "frontend",
-                "description": f"Implement UI for: {feature_description}",
-                "priority": 1
-            })
+            tasks.append(
+                {
+                    "role": "frontend",
+                    "description": f"Implement UI for: {feature_description}",
+                    "priority": 1,
+                }
+            )
 
         # Always add testing task
-        tasks.append({
-            "role": "qa",
-            "description": f"Write tests for: {feature_description}",
-            "priority": 2
-        })
+        tasks.append(
+            {"role": "qa", "description": f"Write tests for: {feature_description}", "priority": 2}
+        )
 
         return tasks
 
-    async def _implement_backend_task(
-        self,
-        repo_path: str,
-        task: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    async def _implement_backend_task(self, repo_path: str, task: dict[str, Any]) -> dict[str, Any]:
         """Implement a backend task."""
         # Placeholder: In real implementation, this would use Claude to generate code
-        return {
-            "task": task["description"],
-            "files_modified": [],
-            "status": "completed"
-        }
+        return {"task": task["description"], "files_modified": [], "status": "completed"}
 
     async def _implement_frontend_task(
-        self,
-        repo_path: str,
-        task: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, repo_path: str, task: dict[str, Any]
+    ) -> dict[str, Any]:
         """Implement a frontend task."""
         # Placeholder: In real implementation, this would use Claude to generate code
-        return {
-            "task": task["description"],
-            "files_modified": [],
-            "status": "completed"
-        }
+        return {"task": task["description"], "files_modified": [], "status": "completed"}
 
-    async def _write_tests(
-        self,
-        repo_path: str,
-        feature: str
-    ) -> Dict[str, Any]:
+    async def _write_tests(self, repo_path: str, feature: str) -> dict[str, Any]:
         """Write tests for the feature."""
         # Placeholder
         return {"count": 0, "files": []}
@@ -447,59 +414,57 @@ class CollaborativeDevelopmentWorkflow:
         # Placeholder
         return True
 
-    async def _commit_changes(
-        self,
-        repo_path: str,
-        message: str
-    ) -> Dict[str, Any]:
+    async def _commit_changes(self, repo_path: str, message: str) -> dict[str, Any]:
         """Commit changes using git."""
         try:
             # Git add
             process = await asyncio.create_subprocess_exec(
-                "git", "add", ".",
+                "git",
+                "add",
+                ".",
                 cwd=repo_path,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             await process.communicate()
 
             # Git commit - sanitize message by passing as argument (no shell interpretation)
             process = await asyncio.create_subprocess_exec(
-                "git", "commit", "-m", message,
+                "git",
+                "commit",
+                "-m",
+                message,
                 cwd=repo_path,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, _ = await process.communicate()
 
             # Extract commit hash
             commit_hash = stdout.decode().split()[1] if process.returncode == 0 else None
 
-            return {
-                "success": process.returncode == 0,
-                "hash": commit_hash
-            }
+            return {"success": process.returncode == 0, "hash": commit_hash}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def _push_changes(
-        self,
-        repo_path: str,
-        branch: str
-    ) -> Dict[str, Any]:
+    async def _push_changes(self, repo_path: str, branch: str) -> dict[str, Any]:
         """Push changes to origin."""
         try:
             # Validate branch name to prevent command injection
             # Allow alphanumeric, hyphens, underscores, and forward slashes
             import re
-            if not re.match(r'^[a-zA-Z0-9/_-]+$', branch):
+
+            if not re.match(r"^[a-zA-Z0-9/_-]+$", branch):
                 return {"success": False, "error": "Invalid branch name"}
 
             process = await asyncio.create_subprocess_exec(
-                "git", "push", "origin", branch,
+                "git",
+                "push",
+                "origin",
+                branch,
                 cwd=repo_path,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             await process.communicate()
 
@@ -508,10 +473,8 @@ class CollaborativeDevelopmentWorkflow:
             return {"success": False, "error": str(e)}
 
     async def _wait_for_message(
-        self,
-        message_type: str,
-        timeout: int = 60
-    ) -> Optional[Dict[str, Any]]:
+        self, message_type: str, timeout: int = 60
+    ) -> dict[str, Any] | None:
         """Wait for a specific message type."""
         start_time = asyncio.get_event_loop().time()
 
@@ -545,10 +508,8 @@ class CollaborativeDevelopmentWorkflow:
         return False
 
     async def _wait_for_task_completion(
-        self,
-        tasks: List[Dict[str, Any]],
-        timeout: int = 300
-    ) -> Dict[str, Any]:
+        self, tasks: list[dict[str, Any]], timeout: int = 300
+    ) -> dict[str, Any]:
         """Wait for all tasks to complete."""
         completed_tasks = set()
         required_roles = {task["role"] for task in tasks}
@@ -562,15 +523,12 @@ class CollaborativeDevelopmentWorkflow:
                     completed_tasks.add(msg.get("role"))
 
             if required_roles.issubset(completed_tasks):
-                return {
-                    "all_completed": True,
-                    "completed_roles": list(completed_tasks)
-                }
+                return {"all_completed": True, "completed_roles": list(completed_tasks)}
 
             await asyncio.sleep(1.0)
 
         return {
             "all_completed": False,
             "completed_roles": list(completed_tasks),
-            "missing_roles": list(required_roles - completed_tasks)
+            "missing_roles": list(required_roles - completed_tasks),
         }

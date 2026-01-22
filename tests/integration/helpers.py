@@ -15,15 +15,15 @@ import json
 import shutil
 import tempfile
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Generator, Optional
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from claudeswarm.discovery import Agent, AgentRegistry, get_registry_path
-from claudeswarm.locking import FileLock, LockManager
+from claudeswarm.locking import LockManager
 from claudeswarm.messaging import Message, MessageType
 
 
@@ -38,11 +38,12 @@ class MockAgent:
         status: Agent status
         working_dir: Temporary working directory for this agent
     """
+
     id: str
     pane_index: str
     pid: int
     status: str = "active"
-    working_dir: Optional[Path] = None
+    working_dir: Path | None = None
 
     def to_agent(self) -> Agent:
         """Convert to a real Agent object."""
@@ -51,8 +52,8 @@ class MockAgent:
             pane_index=self.pane_index,
             pid=self.pid,
             status=self.status,
-            last_seen=datetime.now(timezone.utc).isoformat(),
-            session_name="test-session"
+            last_seen=datetime.now(UTC).isoformat(),
+            session_name="test-session",
         )
 
 
@@ -74,11 +75,11 @@ class IntegrationTestContext:
             num_agents: Number of mock agents to create
         """
         self.num_agents = num_agents
-        self.temp_dir: Optional[Path] = None
+        self.temp_dir: Path | None = None
         self.agents: list[MockAgent] = []
-        self.lock_manager: Optional[LockManager] = None
+        self.lock_manager: LockManager | None = None
         self.sent_messages: list[Message] = []
-        self.original_cwd: Optional[Path] = None
+        self.original_cwd: Path | None = None
 
     def __enter__(self) -> IntegrationTestContext:
         """Set up test context."""
@@ -90,6 +91,7 @@ class IntegrationTestContext:
 
         # Change to temp directory
         import os
+
         os.chdir(self.temp_dir)
 
         # Create mock agents
@@ -98,7 +100,7 @@ class IntegrationTestContext:
                 id=f"agent-{i}",
                 pane_index=f"test-session:0.{i}",
                 pid=10000 + i,
-                working_dir=self.temp_dir / f"agent-{i}-workspace"
+                working_dir=self.temp_dir / f"agent-{i}-workspace",
             )
             agent.working_dir.mkdir(parents=True, exist_ok=True)
             self.agents.append(agent)
@@ -115,11 +117,13 @@ class IntegrationTestContext:
         """Clean up test context."""
         # Reset the global messaging system to clear rate limiters
         import claudeswarm.messaging as messaging_module
+
         messaging_module._default_messaging_system = None
 
         # Restore original working directory
         if self.original_cwd:
             import os
+
             os.chdir(self.original_cwd)
 
         # Clean up temporary directory
@@ -130,15 +134,15 @@ class IntegrationTestContext:
         """Create a mock agent registry file."""
         registry = AgentRegistry(
             session_name="test-session",
-            updated_at=datetime.now(timezone.utc).isoformat(),
-            agents=[agent.to_agent() for agent in self.agents]
+            updated_at=datetime.now(UTC).isoformat(),
+            agents=[agent.to_agent() for agent in self.agents],
         )
 
         registry_path = get_registry_path()
         with open(registry_path, "w") as f:
             json.dump(registry.to_dict(), f, indent=2)
 
-    def get_agent(self, agent_id: str) -> Optional[MockAgent]:
+    def get_agent(self, agent_id: str) -> MockAgent | None:
         """Get a mock agent by ID."""
         for agent in self.agents:
             if agent.id == agent_id:
@@ -211,7 +215,7 @@ class IntegrationTestContext:
 
         for lock_file in lock_dir.glob("*.lock"):
             try:
-                with open(lock_file, "r") as f:
+                with open(lock_file) as f:
                     lock_data = json.load(f)
 
                 # Subtract seconds from locked_at timestamp to make it older
@@ -237,19 +241,24 @@ def mock_tmux_environment() -> Generator[dict, None, None]:
 
     def mock_send_to_pane(pane_id: str, message: str) -> bool:
         """Mock tmux send-keys command."""
-        mock_state["messages_sent"].append({
-            "pane_id": pane_id,
-            "message": message,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
+        mock_state["messages_sent"].append(
+            {"pane_id": pane_id, "message": message, "timestamp": datetime.now(UTC).isoformat()}
+        )
         return True
 
     def mock_verify_pane_exists(pane_id: str) -> bool:
         """Mock pane existence check."""
         return pane_id in mock_state["panes"]
 
-    with patch("claudeswarm.messaging.TmuxMessageDelivery.send_to_pane", side_effect=mock_send_to_pane), \
-         patch("claudeswarm.messaging.TmuxMessageDelivery.verify_pane_exists", side_effect=mock_verify_pane_exists):
+    with (
+        patch(
+            "claudeswarm.messaging.TmuxMessageDelivery.send_to_pane", side_effect=mock_send_to_pane
+        ),
+        patch(
+            "claudeswarm.messaging.TmuxMessageDelivery.verify_pane_exists",
+            side_effect=mock_verify_pane_exists,
+        ),
+    ):
         yield mock_state
 
 
@@ -258,7 +267,7 @@ def verify_message_delivered(
     sender_id: str,
     recipient_pane: str,
     msg_type: MessageType,
-    content_substring: Optional[str] = None
+    content_substring: str | None = None,
 ) -> bool:
     """Verify that a message was delivered to a specific pane.
 
@@ -296,10 +305,7 @@ def verify_message_delivered(
 
 
 def verify_message_broadcast(
-    messages_sent: list[dict],
-    sender_id: str,
-    expected_recipients: list[str],
-    msg_type: MessageType
+    messages_sent: list[dict], sender_id: str, expected_recipients: list[str], msg_type: MessageType
 ) -> bool:
     """Verify that a message was broadcast to all expected recipients.
 
@@ -334,7 +340,7 @@ def create_mock_message(
     sender_id: str,
     recipient_ids: list[str],
     msg_type: MessageType = MessageType.INFO,
-    content: str = "Test message"
+    content: str = "Test message",
 ) -> Message:
     """Create a mock message for testing.
 
@@ -349,18 +355,15 @@ def create_mock_message(
     """
     return Message(
         sender_id=sender_id,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         msg_type=msg_type,
         content=content,
-        recipients=recipient_ids
+        recipients=recipient_ids,
     )
 
 
 def wait_for_lock_release(
-    lock_manager: LockManager,
-    filepath: str,
-    timeout: float = 5.0,
-    poll_interval: float = 0.1
+    lock_manager: LockManager, filepath: str, timeout: float = 5.0, poll_interval: float = 0.1
 ) -> bool:
     """Wait for a lock to be released.
 
@@ -383,10 +386,7 @@ def wait_for_lock_release(
     return False
 
 
-def assert_lock_state(
-    lock_manager: LockManager,
-    expected_locks: dict[str, str]
-) -> None:
+def assert_lock_state(lock_manager: LockManager, expected_locks: dict[str, str]) -> None:
     """Assert that the lock state matches expectations.
 
     Args:
@@ -402,8 +402,7 @@ def assert_lock_state(
     for filepath, expected_agent in expected_locks.items():
         actual_agent = actual_locks.get(filepath)
         assert actual_agent == expected_agent, (
-            f"Lock mismatch for {filepath}: "
-            f"expected {expected_agent}, got {actual_agent}"
+            f"Lock mismatch for {filepath}: " f"expected {expected_agent}, got {actual_agent}"
         )
 
 

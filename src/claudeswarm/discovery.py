@@ -32,16 +32,15 @@ import json
 import os
 import platform
 import subprocess
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import List, Optional, Dict
 
 from .config import get_config
+from .file_lock import FileLock, FileLockTimeout
 from .logging_config import get_logger
-from .utils import atomic_write
 from .project import get_active_agents_path
-from .file_lock import FileLock, FileLockTimeout, FileLockError
+from .utils import atomic_write
 
 # ============================================================================
 # PERFORMANCE AND SAFETY CONSTANTS
@@ -80,7 +79,7 @@ REGISTRY_LOCK_TIMEOUT_SECONDS = 5.0
 
 # Cache for process CWD lookups within a single discovery run
 # Cleared at start of each discovery run to ensure freshness
-_cwd_cache: Dict[int, Optional[str]] = {}
+_cwd_cache: dict[int, str | None] = {}
 
 # Set up logging for this module
 logger = get_logger(__name__)
@@ -89,21 +88,25 @@ logger = get_logger(__name__)
 # Custom exceptions
 class DiscoveryError(Exception):
     """Base exception for discovery system errors."""
+
     pass
 
 
 class TmuxNotRunningError(DiscoveryError):
     """Raised when tmux is not running or not accessible."""
+
     pass
 
 
 class TmuxPermissionError(DiscoveryError):
     """Raised when permission denied accessing tmux."""
+
     pass
 
 
 class RegistryLockError(DiscoveryError):
     """Raised when unable to acquire lock on registry file."""
+
     pass
 
 
@@ -120,20 +123,21 @@ class Agent:
         session_name: Name of the tmux session
         tmux_pane_id: Internal tmux pane ID (format: "%N") for direct TMUX_PANE matching
     """
+
     id: str
     pane_index: str
     pid: int
     status: str
     last_seen: str  # ISO 8601 format
     session_name: str
-    tmux_pane_id: Optional[str] = None  # Internal %N format for TMUX_PANE env var matching
+    tmux_pane_id: str | None = None  # Internal %N format for TMUX_PANE env var matching
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Convert agent to dictionary for JSON serialization."""
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict) -> "Agent":
+    def from_dict(cls, data: dict) -> "Agent":
         """Create Agent from dictionary."""
         return cls(**data)
 
@@ -141,36 +145,33 @@ class Agent:
 @dataclass
 class AgentRegistry:
     """Registry of all discovered agents.
-    
+
     Attributes:
         session_name: Name of the tmux session being monitored
         updated_at: Timestamp of last registry update
         agents: List of discovered agents
     """
+
     session_name: str
     updated_at: str  # ISO 8601 format
-    agents: List[Agent]
+    agents: list[Agent]
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Convert registry to dictionary for JSON serialization."""
         return {
             "session_name": self.session_name,
             "updated_at": self.updated_at,
-            "agents": [agent.to_dict() for agent in self.agents]
+            "agents": [agent.to_dict() for agent in self.agents],
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> "AgentRegistry":
+    def from_dict(cls, data: dict) -> "AgentRegistry":
         """Create AgentRegistry from dictionary."""
         agents = [Agent.from_dict(a) for a in data.get("agents", [])]
-        return cls(
-            session_name=data["session_name"],
-            updated_at=data["updated_at"],
-            agents=agents
-        )
+        return cls(session_name=data["session_name"], updated_at=data["updated_at"], agents=agents)
 
 
-def get_registry_path(project_root: Optional[Path] = None) -> Path:
+def get_registry_path(project_root: Path | None = None) -> Path:
     """Get the path to the agent registry file.
 
     Args:
@@ -188,9 +189,9 @@ def _clear_cwd_cache() -> None:
     _cwd_cache = {}
 
 
-def _parse_tmux_panes() -> List[Dict]:
+def _parse_tmux_panes() -> list[dict]:
     """Parse tmux pane information.
-    
+
     Returns:
         List of dictionaries containing pane information:
         - session_name: tmux session name
@@ -198,7 +199,7 @@ def _parse_tmux_panes() -> List[Dict]:
         - pane_index: pane number
         - pane_pid: process ID
         - command: current command running in pane
-        
+
     Raises:
         RuntimeError: If tmux is not running or command fails
     """
@@ -209,10 +210,10 @@ def _parse_tmux_panes() -> List[Dict]:
 
         # Ensure we preserve the TMUX environment variable for proper socket access
         env = os.environ.copy()
-        env['LC_ALL'] = 'C'
+        env["LC_ALL"] = "C"
 
         # If TMUX is not set, try to detect it
-        if 'TMUX' not in env:
+        if "TMUX" not in env:
             logger.debug("TMUX environment variable not set, attempting to detect tmux socket")
 
         result = subprocess.run(
@@ -221,7 +222,7 @@ def _parse_tmux_panes() -> List[Dict]:
             text=True,
             check=True,
             timeout=TMUX_OPERATION_TIMEOUT_SECONDS,
-            env=env
+            env=env,
         )
 
         panes = []
@@ -232,7 +233,7 @@ def _parse_tmux_panes() -> List[Dict]:
             parts = line.split("|")
             if len(parts) != 4:  # Now expecting 4 parts: pane_index, pid, command, pane_id
                 continue
-                
+
             pane_index, pid_str, command, tmux_pane_id = parts
 
             # Parse pane_index (format: "session:window.pane")
@@ -241,22 +242,24 @@ def _parse_tmux_panes() -> List[Dict]:
                 session_name = session_window.split(":")[0]
             except (ValueError, IndexError):
                 continue
-            
+
             try:
                 pid = int(pid_str)
             except ValueError:
                 continue
-                
-            panes.append({
-                "session_name": session_name,
-                "pane_index": pane_index,
-                "pid": pid,
-                "command": command,
-                "tmux_pane_id": tmux_pane_id  # Store %N format for TMUX_PANE matching
-            })
-        
+
+            panes.append(
+                {
+                    "session_name": session_name,
+                    "pane_index": pane_index,
+                    "pid": pid,
+                    "command": command,
+                    "tmux_pane_id": tmux_pane_id,  # Store %N format for TMUX_PANE matching
+                }
+            )
+
         return panes
-        
+
     except subprocess.TimeoutExpired as e:
         raise TmuxNotRunningError("Tmux command timed out (>5s). Tmux may be unresponsive.") from e
     except subprocess.CalledProcessError as e:
@@ -360,7 +363,7 @@ def _has_claude_child_process(pid: int) -> bool:
             capture_output=True,
             text=True,
             timeout=PGREP_TIMEOUT_SECONDS,
-            env={**os.environ, 'LC_ALL': 'C'}
+            env={**os.environ, "LC_ALL": "C"},
         )
 
         # pgrep returns exit code 1 if no processes found (not an error)
@@ -416,7 +419,7 @@ def _has_claude_child_process(pid: int) -> bool:
             capture_output=True,
             text=True,
             timeout=PS_BATCH_TIMEOUT_SECONDS,
-            env={**os.environ, 'LC_ALL': 'C'}
+            env={**os.environ, "LC_ALL": "C"},
         )
 
         # ps returns exit code 1 if some PIDs don't exist (they terminated)
@@ -453,13 +456,13 @@ def _has_claude_child_process(pid: int) -> bool:
             # - "claude-code"
             is_claude_binary = (
                 # Match: bare "claude" or "claude " with args
-                command_lower == "claude" or
-                command_lower.startswith("claude ") or
+                command_lower == "claude"
+                or command_lower.startswith("claude ")
+                or
                 # Match: /path/to/claude
-                "/claude" in command_lower and (
-                    command_lower.endswith("/claude") or
-                    "/claude " in command_lower
-                ) or
+                "/claude" in command_lower
+                and (command_lower.endswith("/claude") or "/claude " in command_lower)
+                or
                 # Match: claude-code
                 "claude-code" in command_lower
             )
@@ -473,7 +476,7 @@ def _has_claude_child_process(pid: int) -> bool:
         return False
 
 
-def _get_process_cwd(pid: int) -> Optional[str]:
+def _get_process_cwd(pid: int) -> str | None:
     """Get the current working directory of a process.
 
     This function provides cross-platform support for retrieving a process's
@@ -615,7 +618,7 @@ def _get_process_cwd(pid: int) -> Optional[str]:
     return cwd
 
 
-def _get_process_cwd_linux(pid: int) -> Optional[str]:
+def _get_process_cwd_linux(pid: int) -> str | None:
     """Get process CWD on Linux using /proc filesystem.
 
     Args:
@@ -648,7 +651,7 @@ def _get_process_cwd_linux(pid: int) -> Optional[str]:
         return None
 
 
-def _get_process_cwd_macos(pid: int) -> Optional[str]:
+def _get_process_cwd_macos(pid: int) -> str | None:
     """Get process CWD on macOS using lsof command.
 
     Args:
@@ -667,7 +670,7 @@ def _get_process_cwd_macos(pid: int) -> Optional[str]:
             ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
             capture_output=True,
             text=True,
-            timeout=LSOF_TIMEOUT_SECONDS
+            timeout=LSOF_TIMEOUT_SECONDS,
         )
 
         if result.returncode == 0:
@@ -748,20 +751,20 @@ def _is_claude_code_process(command: str, pid: int) -> bool:
     return _has_claude_child_process(pid)
 
 
-def _generate_agent_id(pane_index: str, existing_ids: Dict[str, str]) -> str:
+def _generate_agent_id(pane_index: str, existing_ids: dict[str, str]) -> str:
     """Generate a stable agent ID for a pane.
-    
+
     Args:
         pane_index: tmux pane identifier
         existing_ids: Mapping of pane_index to agent_id from previous registry
-        
+
     Returns:
         Agent ID string (e.g., "agent-0", "agent-1")
     """
     # Reuse existing ID if pane was previously discovered
     if pane_index in existing_ids:
         return existing_ids[pane_index]
-    
+
     # Generate new ID based on highest existing ID
     max_id = -1
     for agent_id in existing_ids.values():
@@ -771,11 +774,11 @@ def _generate_agent_id(pane_index: str, existing_ids: Dict[str, str]) -> str:
                 max_id = max(max_id, num)
             except (ValueError, IndexError):
                 continue
-    
+
     return f"agent-{max_id + 1}"
 
 
-def _load_existing_registry() -> Optional[AgentRegistry]:
+def _load_existing_registry() -> AgentRegistry | None:
     """Load existing agent registry from file with file locking.
 
     Uses shared (read) lock to prevent race conditions when
@@ -796,7 +799,7 @@ def _load_existing_registry() -> Optional[AgentRegistry]:
     try:
         # Use shared lock for reading (allows multiple readers)
         with FileLock(registry_path, timeout=REGISTRY_LOCK_TIMEOUT_SECONDS, shared=True):
-            with open(registry_path, "r") as f:
+            with open(registry_path) as f:
                 data = json.load(f)
             return AgentRegistry.from_dict(data)
 
@@ -857,7 +860,9 @@ def _save_registry(registry: AgentRegistry) -> None:
         raise DiscoveryError(f"Failed to save registry: {e}") from e
 
 
-def discover_agents(session_name: Optional[str] = None, stale_threshold: Optional[int] = None) -> AgentRegistry:
+def discover_agents(
+    session_name: str | None = None, stale_threshold: int | None = None
+) -> AgentRegistry:
     """Discover active Claude Code agents in tmux panes.
 
     Args:
@@ -881,27 +886,28 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
     if stale_threshold is None:
         stale_threshold = get_config().discovery.stale_threshold
 
-    current_time = datetime.now(timezone.utc)
-    
+    current_time = datetime.now(UTC)
+
     # Load existing registry to preserve agent IDs
     existing_registry = _load_existing_registry()
     existing_ids = {}
     existing_agents_map = {}
-    
+
     if existing_registry:
         for agent in existing_registry.agents:
             existing_ids[agent.pane_index] = agent.id
             existing_agents_map[agent.pane_index] = agent
-    
+
     # Discover current panes
     panes = _parse_tmux_panes()
-    
+
     # Filter by session if specified
     if session_name:
         panes = [p for p in panes if p["session_name"] == session_name]
-    
+
     # Get project root for directory filtering
     from .project import get_project_root
+
     project_root = get_project_root()
 
     # Identify Claude Code agents
@@ -934,10 +940,10 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
             status="active",
             last_seen=current_time.isoformat(),
             session_name=pane["session_name"],
-            tmux_pane_id=pane.get("tmux_pane_id")  # Internal %N format for TMUX_PANE matching
+            tmux_pane_id=pane.get("tmux_pane_id"),  # Internal %N format for TMUX_PANE matching
         )
         discovered_agents.append(agent)
-    
+
     # Check for stale agents (in registry but not currently active)
     for pane_index, agent in existing_agents_map.items():
         if pane_index not in active_pane_indices:
@@ -945,7 +951,7 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
             try:
                 last_seen = datetime.fromisoformat(agent.last_seen)
                 age_seconds = (current_time - last_seen).total_seconds()
-                
+
                 if age_seconds < stale_threshold:
                     # Keep as stale
                     agent.status = "stale"
@@ -954,7 +960,7 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
             except (ValueError, TypeError):
                 # Invalid timestamp, skip this agent
                 pass
-    
+
     # Determine session name for registry
     if session_name:
         registry_session = session_name
@@ -964,18 +970,16 @@ def discover_agents(session_name: Optional[str] = None, stale_threshold: Optiona
     else:
         # No agents found, use a default
         registry_session = "unknown"
-    
+
     # Create and save registry
     registry = AgentRegistry(
-        session_name=registry_session,
-        updated_at=current_time.isoformat(),
-        agents=discovered_agents
+        session_name=registry_session, updated_at=current_time.isoformat(), agents=discovered_agents
     )
-    
+
     return registry
 
 
-def refresh_registry(stale_threshold: Optional[int] = None) -> AgentRegistry:
+def refresh_registry(stale_threshold: int | None = None) -> AgentRegistry:
     """Refresh the agent registry file.
 
     Discovers agents and saves updated registry to ACTIVE_AGENTS.json.
@@ -999,7 +1003,7 @@ def refresh_registry(stale_threshold: Optional[int] = None) -> AgentRegistry:
     return registry
 
 
-def get_agent_by_id(agent_id: str) -> Optional[Agent]:
+def get_agent_by_id(agent_id: str) -> Agent | None:
     """Look up an agent by ID from the registry with file locking.
 
     Args:
@@ -1017,7 +1021,7 @@ def get_agent_by_id(agent_id: str) -> Optional[Agent]:
     try:
         # Use shared lock for reading
         with FileLock(registry_path, timeout=REGISTRY_LOCK_TIMEOUT_SECONDS, shared=True):
-            with open(registry_path, "r") as f:
+            with open(registry_path) as f:
                 data = json.load(f)
             registry = AgentRegistry.from_dict(data)
 
@@ -1038,7 +1042,7 @@ def get_agent_by_id(agent_id: str) -> Optional[Agent]:
         return None
 
 
-def list_active_agents() -> List[Agent]:
+def list_active_agents() -> list[Agent]:
     """Get list of all active agents from the registry with file locking.
 
     Returns:
@@ -1053,7 +1057,7 @@ def list_active_agents() -> List[Agent]:
     try:
         # Use shared lock for reading
         with FileLock(registry_path, timeout=REGISTRY_LOCK_TIMEOUT_SECONDS, shared=True):
-            with open(registry_path, "r") as f:
+            with open(registry_path) as f:
                 data = json.load(f)
             registry = AgentRegistry.from_dict(data)
 

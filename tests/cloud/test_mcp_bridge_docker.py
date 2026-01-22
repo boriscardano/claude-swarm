@@ -11,7 +11,6 @@ Run with: pytest tests/cloud/test_mcp_bridge_docker.py -v
 Requires: Docker daemon running
 """
 
-import asyncio
 import time
 
 import docker
@@ -21,7 +20,6 @@ from claudeswarm.cloud.mcp_bridge import MCPBridge
 from claudeswarm.cloud.types import (
     MCPConfig,
     MCPError,
-    MCPStatus,
     MCPType,
 )
 
@@ -90,14 +88,14 @@ class TestDockerLifecycle:
                 "echo test",
                 detach=True,
                 remove=False,
-                name=f"test-container-{int(time.time())}"
+                name=f"test-container-{int(time.time())}",
             )
 
             # Wait for container to finish
             container.wait(timeout=5)
 
             # Get logs to verify it ran
-            logs = container.logs().decode('utf-8')
+            logs = container.logs().decode("utf-8")
             assert "test" in logs
 
             # Cleanup
@@ -155,10 +153,7 @@ class TestErrorHandling:
         )
 
         with pytest.raises(MCPError) as exc_info:
-            await mcp_bridge.attach_mcp(
-                mcp_type=MCPType.GITHUB,
-                config=config
-            )
+            await mcp_bridge.attach_mcp(mcp_type=MCPType.GITHUB, config=config)
 
         assert "not found" in str(exc_info.value).lower()
 
@@ -192,10 +187,7 @@ class TestErrorHandling:
 
         # Verify container was created but then cleaned up
         # (cleanup happens in bridge.__aexit__)
-        containers = docker_client.containers.list(
-            all=True,
-            filters={"name": f"github-mcp-{sandbox_id}"}
-        )
+        docker_client.containers.list(all=True, filters={"name": f"github-mcp-{sandbox_id}"})
 
         # Container should be stopped or removed
         # (exact behavior depends on cleanup implementation)

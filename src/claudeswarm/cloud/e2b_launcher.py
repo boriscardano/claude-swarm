@@ -9,7 +9,6 @@ import asyncio
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 try:
     from e2b_code_interpreter import Sandbox as E2BSandbox
@@ -18,9 +17,8 @@ except ImportError:
 
 from claudeswarm.cloud.mcp_bridge import MCPBridge
 from claudeswarm.cloud.security_utils import (
-    ValidationError,
-    validate_num_agents,
     sanitize_for_shell,
+    validate_num_agents,
     validate_timeout,
 )
 from claudeswarm.cloud.types import MCPConfig, MCPContainerInfo
@@ -49,7 +47,9 @@ class CloudSandbox:
         sandbox_id: Unique identifier for the sandbox
     """
 
-    def __init__(self, num_agents: int = 4, operation_timeout: float = DEFAULT_OPERATION_TIMEOUT) -> None:
+    def __init__(
+        self, num_agents: int = 4, operation_timeout: float = DEFAULT_OPERATION_TIMEOUT
+    ) -> None:
         """
         Initialize a CloudSandbox.
 
@@ -64,9 +64,9 @@ class CloudSandbox:
         self.num_agents = validate_num_agents(num_agents)
         self.operation_timeout = validate_timeout(operation_timeout)
 
-        self.sandbox: Optional[E2BSandbox] = None
-        self.sandbox_id: Optional[str] = None
-        self.mcp_bridge: Optional[MCPBridge] = None
+        self.sandbox: E2BSandbox | None = None
+        self.sandbox_id: str | None = None
+        self.mcp_bridge: MCPBridge | None = None
 
     async def create(self) -> str:
         """
@@ -102,8 +102,7 @@ class CloudSandbox:
             # Create sandbox (E2BSandbox retrieves API key internally)
             print("🚀 Creating E2B sandbox...")
             self.sandbox = await asyncio.wait_for(
-                asyncio.to_thread(E2BSandbox.create),
-                timeout=self.operation_timeout
+                asyncio.to_thread(E2BSandbox.create), timeout=self.operation_timeout
             )
             self.sandbox_id = self.sandbox.sandbox_id
             print(f"✓ Sandbox created: {self.sandbox_id}")
@@ -120,7 +119,7 @@ class CloudSandbox:
                         # Last attempt failed - propagate the error
                         raise
                     # Calculate exponential backoff: 2^attempt seconds (2s, 4s, 8s)
-                    backoff = 2 ** attempt
+                    backoff = 2**attempt
                     print(f"⚠️  Installation failed (attempt {attempt}/{max_retries}): {str(e)}")
                     print(f"🔄 Retrying in {backoff} seconds...")
                     await asyncio.sleep(backoff)
@@ -140,10 +139,7 @@ class CloudSandbox:
             if self.sandbox:
                 print("🧹 Cleaning up partial sandbox initialization...")
                 try:
-                    await asyncio.wait_for(
-                        asyncio.to_thread(self.sandbox.kill),
-                        timeout=30.0
-                    )
+                    await asyncio.wait_for(asyncio.to_thread(self.sandbox.kill), timeout=30.0)
                     print("✓ Cleanup complete")
                 except Exception as cleanup_error:
                     print(f"⚠️  Cleanup error (non-fatal): {cleanup_error}")
@@ -184,10 +180,7 @@ class CloudSandbox:
             for cmd in ["python3", "python"]:
                 try:
                     result = subprocess.run(
-                        [cmd, "--version"],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
+                        [cmd, "--version"], capture_output=True, text=True, timeout=5
                     )
                     if result.returncode == 0:
                         python_cmd = cmd
@@ -205,7 +198,7 @@ class CloudSandbox:
                 cwd=project_root,
                 capture_output=True,
                 text=True,
-                timeout=120  # 2 minute timeout for build
+                timeout=120,  # 2 minute timeout for build
             )
 
             if result.returncode != 0:
@@ -255,9 +248,7 @@ class CloudSandbox:
 
         # Upload wheel to sandbox
         await asyncio.to_thread(
-            self.sandbox.files.write,  # type: ignore[union-attr]
-            sandbox_wheel_path,
-            wheel_bytes
+            self.sandbox.files.write, sandbox_wheel_path, wheel_bytes  # type: ignore[union-attr]
         )
         print(f"✓ Wheel uploaded to {sandbox_wheel_path}")
 
@@ -292,11 +283,11 @@ class CloudSandbox:
             "mkdir -p /home/user/.config/claude-code",
             # Skip onboarding prompts by creating config files for BOTH root and user
             # Root configs
-            'echo \'{"hasCompletedOnboarding": true}\' > /root/.claude.json',
-            'echo \'{"hasCompletedOnboarding": true}\' > /root/.config/claude-code/config.json',
+            "echo '{\"hasCompletedOnboarding\": true}' > /root/.claude.json",
+            "echo '{\"hasCompletedOnboarding\": true}' > /root/.config/claude-code/config.json",
             # User configs (critical for E2B CLI sessions)
-            'echo \'{"hasCompletedOnboarding": true}\' > /home/user/.claude.json',
-            'echo \'{"hasCompletedOnboarding": true}\' > /home/user/.config/claude-code/config.json',
+            "echo '{\"hasCompletedOnboarding\": true}' > /home/user/.claude.json",
+            "echo '{\"hasCompletedOnboarding\": true}' > /home/user/.config/claude-code/config.json",
             # Fix permissions: ensure user owns their directories (CRITICAL for claude to work)
             "chown -R user:user /home/user/.claude",
             "chown -R user:user /home/user/.config/claude-code",
@@ -317,13 +308,14 @@ class CloudSandbox:
                     "github": {
                         "command": "docker",
                         "args": [
-                            "run", "-i", "--rm",
-                            "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
-                            "mcp/github"  # Official Docker Hub MCP catalog image
+                            "run",
+                            "-i",
+                            "--rm",
+                            "-e",
+                            "GITHUB_PERSONAL_ACCESS_TOKEN",
+                            "mcp/github",  # Official Docker Hub MCP catalog image
                         ],
-                        "env": {
-                            "GITHUB_PERSONAL_ACCESS_TOKEN": github_token
-                        }
+                        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": github_token},
                     }
                 }
             }
@@ -340,7 +332,7 @@ class CloudSandbox:
             # Claude Code looks for .mcp.json in the current working directory
             mcp_commands = [
                 # Write .mcp.json to /workspace (project root) as 'user' for proper ownership
-                f"su - user -c \"echo {mcp_config_str} > /workspace/.mcp.json\"",
+                f'su - user -c "echo {mcp_config_str} > /workspace/.mcp.json"',
                 # Export GITHUB_PERSONAL_ACCESS_TOKEN in all shell configs
                 # Root user configs (for run_code operations)
                 f"echo {shlex.quote(token_export)} >> /root/.bashrc",
@@ -354,21 +346,25 @@ class CloudSandbox:
         else:
             print("⚠️  GITHUB_PERSONAL_ACCESS_TOKEN not found in environment.")
             print("   GitHub MCP server will not be configured.")
-            print("   Set GITHUB_PERSONAL_ACCESS_TOKEN or GITHUB_TOKEN to enable GitHub MCP integration.")
+            print(
+                "   Set GITHUB_PERSONAL_ACCESS_TOKEN or GITHUB_TOKEN to enable GitHub MCP integration."
+            )
 
-        commands.extend([
-            # Install claudeswarm from uploaded wheel (FAST: <5 seconds, no network issues!)
-            f"pip3 install {sandbox_wheel_path}",
-            # Install other Python packages
-            "pip3 install --retries 5 fastapi uvicorn pytest",
-            # Verify installations (these should succeed or deployment fails)
-            "python3 -c 'import claudeswarm'",
-            "which claudeswarm",
-            "tmux -V",  # Verify tmux is working
-            "claudeswarm --version",
-            "which claude",  # Verify claude binary is in PATH
-            "claude --version",  # Verify claude works (npm creates 'claude' binary, not 'claude-code')
-        ])
+        commands.extend(
+            [
+                # Install claudeswarm from uploaded wheel (FAST: <5 seconds, no network issues!)
+                f"pip3 install {sandbox_wheel_path}",
+                # Install other Python packages
+                "pip3 install --retries 5 fastapi uvicorn pytest",
+                # Verify installations (these should succeed or deployment fails)
+                "python3 -c 'import claudeswarm'",
+                "which claudeswarm",
+                "tmux -V",  # Verify tmux is working
+                "claudeswarm --version",
+                "which claude",  # Verify claude binary is in PATH
+                "claude --version",  # Verify claude works (npm creates 'claude' binary, not 'claude-code')
+            ]
+        )
 
         # If Claude OAuth token is available, add it to all shell configs for automatic authentication
         if claude_oauth_token:
@@ -391,33 +387,33 @@ class CloudSandbox:
                         self.sandbox.run_code,  # type: ignore[union-attr]
                         f"!{cmd}",
                     ),
-                    timeout=self.operation_timeout
+                    timeout=self.operation_timeout,
                 )
 
                 # Check for errors (both result.error and exit codes)
                 if result.error:
                     error_msg = f"Command failed: {cmd}\nError: {result.error}"
-                    if hasattr(result, 'logs') and result.logs:
+                    if hasattr(result, "logs") and result.logs:
                         if result.logs.stderr:
                             error_msg += f"\nStderr: {''.join(result.logs.stderr)}"
                     raise RuntimeError(error_msg)
 
                 # Check exit code if available
-                if hasattr(result, 'exit_code') and result.exit_code != 0:
+                if hasattr(result, "exit_code") and result.exit_code != 0:
                     error_msg = f"Command exited with code {result.exit_code}: {cmd}"
-                    if hasattr(result, 'logs') and result.logs:
+                    if hasattr(result, "logs") and result.logs:
                         if result.logs.stdout:
                             error_msg += f"\nStdout: {''.join(result.logs.stdout)}"
                         if result.logs.stderr:
                             error_msg += f"\nStderr: {''.join(result.logs.stderr)}"
                     raise RuntimeError(error_msg)
 
-            except asyncio.TimeoutError:
-                raise RuntimeError(
-                    f"Installation timed out after {self.operation_timeout}s: {cmd}"
-                )
+            except TimeoutError:
+                raise RuntimeError(f"Installation timed out after {self.operation_timeout}s: {cmd}")
             except Exception as e:
-                raise RuntimeError(f"Installation failed at step [{i}/{len(commands)}]: {str(e)}") from e
+                raise RuntimeError(
+                    f"Installation failed at step [{i}/{len(commands)}]: {str(e)}"
+                ) from e
 
         print("✓ Dependencies installed")
 
@@ -476,7 +472,7 @@ class CloudSandbox:
                     self.sandbox.run_code,  # type: ignore[union-attr]
                     f"!{clear_cmd}",
                 ),
-                timeout=self.operation_timeout
+                timeout=self.operation_timeout,
             )
 
             # Write each line of config
@@ -490,7 +486,7 @@ class CloudSandbox:
                         self.sandbox.run_code,  # type: ignore[union-attr]
                         f"!{append_cmd}",
                     ),
-                    timeout=self.operation_timeout
+                    timeout=self.operation_timeout,
                 )
                 if result.error:
                     print(f"⚠️  Warning: Failed to write tmux config line: {result.error}")
@@ -503,10 +499,10 @@ class CloudSandbox:
                     self.sandbox.run_code,  # type: ignore[union-attr]
                     f"!{verify_cmd}",
                 ),
-                timeout=self.operation_timeout
+                timeout=self.operation_timeout,
             )
             if verify_result.error or not verify_result.text:
-                print(f"⚠️  Warning: Could not verify tmux config was written")
+                print("⚠️  Warning: Could not verify tmux config was written")
 
             # Security: Sanitize session name for shell
             session_name = sanitize_for_shell("claude-swarm")
@@ -519,7 +515,7 @@ class CloudSandbox:
                     self.sandbox.run_code,  # type: ignore[union-attr]
                     f'!su - user -c "/usr/bin/tmux -f /home/user/.tmux.conf new-session -d -s {session_name} -x 200 -y 50"',
                 ),
-                timeout=self.operation_timeout
+                timeout=self.operation_timeout,
             )
             if result.error:
                 raise RuntimeError(f"Failed to create tmux session: {result.error}")
@@ -532,7 +528,7 @@ class CloudSandbox:
                         self.sandbox.run_code,  # type: ignore[union-attr]
                         f'!su - user -c "/usr/bin/tmux split-window -h -t {session_name}"',
                     ),
-                    timeout=self.operation_timeout
+                    timeout=self.operation_timeout,
                 )
                 if result.error:
                     raise RuntimeError(f"Failed to split pane {i}: {result.error}")
@@ -543,12 +539,12 @@ class CloudSandbox:
                         self.sandbox.run_code,  # type: ignore[union-attr]
                         f'!su - user -c "/usr/bin/tmux select-layout -t {session_name} tiled"',
                     ),
-                    timeout=self.operation_timeout
+                    timeout=self.operation_timeout,
                 )
 
             print("✓ Tmux session created")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise RuntimeError(f"Tmux setup timed out after {self.operation_timeout}s")
         except Exception as e:
             raise RuntimeError(f"Tmux setup failed: {str(e)}") from e
@@ -580,7 +576,7 @@ class CloudSandbox:
 
                 # Send command to each pane as 'user' (use full path for E2B PATH compatibility)
                 cmd = (
-                    f"!su - user -c \"/usr/bin/tmux send-keys -t {session_name}:{i} "
+                    f'!su - user -c "/usr/bin/tmux send-keys -t {session_name}:{i} '
                     f"'cd {workspace_dir} && {discover_cmd}' Enter\""
                 )
                 result = await asyncio.wait_for(
@@ -588,7 +584,7 @@ class CloudSandbox:
                         self.sandbox.run_code,  # type: ignore[union-attr]
                         cmd,
                     ),
-                    timeout=self.operation_timeout
+                    timeout=self.operation_timeout,
                 )
                 if result.error:
                     print(f"⚠️  Warning: Pane {i} initialization issue: {result.error}")
@@ -598,14 +594,12 @@ class CloudSandbox:
 
             print("✓ Claudeswarm agents initialized")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise RuntimeError(f"Swarm initialization timed out after {self.operation_timeout}s")
         except Exception as e:
             raise RuntimeError(f"Swarm initialization failed: {str(e)}") from e
 
-    async def attach_mcp(
-        self, mcp_type: str, config: MCPConfig
-    ) -> MCPContainerInfo:
+    async def attach_mcp(self, mcp_type: str, config: MCPConfig) -> MCPContainerInfo:
         """
         Attach MCP server to sandbox.
 
@@ -646,14 +640,12 @@ class CloudSandbox:
             self.mcp_bridge = MCPBridge(sandbox_id=self.sandbox_id)
 
         # Attach the MCP using the bridge
-        container_info = await self.mcp_bridge.attach_mcp(
-            mcp_type=mcp_type, config=config
-        )
+        container_info = await self.mcp_bridge.attach_mcp(mcp_type=mcp_type, config=config)
 
         print(f"✓ MCP {mcp_type} attached: {container_info.endpoint_url}")
         return container_info
 
-    def get_mcp_bridge(self) -> Optional[MCPBridge]:
+    def get_mcp_bridge(self) -> MCPBridge | None:
         """
         Get the MCP bridge instance for direct MCP calls.
 
@@ -687,9 +679,7 @@ class CloudSandbox:
             NotImplementedError: Implementation pending
         """
         # TODO: Implementation in workflows/autonomous_dev.py
-        raise NotImplementedError(
-            "Autonomous development will be implemented by Workflow team"
-        )
+        raise NotImplementedError("Autonomous development will be implemented by Workflow team")
 
     async def cleanup(self) -> None:
         """
@@ -710,11 +700,11 @@ class CloudSandbox:
                 # Security: Add timeout for cleanup operations
                 await asyncio.wait_for(
                     asyncio.to_thread(self.sandbox.kill),
-                    timeout=30.0  # Use shorter timeout for cleanup
+                    timeout=30.0,  # Use shorter timeout for cleanup
                 )
                 print("✓ Sandbox closed")
-            except asyncio.TimeoutError:
-                print(f"⚠️  Sandbox cleanup timed out after 30s (non-fatal)")
+            except TimeoutError:
+                print("⚠️  Sandbox cleanup timed out after 30s (non-fatal)")
             except Exception as e:
                 print(f"⚠️  Sandbox cleanup error: {e} (non-fatal)")
 

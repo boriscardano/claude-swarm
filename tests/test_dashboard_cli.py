@@ -9,7 +9,7 @@ Author: Agent 4 - Tests & Documentation
 import argparse
 import socket
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch, call
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -27,6 +27,7 @@ class TestDashboardCLI:
         """Test start-dashboard command exists."""
         try:
             from src.claudeswarm.cli import cmd_start_dashboard
+
             assert callable(cmd_start_dashboard)
         except (ImportError, AttributeError):
             pytest.skip("Dashboard CLI not implemented yet")
@@ -39,15 +40,11 @@ class TestDashboardCLI:
             pytest.skip("Dashboard CLI not implemented yet")
 
         args = argparse.Namespace(
-            project_root=tmp_path,
-            port=8080,
-            host="localhost",
-            no_browser=True,
-            reload=False
+            project_root=tmp_path, port=8080, host="localhost", no_browser=True, reload=False
         )
 
-        with patch("webbrowser.open") as mock_browser:
-            with patch("src.claudeswarm.web.server.create_app") as mock_app:
+        with patch("webbrowser.open"):
+            with patch("src.claudeswarm.web.server.create_app"):
                 try:
                     cmd_start_dashboard(args)
                 except SystemExit:
@@ -66,15 +63,11 @@ class TestDashboardCLI:
             pytest.skip("Dashboard CLI not implemented yet")
 
         args = argparse.Namespace(
-            project_root=tmp_path,
-            port=9000,
-            host="localhost",
-            no_browser=True,
-            reload=False
+            project_root=tmp_path, port=9000, host="localhost", no_browser=True, reload=False
         )
 
-        with patch("webbrowser.open") as mock_browser:
-            with patch("src.claudeswarm.web.server.create_app") as mock_app:
+        with patch("webbrowser.open"):
+            with patch("src.claudeswarm.web.server.create_app"):
                 try:
                     cmd_start_dashboard(args)
                 except SystemExit:
@@ -93,15 +86,11 @@ class TestDashboardCLI:
             pytest.skip("Dashboard CLI not implemented yet")
 
         args = argparse.Namespace(
-            project_root=tmp_path,
-            port=8080,
-            host="0.0.0.0",
-            no_browser=True,
-            reload=False
+            project_root=tmp_path, port=8080, host="0.0.0.0", no_browser=True, reload=False
         )
 
-        with patch("webbrowser.open") as mock_browser:
-            with patch("src.claudeswarm.web.server.create_app") as mock_app:
+        with patch("webbrowser.open"):
+            with patch("src.claudeswarm.web.server.create_app"):
                 try:
                     cmd_start_dashboard(args)
                 except SystemExit:
@@ -120,15 +109,11 @@ class TestDashboardCLI:
             pytest.skip("Dashboard CLI not implemented yet")
 
         args = argparse.Namespace(
-            project_root=tmp_path,
-            port=8080,
-            host="localhost",
-            no_browser=True,
-            reload=False
+            project_root=tmp_path, port=8080, host="localhost", no_browser=True, reload=False
         )
 
         with patch("webbrowser.open") as mock_browser:
-            with patch("src.claudeswarm.web.server.create_app") as mock_app:
+            with patch("src.claudeswarm.web.server.create_app"):
                 try:
                     cmd_start_dashboard(args)
                 except SystemExit:
@@ -145,15 +130,11 @@ class TestDashboardCLI:
             pytest.skip("Dashboard CLI not implemented yet")
 
         args = argparse.Namespace(
-            project_root=tmp_path,
-            port=8080,
-            host="localhost",
-            no_browser=False,
-            reload=False
+            project_root=tmp_path, port=8080, host="localhost", no_browser=False, reload=False
         )
 
-        with patch("webbrowser.open") as mock_browser:
-            with patch("src.claudeswarm.web.server.create_app") as mock_app:
+        with patch("webbrowser.open"):
+            with patch("src.claudeswarm.web.server.create_app"):
                 # Mock server to avoid actually starting it
                 mock_uvicorn.side_effect = KeyboardInterrupt()
 
@@ -174,15 +155,11 @@ class TestDashboardCLI:
             pytest.skip("Dashboard CLI not implemented yet")
 
         args = argparse.Namespace(
-            project_root=tmp_path,
-            port=8080,
-            host="localhost",
-            no_browser=True,
-            reload=True
+            project_root=tmp_path, port=8080, host="localhost", no_browser=True, reload=True
         )
 
-        with patch("webbrowser.open") as mock_browser:
-            with patch("src.claudeswarm.web.server.create_app") as mock_app:
+        with patch("webbrowser.open"):
+            with patch("src.claudeswarm.web.server.create_app"):
                 try:
                     cmd_start_dashboard(args)
                 except SystemExit:
@@ -212,7 +189,7 @@ class TestDashboardCLI:
                 port=test_port,
                 host="127.0.0.1",
                 no_browser=True,
-                reload=False
+                reload=False,
             )
 
             with patch("webbrowser.open"):
@@ -250,21 +227,17 @@ dashboard:
             port=None,  # Should use config value
             host=None,  # Should use config value
             no_browser=None,  # Should use config value
-            reload=False
+            reload=False,
         )
 
         with patch("src.claudeswarm.cli.load_config") as mock_load_config:
             mock_config = Mock()
-            mock_config.dashboard = Mock(
-                port=9999,
-                host="0.0.0.0",
-                auto_open_browser=False
-            )
+            mock_config.dashboard = Mock(port=9999, host="0.0.0.0", auto_open_browser=False)
             mock_load_config.return_value = mock_config
 
-            with patch("webbrowser.open") as mock_browser:
+            with patch("webbrowser.open"):
                 with patch("src.claudeswarm.web.server.create_app"):
-                    with patch("uvicorn.run") as mock_uvicorn:
+                    with patch("uvicorn.run"):
                         try:
                             cmd_start_dashboard(args)
                         except SystemExit:
@@ -285,7 +258,7 @@ dashboard:
             port=99999,  # Invalid port
             host="localhost",
             no_browser=True,
-            reload=False
+            reload=False,
         )
 
         with patch("webbrowser.open"):
@@ -304,12 +277,12 @@ dashboard:
         except (ImportError, AttributeError):
             pytest.skip("Dashboard CLI not implemented yet")
 
-        args = argparse.Namespace(
+        argparse.Namespace(
             project_root=Path("/nonexistent/path"),
             port=8080,
             host="localhost",
             no_browser=True,
-            reload=False
+            reload=False,
         )
 
         # Implementation may or may not validate project root
@@ -371,12 +344,13 @@ class TestDashboardHelp:
 
         # Add start-dashboard subcommand
         dashboard_parser = subparsers.add_parser(
-            "start-dashboard",
-            help="Start web dashboard for monitoring"
+            "start-dashboard", help="Start web dashboard for monitoring"
         )
         dashboard_parser.add_argument("--port", type=int, help="Server port")
         dashboard_parser.add_argument("--host", help="Bind address")
-        dashboard_parser.add_argument("--no-browser", action="store_true", help="Don't open browser")
+        dashboard_parser.add_argument(
+            "--no-browser", action="store_true", help="Don't open browser"
+        )
 
         # Verify help can be generated
         help_text = parser.format_help()
@@ -394,11 +368,7 @@ class TestDashboardErrorHandling:
             pytest.skip("Dashboard CLI not implemented yet")
 
         args = argparse.Namespace(
-            project_root=tmp_path,
-            port=8080,
-            host="localhost",
-            no_browser=True,
-            reload=False
+            project_root=tmp_path, port=8080, host="localhost", no_browser=True, reload=False
         )
 
         with patch("webbrowser.open"):
@@ -420,11 +390,13 @@ class TestDashboardErrorHandling:
         try:
             import fastapi
             import uvicorn
+
             pytest.skip("Dependencies are installed")
         except ImportError:
             # Good - can test the error path
             try:
                 from src.claudeswarm.cli import cmd_start_dashboard
+
                 pytest.fail("Should have import error without dependencies")
             except ImportError:
                 # Expected

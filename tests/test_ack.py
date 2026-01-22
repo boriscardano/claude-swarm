@@ -12,10 +12,9 @@ Tests cover:
 
 import json
 import tempfile
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -24,10 +23,9 @@ from claudeswarm.ack import (
     PendingAck,
     acknowledge_message,
     check_pending_acks,
+    get_ack_system,
     receive_ack,
     send_with_ack,
-    process_pending_retries,
-    get_ack_system,
 )
 from claudeswarm.messaging import Message, MessageType
 
@@ -149,9 +147,7 @@ class TestAckSystem:
         assert data == {"version": 0, "pending_acks": []}
 
     @patch("claudeswarm.ack.send_message")
-    def test_send_with_ack_success(
-        self, mock_send: MagicMock, ack_system: AckSystem
-    ) -> None:
+    def test_send_with_ack_success(self, mock_send: MagicMock, ack_system: AckSystem) -> None:
         """Test sending a message with ACK requirement."""
         # Mock send_message to return a Message
         now = datetime.now()
@@ -185,15 +181,11 @@ class TestAckSystem:
         assert pending[0].recipient_id == "agent-2"
 
     @patch("claudeswarm.ack.send_message")
-    def test_send_with_ack_failure(
-        self, mock_send: MagicMock, ack_system: AckSystem
-    ) -> None:
+    def test_send_with_ack_failure(self, mock_send: MagicMock, ack_system: AckSystem) -> None:
         """Test handling of send failure."""
         mock_send.return_value = None
 
-        msg_id = ack_system.send_with_ack(
-            "agent-1", "agent-2", MessageType.QUESTION, "Test"
-        )
+        msg_id = ack_system.send_with_ack("agent-1", "agent-2", MessageType.QUESTION, "Test")
 
         assert msg_id is None
 
@@ -729,9 +721,7 @@ class TestIntegration:
         mock_send.return_value = mock_msg
 
         # Send with ACK
-        msg_id = ack_system.send_with_ack(
-            "agent-1", "agent-2", MessageType.QUESTION, "Help needed"
-        )
+        msg_id = ack_system.send_with_ack("agent-1", "agent-2", MessageType.QUESTION, "Help needed")
 
         assert msg_id == "workflow-test"
         assert ack_system.get_pending_count() == 1

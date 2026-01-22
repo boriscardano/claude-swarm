@@ -15,11 +15,10 @@ Author: agent-1
 Created: 2025-11-19 (E2B Hackathon Prep)
 """
 
-from typing import List, Optional, Dict
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from claudeswarm.messaging import MessagingSystem, MessageType
+from claudeswarm.messaging import MessageType, MessagingSystem
 
 
 @dataclass
@@ -37,12 +36,13 @@ class ReviewFeedback:
         approved: Whether code is approved as-is
         created_at: When review was submitted
     """
+
     reviewer_id: str
     author_id: str
-    files: List[str]
-    issues: List[str] = field(default_factory=list)
-    suggestions: List[str] = field(default_factory=list)
-    evidence: List[str] = field(default_factory=list)
+    files: list[str]
+    issues: list[str] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
     approved: bool = False
     created_at: datetime = field(default_factory=datetime.now)
 
@@ -65,15 +65,16 @@ class Disagreement:
         resolved: Whether consensus has been reached
         resolution: Final decision after consensus
     """
+
     topic: str
     agent_a: str
     position_a: str
     agent_b: str
     position_b: str
-    evidence_a: List[str] = field(default_factory=list)
-    evidence_b: List[str] = field(default_factory=list)
+    evidence_a: list[str] = field(default_factory=list)
+    evidence_b: list[str] = field(default_factory=list)
     resolved: bool = False
-    resolution: Optional[str] = None
+    resolution: str | None = None
 
 
 class CodeReviewProtocol:
@@ -108,16 +109,16 @@ class CodeReviewProtocol:
             raise ValueError("num_agents must be at least 1")
 
         self.num_agents = num_agents
-        self.reviews: Dict[str, ReviewFeedback] = {}
-        self.disagreements: List[Disagreement] = []
+        self.reviews: dict[str, ReviewFeedback] = {}
+        self.disagreements: list[Disagreement] = []
         self.messaging = MessagingSystem()
 
     async def request_review(
         self,
         author_agent: str,
         reviewer_agent: str,
-        files: List[str],
-        task_description: Optional[str] = None
+        files: list[str],
+        task_description: str | None = None,
     ) -> str:
         """
         Send a code review request from author to reviewer.
@@ -135,10 +136,8 @@ class CodeReviewProtocol:
         review_id = f"review-{author_agent}-{len(self.reviews)}"
 
         # Format review request message
-        review_message = (
-            f"Please review my changes:\n"
-            f"Files: {', '.join(files)}\n" +
-            (f"Task: {task_description}" if task_description else "")
+        review_message = f"Please review my changes:\n" f"Files: {', '.join(files)}\n" + (
+            f"Task: {task_description}" if task_description else ""
         )
 
         # Send review request via messaging
@@ -147,7 +146,7 @@ class CodeReviewProtocol:
                 sender_id=author_agent,
                 recipient_id=reviewer_agent,
                 msg_type=MessageType.REVIEW_REQUEST,
-                content=review_message
+                content=review_message,
             )
 
             print(f"📝 Review requested: {author_agent} → {reviewer_agent}")
@@ -161,11 +160,7 @@ class CodeReviewProtocol:
 
         return review_id
 
-    async def submit_review(
-        self,
-        review_id: str,
-        feedback: ReviewFeedback
-    ):
+    async def submit_review(self, review_id: str, feedback: ReviewFeedback):
         """
         Submit review feedback.
 
@@ -190,18 +185,22 @@ class CodeReviewProtocol:
                 sender_id=feedback.reviewer_id,
                 recipient_id=feedback.author_id,
                 msg_type=MessageType.INFO,
-                content=feedback_message
+                content=feedback_message,
             )
 
-            print(f"✓ Review submitted: {feedback.reviewer_id} reviewed {feedback.author_id}'s work")
+            print(
+                f"✓ Review submitted: {feedback.reviewer_id} reviewed {feedback.author_id}'s work"
+            )
             if feedback.approved:
-                print(f"  Status: ✅ Approved")
+                print("  Status: ✅ Approved")
             else:
-                print(f"  Status: ⚠️  Changes requested")
+                print("  Status: ⚠️  Changes requested")
 
         except Exception as e:
             print(f"⚠️  Failed to send feedback: {e}")
-            print(f"✓ Review submitted (local only): {feedback.reviewer_id} reviewed {feedback.author_id}'s work")
+            print(
+                f"✓ Review submitted (local only): {feedback.reviewer_id} reviewed {feedback.author_id}'s work"
+            )
 
     def _format_feedback(self, feedback: ReviewFeedback) -> str:
         """Format feedback for messaging"""
@@ -237,8 +236,8 @@ class CodeReviewProtocol:
         topic: str,
         challenger_position: str,
         author_position: str,
-        challenger_evidence: List[str],
-        author_evidence: List[str]
+        challenger_evidence: list[str],
+        author_evidence: list[str],
     ) -> Disagreement:
         """
         Register a disagreement/challenge between agents.
@@ -266,7 +265,7 @@ class CodeReviewProtocol:
             evidence_a=author_evidence,
             agent_b=challenger_agent,
             position_b=challenger_position,
-            evidence_b=challenger_evidence
+            evidence_b=challenger_evidence,
         )
 
         self.disagreements.append(disagreement)
@@ -287,7 +286,7 @@ class CodeReviewProtocol:
             self.messaging.broadcast_message(
                 sender_id="code-review-protocol",
                 msg_type=MessageType.CHALLENGE,
-                content=disagreement_message
+                content=disagreement_message,
             )
         except Exception as e:
             print(f"⚠️  Failed to broadcast disagreement: {e}")
@@ -295,10 +294,8 @@ class CodeReviewProtocol:
         return disagreement
 
     def detect_disagreements(
-        self,
-        reviews: List[ReviewFeedback],
-        threshold: int = 2
-    ) -> List[Disagreement]:
+        self, reviews: list[ReviewFeedback], threshold: int = 2
+    ) -> list[Disagreement]:
         """
         Analyze reviews to detect disagreements.
 
@@ -321,7 +318,7 @@ class CodeReviewProtocol:
 
         return [d for d in self.disagreements if not d.resolved]
 
-    def get_review_statistics(self) -> Dict:
+    def get_review_statistics(self) -> dict:
         """
         Get code review quality metrics.
 
@@ -341,15 +338,12 @@ class CodeReviewProtocol:
             "approval_rate": (approved_count / total_reviews * 100) if total_reviews > 0 else 0,
             "total_issues": issues_count,
             "total_suggestions": suggestions_count,
-            "avg_issues_per_review": issues_count / total_reviews if total_reviews > 0 else 0
+            "avg_issues_per_review": issues_count / total_reviews if total_reviews > 0 else 0,
         }
 
     def assign_reviewers(
-        self,
-        author_agent: str,
-        all_agents: List[str],
-        num_reviewers: int = 1
-    ) -> List[str]:
+        self, author_agent: str, all_agents: list[str], num_reviewers: int = 1
+    ) -> list[str]:
         """
         Assign reviewers for an agent's code.
 
@@ -395,7 +389,7 @@ REVIEW_CHECKLIST_AUTH = [
     "Secure random for token generation",
     "HTTPS-only in production",
     "SQL injection prevention",
-    "OWASP Top 10 compliance"
+    "OWASP Top 10 compliance",
 ]
 
 REVIEW_CHECKLIST_API = [
@@ -406,7 +400,7 @@ REVIEW_CHECKLIST_API = [
     "Authentication/authorization checks",
     "No sensitive data in responses",
     "Consistent response format",
-    "Performance considerations"
+    "Performance considerations",
 ]
 
 REVIEW_CHECKLIST_DATABASE = [
@@ -417,7 +411,7 @@ REVIEW_CHECKLIST_DATABASE = [
     "Connection pooling configured",
     "Transactions used correctly",
     "No SQL injection vulnerabilities",
-    "Backup/recovery considered"
+    "Backup/recovery considered",
 ]
 
 REVIEW_CHECKLIST_GENERAL = [
@@ -428,5 +422,5 @@ REVIEW_CHECKLIST_GENERAL = [
     "Tests cover main functionality",
     "Documentation up to date",
     "No security vulnerabilities",
-    "Performance acceptable"
+    "Performance acceptable",
 ]

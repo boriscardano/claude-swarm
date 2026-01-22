@@ -10,13 +10,9 @@ Tests stale lock detection and automatic recovery:
 7. Verify: stale detection, auto-cleanup, successful acquisition
 """
 
-import time
-
-import pytest
-
 from claudeswarm.locking import STALE_LOCK_TIMEOUT
 
-from .helpers import IntegrationTestContext, wait_for_lock_release
+from .helpers import IntegrationTestContext
 
 
 class TestStaleLockRecovery:
@@ -39,9 +35,7 @@ class TestStaleLockRecovery:
 
             # Step 1: Agent 7 acquires lock
             success, conflict = ctx.lock_manager.acquire_lock(
-                filepath=test_file,
-                agent_id="agent-7",
-                reason="Working on critical feature"
+                filepath=test_file, agent_id="agent-7", reason="Working on critical feature"
             )
             assert success is True
             assert ctx.verify_lock_held(test_file, "agent-7")
@@ -62,9 +56,7 @@ class TestStaleLockRecovery:
             # Step 4 & 5: Agent 3 attempts to acquire lock
             # The lock manager should detect the stale lock and auto-release it
             success, conflict = ctx.lock_manager.acquire_lock(
-                filepath=test_file,
-                agent_id="agent-3",
-                reason="Taking over critical feature"
+                filepath=test_file, agent_id="agent-3", reason="Taking over critical feature"
             )
 
             # Step 6: Verify agent 3 successfully acquired the lock
@@ -90,9 +82,7 @@ class TestStaleLockRecovery:
             for i, file in enumerate(files):
                 ctx.create_test_file(file)
                 ctx.lock_manager.acquire_lock(
-                    filepath=file,
-                    agent_id=f"agent-{i}",
-                    reason=f"Working on {file}"
+                    filepath=file, agent_id=f"agent-{i}", reason=f"Working on {file}"
                 )
 
             # Verify all locks are active
@@ -122,21 +112,13 @@ class TestStaleLockRecovery:
             ctx.create_test_file(new_file)
 
             # Agent 0 acquires old lock
-            ctx.lock_manager.acquire_lock(
-                filepath=old_file,
-                agent_id="agent-0",
-                reason="Old work"
-            )
+            ctx.lock_manager.acquire_lock(filepath=old_file, agent_id="agent-0", reason="Old work")
 
             # Simulate time passing to make it stale
             ctx.advance_time(STALE_LOCK_TIMEOUT + 10)
 
             # Agent 1 acquires new lock (should be fresh)
-            ctx.lock_manager.acquire_lock(
-                filepath=new_file,
-                agent_id="agent-1",
-                reason="New work"
-            )
+            ctx.lock_manager.acquire_lock(filepath=new_file, agent_id="agent-1", reason="New work")
 
             # Run cleanup
             cleanup_count = ctx.lock_manager.cleanup_stale_locks()
@@ -156,9 +138,7 @@ class TestStaleLockRecovery:
 
             # Agent 0 acquires lock
             success, _ = ctx.lock_manager.acquire_lock(
-                filepath=test_file,
-                agent_id="agent-0",
-                reason="Long running task"
+                filepath=test_file, agent_id="agent-0", reason="Long running task"
             )
             assert success is True
 
@@ -167,9 +147,7 @@ class TestStaleLockRecovery:
 
             # Agent 0 re-acquires (refreshes) the lock
             success, _ = ctx.lock_manager.acquire_lock(
-                filepath=test_file,
-                agent_id="agent-0",
-                reason="Still working on long running task"
+                filepath=test_file, agent_id="agent-0", reason="Still working on long running task"
             )
             assert success is True  # Should succeed as it's our own lock
 
@@ -311,7 +289,7 @@ class TestStaleLockRecovery:
                 filepath=test_file,
                 agent_id="agent-1",
                 reason="Test with custom threshold",
-                timeout=custom_threshold
+                timeout=custom_threshold,
             )
 
             # Should succeed because lock is stale under custom threshold

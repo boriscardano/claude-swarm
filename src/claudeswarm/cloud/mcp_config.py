@@ -6,11 +6,9 @@ and convenience methods for attaching them to the MCP Bridge.
 """
 
 import os
-from typing import Optional
 
 from claudeswarm.cloud.mcp_bridge import MCPBridge
 from claudeswarm.cloud.types import MCPConfig, MCPContainerInfo, MCPType
-
 
 # Default configurations for supported MCP servers
 # These can be customized per deployment
@@ -55,9 +53,7 @@ PERPLEXITY_MCP_CONFIG = MCPConfig(
 )
 
 
-async def attach_github_mcp(
-    bridge: MCPBridge, github_token: Optional[str] = None
-) -> MCPContainerInfo:
+async def attach_github_mcp(bridge: MCPBridge, github_token: str | None = None) -> MCPContainerInfo:
     """
     Attach GitHub MCP server with standard configuration.
 
@@ -357,9 +353,7 @@ async def filesystem_read_file(bridge: MCPBridge, path: str) -> str:
     return response.data["content"]
 
 
-async def filesystem_write_file(
-    bridge: MCPBridge, path: str, content: str
-) -> None:
+async def filesystem_write_file(bridge: MCPBridge, path: str, content: str) -> None:
     """
     Write a file to the workspace.
 
@@ -397,9 +391,7 @@ async def filesystem_write_file(
 # Implemented by agent-5
 
 
-async def attach_exa_mcp(
-    bridge: MCPBridge, exa_api_key: Optional[str] = None
-) -> MCPContainerInfo:
+async def attach_exa_mcp(bridge: MCPBridge, exa_api_key: str | None = None) -> MCPContainerInfo:
     """
     Attach Exa MCP server with standard configuration.
 
@@ -447,7 +439,7 @@ async def attach_exa_mcp(
 
 
 async def attach_perplexity_mcp(
-    bridge: MCPBridge, perplexity_api_key: Optional[str] = None
+    bridge: MCPBridge, perplexity_api_key: str | None = None
 ) -> MCPContainerInfo:
     """
     Attach Perplexity MCP server with standard configuration.
@@ -635,9 +627,7 @@ async def perplexity_search(bridge: MCPBridge, query: str) -> dict:
     return response.data
 
 
-async def perplexity_ask(
-    bridge: MCPBridge, question: str, strip_thinking: bool = True
-) -> str:
+async def perplexity_ask(bridge: MCPBridge, question: str, strip_thinking: bool = True) -> str:
     """
     Ask a question using Perplexity's conversational AI (sonar-pro model).
 
@@ -676,9 +666,7 @@ async def perplexity_ask(
     return response.data.get("answer", "")
 
 
-async def perplexity_research(
-    bridge: MCPBridge, topic: str, strip_thinking: bool = True
-) -> str:
+async def perplexity_research(bridge: MCPBridge, topic: str, strip_thinking: bool = True) -> str:
     """
     Deep comprehensive research using Perplexity's sonar-deep-research model.
 
@@ -717,9 +705,7 @@ async def perplexity_research(
     return response.data.get("report", "")
 
 
-async def perplexity_reason(
-    bridge: MCPBridge, problem: str, strip_thinking: bool = False
-) -> str:
+async def perplexity_reason(bridge: MCPBridge, problem: str, strip_thinking: bool = False) -> str:
     """
     Advanced reasoning and problem-solving using sonar-reasoning-pro model.
 
@@ -764,9 +750,9 @@ async def perplexity_reason(
 async def attach_multiple_mcps(
     bridge: MCPBridge,
     mcp_names: list[str],
-    github_token: Optional[str] = None,
-    exa_api_key: Optional[str] = None,
-    perplexity_api_key: Optional[str] = None,
+    github_token: str | None = None,
+    exa_api_key: str | None = None,
+    perplexity_api_key: str | None = None,
     workspace_path: str = "/workspace",
 ) -> dict[str, MCPContainerInfo]:
     """
@@ -820,8 +806,7 @@ async def attach_multiple_mcps(
     unsupported = [name for name in mcp_names if name not in attach_functions]
     if unsupported:
         raise ValueError(
-            f"Unsupported MCP names: {unsupported}. "
-            f"Supported: {list(attach_functions.keys())}"
+            f"Unsupported MCP names: {unsupported}. " f"Supported: {list(attach_functions.keys())}"
         )
 
     # Create attachment tasks for requested MCPs
@@ -834,7 +819,7 @@ async def attach_multiple_mcps(
 
     # Build result dictionary and check for errors
     containers = {}
-    for (mcp_name, result) in zip(tasks.keys(), results):
+    for mcp_name, result in zip(tasks.keys(), results, strict=False):
         if isinstance(result, Exception):
             # Re-raise the first error encountered
             raise result

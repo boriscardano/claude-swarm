@@ -12,10 +12,7 @@ Author: Agent-TestCoverage
 """
 
 import json
-import subprocess
-from datetime import datetime
-from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch, call
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -23,15 +20,15 @@ from claudeswarm.discovery import (
     Agent,
     AgentRegistry,
     _parse_tmux_panes,
-    refresh_registry,
     list_active_agents,
+    refresh_registry,
 )
 
 
 class TestTmuxPaneIdParsing:
     """Tests for parsing tmux_pane_id from tmux list-panes."""
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_parse_tmux_panes_includes_pane_id(self, mock_run):
         """Test that _parse_tmux_panes includes tmux_pane_id (#{pane_id})."""
         # Mock tmux list-panes output with pane_id
@@ -43,10 +40,10 @@ class TestTmuxPaneIdParsing:
         panes = _parse_tmux_panes()
 
         assert len(panes) == 2
-        assert panes[0]['tmux_pane_id'] == "%2"
-        assert panes[1]['tmux_pane_id'] == "%3"
+        assert panes[0]["tmux_pane_id"] == "%2"
+        assert panes[1]["tmux_pane_id"] == "%3"
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_parse_tmux_panes_pane_id_format(self, mock_run):
         """Test that pane_id has the correct format (%N)."""
         mock_result = Mock()
@@ -57,11 +54,11 @@ class TestTmuxPaneIdParsing:
         panes = _parse_tmux_panes()
 
         assert len(panes) == 1
-        pane_id = panes[0]['tmux_pane_id']
-        assert pane_id.startswith('%')
+        pane_id = panes[0]["tmux_pane_id"]
+        assert pane_id.startswith("%")
         assert pane_id[1:].isdigit()
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_parse_tmux_panes_multiple_windows(self, mock_run):
         """Test parsing panes across multiple windows with pane_id."""
         mock_result = Mock()
@@ -77,9 +74,9 @@ class TestTmuxPaneIdParsing:
         panes = _parse_tmux_panes()
 
         assert len(panes) == 4
-        assert [p['tmux_pane_id'] for p in panes] == ["%1", "%2", "%3", "%4"]
+        assert [p["tmux_pane_id"] for p in panes] == ["%1", "%2", "%3", "%4"]
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_parse_tmux_panes_empty_output(self, mock_run):
         """Test handling of empty tmux output."""
         mock_result = Mock()
@@ -91,7 +88,7 @@ class TestTmuxPaneIdParsing:
 
         assert panes == []
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_parse_tmux_panes_uses_correct_format_string(self, mock_run):
         """Test that tmux list-panes uses the correct format string."""
         mock_result = Mock()
@@ -128,10 +125,10 @@ class TestAgentTmuxPaneIdField:
             status="active",
             last_seen="2025-11-18T10:00:00Z",
             session_name="test",
-            tmux_pane_id="%2"
+            tmux_pane_id="%2",
         )
 
-        assert hasattr(agent, 'tmux_pane_id')
+        assert hasattr(agent, "tmux_pane_id")
         assert agent.tmux_pane_id == "%2"
 
     def test_agent_tmux_pane_id_optional(self):
@@ -142,11 +139,11 @@ class TestAgentTmuxPaneIdField:
             pid=12345,
             status="active",
             last_seen="2025-11-18T10:00:00Z",
-            session_name="test"
+            session_name="test",
             # No tmux_pane_id
         )
 
-        assert hasattr(agent, 'tmux_pane_id')
+        assert hasattr(agent, "tmux_pane_id")
         assert agent.tmux_pane_id is None
 
     def test_agent_to_dict_includes_tmux_pane_id(self):
@@ -158,13 +155,13 @@ class TestAgentTmuxPaneIdField:
             status="active",
             last_seen="2025-11-18T10:00:00Z",
             session_name="test",
-            tmux_pane_id="%2"
+            tmux_pane_id="%2",
         )
 
         agent_dict = agent.to_dict()
 
-        assert 'tmux_pane_id' in agent_dict
-        assert agent_dict['tmux_pane_id'] == "%2"
+        assert "tmux_pane_id" in agent_dict
+        assert agent_dict["tmux_pane_id"] == "%2"
 
     def test_agent_to_dict_tmux_pane_id_null(self):
         """Test that to_dict() includes tmux_pane_id even when None."""
@@ -174,13 +171,13 @@ class TestAgentTmuxPaneIdField:
             pid=12345,
             status="active",
             last_seen="2025-11-18T10:00:00Z",
-            session_name="test"
+            session_name="test",
         )
 
         agent_dict = agent.to_dict()
 
-        assert 'tmux_pane_id' in agent_dict
-        assert agent_dict['tmux_pane_id'] is None
+        assert "tmux_pane_id" in agent_dict
+        assert agent_dict["tmux_pane_id"] is None
 
     def test_agent_from_dict_with_tmux_pane_id(self):
         """Test creating Agent from dict with tmux_pane_id."""
@@ -191,7 +188,7 @@ class TestAgentTmuxPaneIdField:
             "status": "active",
             "last_seen": "2025-11-18T10:00:00Z",
             "session_name": "test",
-            "tmux_pane_id": "%2"
+            "tmux_pane_id": "%2",
         }
 
         agent = Agent.from_dict(data)
@@ -206,7 +203,7 @@ class TestAgentTmuxPaneIdField:
             "pid": 12345,
             "status": "active",
             "last_seen": "2025-11-18T10:00:00Z",
-            "session_name": "test"
+            "session_name": "test",
         }
 
         agent = Agent.from_dict(data)
@@ -217,10 +214,10 @@ class TestAgentTmuxPaneIdField:
 class TestRegistryWithTmuxPaneId:
     """Tests for agent registry persistence with tmux_pane_id."""
 
-    @patch('subprocess.run')
-    @patch('claudeswarm.discovery._get_process_cwd')
-    @patch('claudeswarm.discovery._has_claude_child_process')
-    @patch('claudeswarm.discovery.get_active_agents_path')
+    @patch("subprocess.run")
+    @patch("claudeswarm.discovery._get_process_cwd")
+    @patch("claudeswarm.discovery._has_claude_child_process")
+    @patch("claudeswarm.discovery.get_active_agents_path")
     def test_refresh_registry_saves_tmux_pane_id(
         self, mock_get_path, mock_has_claude, mock_get_cwd, mock_run, tmp_path
     ):
@@ -242,21 +239,21 @@ class TestRegistryWithTmuxPaneId:
         mock_get_cwd.return_value = str(tmp_path)
         mock_has_claude.return_value = True
 
-        with patch('claudeswarm.project.get_project_root', return_value=tmp_path):
-            registry = refresh_registry()
+        with patch("claudeswarm.project.get_project_root", return_value=tmp_path):
+            refresh_registry()
 
         # Read saved registry
-        with open(registry_path, 'r') as f:
+        with open(registry_path) as f:
             saved_data = json.load(f)
 
-        assert len(saved_data['agents']) == 1
-        assert 'tmux_pane_id' in saved_data['agents'][0]
-        assert saved_data['agents'][0]['tmux_pane_id'] == "%2"
+        assert len(saved_data["agents"]) == 1
+        assert "tmux_pane_id" in saved_data["agents"][0]
+        assert saved_data["agents"][0]["tmux_pane_id"] == "%2"
 
-    @patch('subprocess.run')
-    @patch('claudeswarm.discovery._get_process_cwd')
-    @patch('claudeswarm.discovery._has_claude_child_process')
-    @patch('claudeswarm.discovery.get_active_agents_path')
+    @patch("subprocess.run")
+    @patch("claudeswarm.discovery._get_process_cwd")
+    @patch("claudeswarm.discovery._has_claude_child_process")
+    @patch("claudeswarm.discovery.get_active_agents_path")
     def test_refresh_registry_multiple_agents_tmux_pane_id(
         self, mock_get_path, mock_has_claude, mock_get_cwd, mock_run, tmp_path
     ):
@@ -268,9 +265,7 @@ class TestRegistryWithTmuxPaneId:
         mock_tmux_result = Mock()
         mock_tmux_result.returncode = 0
         mock_tmux_result.stdout = (
-            "test:0.0|12345|bash|%2\n"
-            "test:0.1|12346|bash|%3\n"
-            "test:0.2|12347|bash|%4\n"
+            "test:0.0|12345|bash|%2\n" "test:0.1|12346|bash|%3\n" "test:0.2|12347|bash|%4\n"
         )
 
         mock_session_result = Mock()
@@ -281,7 +276,7 @@ class TestRegistryWithTmuxPaneId:
         mock_get_cwd.return_value = str(tmp_path)
         mock_has_claude.return_value = True
 
-        with patch('claudeswarm.project.get_project_root', return_value=tmp_path):
+        with patch("claudeswarm.project.get_project_root", return_value=tmp_path):
             registry = refresh_registry()
 
         # Verify all agents have unique pane IDs
@@ -306,17 +301,17 @@ class TestBackwardsCompatibility:
                     "pid": 12345,
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
-                    "session_name": "test"
+                    "session_name": "test",
                     # No tmux_pane_id field
                 }
-            ]
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
         registry_path.write_text(json.dumps(registry_data))
 
         # Load the registry
-        with open(registry_path, 'r') as f:
+        with open(registry_path) as f:
             data = json.load(f)
 
         registry = AgentRegistry.from_dict(data)
@@ -337,7 +332,7 @@ class TestBackwardsCompatibility:
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
                     "session_name": "test",
-                    "tmux_pane_id": "%2"  # Has pane ID
+                    "tmux_pane_id": "%2",  # Has pane ID
                 },
                 {
                     "id": "agent-2",
@@ -345,16 +340,16 @@ class TestBackwardsCompatibility:
                     "pid": 12346,
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
-                    "session_name": "test"
+                    "session_name": "test",
                     # No pane ID
-                }
-            ]
+                },
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
         registry_path.write_text(json.dumps(registry_data))
 
-        with open(registry_path, 'r') as f:
+        with open(registry_path) as f:
             data = json.load(f)
 
         registry = AgentRegistry.from_dict(data)
@@ -382,7 +377,7 @@ class TestTmuxPaneIdMatching:
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
                     "session_name": "test",
-                    "tmux_pane_id": "%2"
+                    "tmux_pane_id": "%2",
                 },
                 {
                     "id": "agent-2",
@@ -391,9 +386,9 @@ class TestTmuxPaneIdMatching:
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
                     "session_name": "test",
-                    "tmux_pane_id": "%3"
-                }
-            ]
+                    "tmux_pane_id": "%3",
+                },
+            ],
         }
 
         registry = AgentRegistry.from_dict(registry_data)
@@ -421,10 +416,10 @@ class TestTmuxPaneIdMatching:
                     "pid": 12345,
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
-                    "session_name": "test"
+                    "session_name": "test",
                     # No tmux_pane_id
                 }
-            ]
+            ],
         }
 
         registry = AgentRegistry.from_dict(registry_data)
@@ -444,7 +439,7 @@ class TestTmuxPaneIdMatching:
 class TestListActiveAgentsWithTmuxPaneId:
     """Tests for list_active_agents including tmux_pane_id."""
 
-    @patch('claudeswarm.discovery.get_active_agents_path')
+    @patch("claudeswarm.discovery.get_active_agents_path")
     def test_list_active_agents_includes_tmux_pane_id(self, mock_get_path, tmp_path):
         """Test that list_active_agents returns agents with tmux_pane_id."""
         registry_data = {
@@ -458,9 +453,9 @@ class TestListActiveAgentsWithTmuxPaneId:
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
                     "session_name": "test",
-                    "tmux_pane_id": "%2"
+                    "tmux_pane_id": "%2",
                 }
-            ]
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
@@ -472,10 +467,8 @@ class TestListActiveAgentsWithTmuxPaneId:
         assert len(agents) == 1
         assert agents[0].tmux_pane_id == "%2"
 
-    @patch('claudeswarm.discovery.get_active_agents_path')
-    def test_list_active_agents_handles_missing_tmux_pane_id(
-        self, mock_get_path, tmp_path
-    ):
+    @patch("claudeswarm.discovery.get_active_agents_path")
+    def test_list_active_agents_handles_missing_tmux_pane_id(self, mock_get_path, tmp_path):
         """Test that list_active_agents handles agents without tmux_pane_id."""
         registry_data = {
             "session_name": "test",
@@ -487,10 +480,10 @@ class TestListActiveAgentsWithTmuxPaneId:
                     "pid": 12345,
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
-                    "session_name": "test"
+                    "session_name": "test",
                     # No tmux_pane_id
                 }
-            ]
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"

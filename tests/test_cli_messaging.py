@@ -18,13 +18,11 @@ Author: Agent-TestCoverage
 import argparse
 import json
 import subprocess
-import sys
-from io import StringIO
-from unittest.mock import MagicMock, Mock, patch, call
+from unittest.mock import Mock, patch
 
 import pytest
 
-from claudeswarm.cli import cmd_send_message, cmd_broadcast_message
+from claudeswarm.cli import cmd_broadcast_message, cmd_send_message
 from claudeswarm.messaging import MessageType
 from claudeswarm.validators import ValidationError
 
@@ -35,9 +33,7 @@ class TestSendMessageCommand:
     @patch("claudeswarm.messaging.send_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
-    def test_send_message_success(
-        self, mock_validate_content, mock_validate_id, mock_send, capsys
-    ):
+    def test_send_message_success(self, mock_validate_content, mock_validate_id, mock_send, capsys):
         """Test successful message sending."""
         # Setup mocks
         mock_validate_id.side_effect = lambda x: x
@@ -49,17 +45,13 @@ class TestSendMessageCommand:
             "recipient_id": "agent-2",
             "type": "INFO",
             "content": "Hello",
-            "timestamp": "2025-11-14T10:00:00Z"
+            "timestamp": "2025-11-14T10:00:00Z",
         }
         mock_send.return_value = mock_message
 
         # Create args
         args = argparse.Namespace(
-            sender_id="agent-1",
-            recipient_id="agent-2",
-            type="INFO",
-            content="Hello",
-            json=False
+            sender_id="agent-1", recipient_id="agent-2", type="INFO", content="Hello", json=False
         )
 
         # Execute
@@ -72,7 +64,7 @@ class TestSendMessageCommand:
             sender_id="agent-1",
             recipient_id="agent-2",
             message_type=MessageType.INFO,
-            content="Hello"
+            content="Hello",
         )
 
         captured = capsys.readouterr()
@@ -94,7 +86,7 @@ class TestSendMessageCommand:
             "recipient_id": "agent-2",
             "type": "QUESTION",
             "content": "Need help?",
-            "timestamp": "2025-11-14T10:00:00Z"
+            "timestamp": "2025-11-14T10:00:00Z",
         }
         mock_message.to_dict.return_value = message_dict
         mock_send.return_value = mock_message
@@ -104,7 +96,7 @@ class TestSendMessageCommand:
             recipient_id="agent-2",
             type="QUESTION",
             content="Need help?",
-            json=True
+            json=True,
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -115,7 +107,7 @@ class TestSendMessageCommand:
 
         # Verify JSON output can be parsed and has expected structure
         # Extract JSON object from output (skip status message)
-        json_start = captured.out.find('{')
+        json_start = captured.out.find("{")
         assert json_start != -1, "JSON output should contain JSON object"
 
         json_output = captured.out[json_start:]
@@ -129,20 +121,14 @@ class TestSendMessageCommand:
     @patch("claudeswarm.messaging.send_message")
     @patch("claudeswarm.cli.validate_agent_id")
     @patch("claudeswarm.cli.validate_message_content")
-    def test_send_message_failure(
-        self, mock_validate_content, mock_validate_id, mock_send, capsys
-    ):
+    def test_send_message_failure(self, mock_validate_content, mock_validate_id, mock_send, capsys):
         """Test failed message sending."""
         mock_validate_id.side_effect = lambda x: x
         mock_validate_content.side_effect = lambda x: x
         mock_send.return_value = None  # Indicates failure
 
         args = argparse.Namespace(
-            sender_id="agent-1",
-            recipient_id="agent-2",
-            type="INFO",
-            content="Hello",
-            json=False
+            sender_id="agent-1", recipient_id="agent-2", type="INFO", content="Hello", json=False
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -158,11 +144,7 @@ class TestSendMessageCommand:
         mock_validate_id.side_effect = ValidationError("Invalid agent ID")
 
         args = argparse.Namespace(
-            sender_id="invalid!",
-            recipient_id="agent-2",
-            type="INFO",
-            content="Hello",
-            json=False
+            sender_id="invalid!", recipient_id="agent-2", type="INFO", content="Hello", json=False
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -179,7 +161,7 @@ class TestSendMessageCommand:
             recipient_id="agent-2",
             type="INVALID_TYPE",
             content="Hello",
-            json=False
+            json=False,
         )
 
         with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
@@ -195,14 +177,22 @@ class TestSendMessageCommand:
     def test_send_message_all_message_types(self, capsys):
         """Test all valid message types are accepted."""
         # Use actual valid types from MessageType enum
-        valid_types = ["INFO", "QUESTION", "BLOCKED", "REVIEW-REQUEST", "COMPLETED", "CHALLENGE", "ACK"]
+        valid_types = [
+            "INFO",
+            "QUESTION",
+            "BLOCKED",
+            "REVIEW-REQUEST",
+            "COMPLETED",
+            "CHALLENGE",
+            "ACK",
+        ]
 
         for msg_type in valid_types:
             with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
                 with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
                     with patch("claudeswarm.messaging.send_message") as mock_send:
                         mock_message = Mock()
-                        mock_message.to_dict.return_value = {'delivery_status': {}}
+                        mock_message.to_dict.return_value = {"delivery_status": {}}
                         mock_send.return_value = mock_message
 
                         args = argparse.Namespace(
@@ -210,7 +200,7 @@ class TestSendMessageCommand:
                             recipient_id="agent-2",
                             type=msg_type,
                             content="Test",
-                            json=False
+                            json=False,
                         )
 
                         with pytest.raises(SystemExit) as exc_info:
@@ -227,15 +217,17 @@ class TestSendMessageCommand:
         registry_data = {
             "session_name": "test",
             "updated_at": "2025-11-18T10:00:00Z",
-            "agents": [{
-                "id": "agent-auto",
-                "pane_index": "test:0.0",
-                "pid": 12345,
-                "status": "active",
-                "last_seen": "2025-11-18T10:00:00Z",
-                "session_name": "test",
-                "tmux_pane_id": "%99"
-            }]
+            "agents": [
+                {
+                    "id": "agent-auto",
+                    "pane_index": "test:0.0",
+                    "pid": 12345,
+                    "status": "active",
+                    "last_seen": "2025-11-18T10:00:00Z",
+                    "session_name": "test",
+                    "tmux_pane_id": "%99",
+                }
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
@@ -246,16 +238,18 @@ class TestSendMessageCommand:
             recipient_id="agent-2",
             type="INFO",
             content="Test message",
-            json=False
+            json=False,
         )
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%99'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
+        with patch.dict(os.environ, {"TMUX_PANE": "%99"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
                 with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
                     with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
                         with patch("claudeswarm.messaging.send_message") as mock_send:
                             mock_message = Mock()
-                            mock_message.to_dict.return_value = {'delivery_status': {'agent-2': True}}
+                            mock_message.to_dict.return_value = {
+                                "delivery_status": {"agent-2": True}
+                            }
                             mock_send.return_value = mock_message
 
                             with pytest.raises(SystemExit) as exc_info:
@@ -264,7 +258,7 @@ class TestSendMessageCommand:
                             assert exc_info.value.code == 0
                             # Verify auto-detected sender ID was used
                             call_kwargs = mock_send.call_args[1]
-                            assert call_kwargs['sender_id'] == "agent-auto"
+                            assert call_kwargs["sender_id"] == "agent-auto"
 
     def test_send_message_auto_detect_fails(self, capsys):
         """Test send-message fails when auto-detect fails."""
@@ -275,7 +269,7 @@ class TestSendMessageCommand:
             recipient_id="agent-2",
             type="INFO",
             content="Test message",
-            json=False
+            json=False,
         )
 
         with patch.dict(os.environ, {}, clear=True):  # No TMUX_PANE
@@ -299,11 +293,7 @@ class TestBroadcastMessageCommand:
         """Test successful message broadcast."""
         mock_validate_id.side_effect = lambda x: x
         mock_validate_content.side_effect = lambda x: x
-        mock_broadcast.return_value = {
-            "agent-1": True,
-            "agent-2": True,
-            "agent-3": True
-        }
+        mock_broadcast.return_value = {"agent-1": True, "agent-2": True, "agent-3": True}
 
         args = argparse.Namespace(
             sender_id="system",
@@ -311,7 +301,7 @@ class TestBroadcastMessageCommand:
             content="System update",
             include_self=False,
             json=False,
-            verbose=False
+            verbose=False,
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -330,11 +320,7 @@ class TestBroadcastMessageCommand:
         """Test partial broadcast success."""
         mock_validate_id.side_effect = lambda x: x
         mock_validate_content.side_effect = lambda x: x
-        mock_broadcast.return_value = {
-            "agent-1": True,
-            "agent-2": False,
-            "agent-3": True
-        }
+        mock_broadcast.return_value = {"agent-1": True, "agent-2": False, "agent-3": True}
 
         args = argparse.Namespace(
             sender_id="system",
@@ -342,7 +328,7 @@ class TestBroadcastMessageCommand:
             content="Update",
             include_self=False,
             json=False,
-            verbose=False
+            verbose=False,
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -361,11 +347,7 @@ class TestBroadcastMessageCommand:
         """Test verbose output shows individual agent status."""
         mock_validate_id.side_effect = lambda x: x
         mock_validate_content.side_effect = lambda x: x
-        mock_broadcast.return_value = {
-            "agent-1": True,
-            "agent-2": False,
-            "agent-3": True
-        }
+        mock_broadcast.return_value = {"agent-1": True, "agent-2": False, "agent-3": True}
 
         args = argparse.Namespace(
             sender_id="system",
@@ -373,7 +355,7 @@ class TestBroadcastMessageCommand:
             content="Update",
             include_self=False,
             json=False,
-            verbose=True
+            verbose=True,
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -394,10 +376,7 @@ class TestBroadcastMessageCommand:
         """Test JSON output format."""
         mock_validate_id.side_effect = lambda x: x
         mock_validate_content.side_effect = lambda x: x
-        results = {
-            "agent-1": True,
-            "agent-2": True
-        }
+        results = {"agent-1": True, "agent-2": True}
         mock_broadcast.return_value = results
 
         args = argparse.Namespace(
@@ -406,7 +385,7 @@ class TestBroadcastMessageCommand:
             content="Update",
             include_self=False,
             json=True,
-            verbose=False
+            verbose=False,
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -417,7 +396,7 @@ class TestBroadcastMessageCommand:
 
         # Verify JSON output can be parsed and has expected structure
         # Extract JSON object from output (lines starting with '{' or containing JSON)
-        json_start = captured.out.find('{')
+        json_start = captured.out.find("{")
         assert json_start != -1, "JSON output should contain JSON object"
 
         json_output = captured.out[json_start:]
@@ -426,7 +405,7 @@ class TestBroadcastMessageCommand:
         assert isinstance(parsed, dict), "JSON should parse to dictionary"
         assert "agent-1" in parsed or "agent-2" in parsed, "JSON should contain agent results"
         # Verify each agent result is a boolean
-        for agent_id, success in parsed.items():
+        for _agent_id, success in parsed.items():
             assert isinstance(success, bool), f"Agent result should be boolean, got {type(success)}"
 
     @patch("claudeswarm.messaging.broadcast_message")
@@ -438,10 +417,7 @@ class TestBroadcastMessageCommand:
         """Test broadcast when no agents are reached."""
         mock_validate_id.side_effect = lambda x: x
         mock_validate_content.side_effect = lambda x: x
-        mock_broadcast.return_value = {
-            "agent-1": False,
-            "agent-2": False
-        }
+        mock_broadcast.return_value = {"agent-1": False, "agent-2": False}
 
         args = argparse.Namespace(
             sender_id="system",
@@ -449,7 +425,7 @@ class TestBroadcastMessageCommand:
             content="Update",
             include_self=False,
             json=False,
-            verbose=False
+            verbose=False,
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -476,7 +452,7 @@ class TestBroadcastMessageCommand:
             content="Update",
             include_self=True,  # Include sender
             json=False,
-            verbose=False
+            verbose=False,
         )
 
         with pytest.raises(SystemExit):
@@ -485,7 +461,7 @@ class TestBroadcastMessageCommand:
         # Verify exclude_self is False (because include_self is True)
         mock_broadcast.assert_called_once()
         call_kwargs = mock_broadcast.call_args[1]
-        assert call_kwargs["exclude_self"] == False
+        assert not call_kwargs["exclude_self"]
 
     def test_broadcast_message_with_auto_detect(self, tmp_path, capsys):
         """Test broadcast-message with auto-detected sender ID."""
@@ -496,15 +472,17 @@ class TestBroadcastMessageCommand:
         registry_data = {
             "session_name": "test",
             "updated_at": "2025-11-18T10:00:00Z",
-            "agents": [{
-                "id": "agent-auto",
-                "pane_index": "test:0.0",
-                "pid": 12345,
-                "status": "active",
-                "last_seen": "2025-11-18T10:00:00Z",
-                "session_name": "test",
-                "tmux_pane_id": "%99"
-            }]
+            "agents": [
+                {
+                    "id": "agent-auto",
+                    "pane_index": "test:0.0",
+                    "pid": 12345,
+                    "status": "active",
+                    "last_seen": "2025-11-18T10:00:00Z",
+                    "session_name": "test",
+                    "tmux_pane_id": "%99",
+                }
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
@@ -516,11 +494,11 @@ class TestBroadcastMessageCommand:
             content="Broadcast test",
             include_self=False,
             json=False,
-            verbose=False
+            verbose=False,
         )
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%99'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
+        with patch.dict(os.environ, {"TMUX_PANE": "%99"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
                 with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
                     with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
                         with patch("claudeswarm.messaging.broadcast_message") as mock_broadcast:
@@ -532,7 +510,7 @@ class TestBroadcastMessageCommand:
                             assert exc_info.value.code == 0
                             # Verify auto-detected sender ID was used
                             call_kwargs = mock_broadcast.call_args[1]
-                            assert call_kwargs['sender_id'] == "agent-auto"
+                            assert call_kwargs["sender_id"] == "agent-auto"
 
     def test_broadcast_message_auto_detect_fails(self, capsys):
         """Test broadcast-message fails when auto-detect fails."""
@@ -544,7 +522,7 @@ class TestBroadcastMessageCommand:
             content="Broadcast test",
             include_self=False,
             json=False,
-            verbose=False
+            verbose=False,
         )
 
         with patch.dict(os.environ, {}, clear=True):  # No TMUX_PANE
@@ -564,13 +542,18 @@ class TestMessagingSubprocessExecution:
         # This simulates how an agent would call the command
         result = subprocess.run(
             [
-                "python3", "-m", "claudeswarm.cli",
+                "python3",
+                "-m",
+                "claudeswarm.cli",
                 "send-message",
-                "agent-test", "agent-target", "INFO", "Test message"
+                "agent-test",
+                "agent-target",
+                "INFO",
+                "Test message",
             ],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
 
         # Command should execute without crashing
@@ -582,13 +565,17 @@ class TestMessagingSubprocessExecution:
         """Test broadcast-message can be executed via subprocess."""
         result = subprocess.run(
             [
-                "python3", "-m", "claudeswarm.cli",
+                "python3",
+                "-m",
+                "claudeswarm.cli",
                 "broadcast-message",
-                "agent-test", "INFO", "Test broadcast"
+                "agent-test",
+                "INFO",
+                "Test broadcast",
             ],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
 
         # Command should execute without crashing
@@ -601,7 +588,7 @@ class TestMessagingSubprocessExecution:
             ["python3", "-m", "claudeswarm.cli", "send-message", "--help"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
 
         assert result.returncode == 0
@@ -615,24 +602,31 @@ class TestMessagingSubprocessExecution:
             ["python3", "-m", "claudeswarm.cli", "broadcast-message", "--help"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
 
         assert result.returncode == 0, "Help command should succeed"
         assert "sender_id" in result.stdout, "Help should contain sender_id parameter"
-        assert "broadcast-message" in result.stdout, "Help should contain broadcast-message command name"
+        assert (
+            "broadcast-message" in result.stdout
+        ), "Help should contain broadcast-message command name"
 
     def test_invalid_message_type_via_subprocess(self):
         """Test error handling for invalid message type via subprocess."""
         result = subprocess.run(
             [
-                "python3", "-m", "claudeswarm.cli",
+                "python3",
+                "-m",
+                "claudeswarm.cli",
                 "send-message",
-                "agent-1", "agent-2", "INVALID", "Test"
+                "agent-1",
+                "agent-2",
+                "INVALID",
+                "Test",
             ],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
 
         assert result.returncode == 1
@@ -654,11 +648,7 @@ class TestMessagingCommandReliability:
         mock_send.side_effect = Exception("Unexpected error")
 
         args = argparse.Namespace(
-            sender_id="agent-1",
-            recipient_id="agent-2",
-            type="INFO",
-            content="Test",
-            json=False
+            sender_id="agent-1", recipient_id="agent-2", type="INFO", content="Test", json=False
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -685,7 +675,7 @@ class TestMessagingCommandReliability:
             content="Test",
             include_self=False,
             json=False,
-            verbose=False
+            verbose=False,
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -700,10 +690,6 @@ class TestMessagingCommandReliability:
         from claudeswarm.messaging import MessageType
 
         # All message types from the enum should be valid
-        valid_cli_types = {
-            "INFO", "QUESTION", "BLOCKED", "REVIEW-REQUEST",
-            "PROGRESS-UPDATE", "ERROR", "WARNING"
-        }
 
         enum_types = {t.name for t in MessageType}
 

@@ -39,10 +39,7 @@ def check_port_available(port: int, host: str = "localhost") -> bool:
 
 
 def start_dashboard_server(
-    port: int = 8080,
-    host: str = "localhost",
-    auto_open: bool = True,
-    reload: bool = False
+    port: int = 8080, host: str = "localhost", auto_open: bool = True, reload: bool = False
 ) -> NoReturn:
     """Start the dashboard server.
 
@@ -77,8 +74,10 @@ def start_dashboard_server(
         "-m",
         "uvicorn",
         "claudeswarm.web.server:app",
-        "--host", host,
-        "--port", str(port),
+        "--host",
+        host,
+        "--port",
+        str(port),
     ]
 
     if reload:
@@ -86,9 +85,9 @@ def start_dashboard_server(
 
     # Print access info
     url = f"http://{host}:{port}"
-    print(f"Starting Claude Swarm Dashboard...")
+    print("Starting Claude Swarm Dashboard...")
     print(f"Dashboard URL: {url}")
-    print(f"Press Ctrl+C to stop")
+    print("Press Ctrl+C to stop")
     print()
 
     # Open browser after a short delay
@@ -103,6 +102,7 @@ def start_dashboard_server(
                 print(f"Warning: Could not open browser automatically: {e}")
 
         import threading
+
         browser_thread = threading.Thread(target=open_browser, daemon=True)
         browser_thread.start()
 

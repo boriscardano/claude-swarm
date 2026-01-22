@@ -15,52 +15,58 @@ Tests cover:
 Author: Agent-4 (Test Engineer)
 """
 
-import os
 import time
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 
 import pytest
-
 
 # Import config module - Agent 1 has implemented this
 try:
     from claudeswarm.config import (
         ClaudeSwarmConfig,
-        RateLimitConfig,
-        LockingConfig,
-        DiscoveryConfig,
         ConfigValidationError,
-        load_config,
+        DiscoveryConfig,
+        LockingConfig,
+        RateLimitConfig,
         get_config,
+        load_config,
         reload_config,
     )
+
     CONFIG_MODULE_EXISTS = True
 except ImportError as e:
     # Create placeholder classes for IDE support
     class ClaudeSwarmConfig:
         pass
+
     class RateLimitConfig:
         pass
+
     class LockingConfig:
         pass
+
     class DiscoveryConfig:
         pass
+
     class ConfigValidationError(Exception):
         pass
+
     def load_config(*args, **kwargs):
         pass
+
     def get_config():
         pass
+
     def reload_config(*args, **kwargs):
         pass
+
     CONFIG_MODULE_EXISTS = False
     _import_error = str(e)
 
 
 pytestmark = pytest.mark.skipif(
     not CONFIG_MODULE_EXISTS,
-    reason=f"Config module not available: {_import_error if not CONFIG_MODULE_EXISTS else ''}"
+    reason=f"Config module not available: {_import_error if not CONFIG_MODULE_EXISTS else ''}",
 )
 
 
@@ -75,7 +81,7 @@ class TestConfigLoading:
         config = load_config(config_path)
 
         assert config is not None
-        assert hasattr(config, 'messaging')
+        assert hasattr(config, "messaging")
         assert config.messaging.rate_limit.max_messages == 10
         assert config.messaging.rate_limit.time_window_seconds == 60
         assert config.locking.stale_timeout_seconds == 300
@@ -88,7 +94,7 @@ class TestConfigLoading:
         config = load_config(config_path)
 
         assert config is not None
-        assert hasattr(config, 'messaging')
+        assert hasattr(config, "messaging")
         assert config.messaging.rate_limit.max_messages == 10
         assert config.locking.stale_timeout_seconds == 300
 
@@ -100,13 +106,11 @@ class TestConfigLoading:
 
         # Should return default config
         assert config is not None
-        assert hasattr(config, 'messaging')
+        assert hasattr(config, "messaging")
         # Verify it has expected default structure
-        assert hasattr(config.messaging, 'rate_limit')
+        assert hasattr(config.messaging, "rate_limit")
 
-    def test_load_config_with_partial_config_merges_defaults(
-        self, temp_config_dir, partial_config
-    ):
+    def test_load_config_with_partial_config_merges_defaults(self, temp_config_dir, partial_config):
         """Test that partial config is merged with defaults."""
         config_path = temp_config_dir / "partial.yaml"
         config_path.write_text(partial_config)
@@ -117,8 +121,8 @@ class TestConfigLoading:
         assert config.messaging.rate_limit.max_messages == 20
 
         # Should also have default values for missing sections
-        assert hasattr(config, 'locking')
-        assert hasattr(config, 'discovery')
+        assert hasattr(config, "locking")
+        assert hasattr(config, "discovery")
         assert config.locking.stale_timeout_seconds > 0
 
     def test_load_config_from_dict(self, config_dict):
@@ -174,7 +178,9 @@ class TestConfigValidation:
         config_path = temp_config_dir / "zero_window.yaml"
         config_path.write_text(config_content)
 
-        with pytest.raises((ConfigValidationError, ConfigError), match="[Zz]ero|[Ii]nvalid|positive"):
+        with pytest.raises(
+            (ConfigValidationError, ConfigError), match="[Zz]ero|[Ii]nvalid|positive"
+        ):
             load_config(config_path)
 
     def test_config_validates_stale_timeout_positive(self, temp_config_dir):
@@ -224,9 +230,7 @@ class TestConfigReloading:
 
         # Modify the file
         time.sleep(0.01)  # Ensure file mtime changes
-        modified_config = sample_yaml_config.replace(
-            "max_messages: 10", "max_messages: 20"
-        )
+        modified_config = sample_yaml_config.replace("max_messages: 10", "max_messages: 20")
         config_path.write_text(modified_config)
 
         # Reload
@@ -246,15 +250,15 @@ class TestConfigReloading:
 
         # Modify file
         time.sleep(0.01)
-        modified_config = sample_yaml_config.replace(
-            "max_messages: 10", "max_messages: 15"
-        )
+        modified_config = sample_yaml_config.replace("max_messages: 10", "max_messages: 15")
         config_path.write_text(modified_config)
 
         # Now should need reload
         assert loader.needs_reload()
 
-    def test_reload_config_preserves_runtime_modifications(self, temp_config_dir, sample_yaml_config):
+    def test_reload_config_preserves_runtime_modifications(
+        self, temp_config_dir, sample_yaml_config
+    ):
         """Test that runtime modifications can be preserved or overridden on reload."""
         config_path = temp_config_dir / "config.yaml"
         config_path.write_text(sample_yaml_config)
@@ -278,7 +282,7 @@ class TestConfigPathDiscovery:
         config_path = temp_config_dir / "config.yaml"
         config_path.write_text(sample_yaml_config)
 
-        with patch('pathlib.Path.cwd', return_value=temp_config_dir):
+        with patch("pathlib.Path.cwd", return_value=temp_config_dir):
             config = load_config()  # No path specified
             assert config is not None
 
@@ -289,7 +293,7 @@ class TestConfigPathDiscovery:
         config_path = claudeswarm_dir / "config.yaml"
         config_path.write_text(sample_yaml_config)
 
-        with patch('pathlib.Path.cwd', return_value=temp_config_dir):
+        with patch("pathlib.Path.cwd", return_value=temp_config_dir):
             config = load_config()  # Should find in .claudeswarm/
             assert config is not None
 
@@ -299,7 +303,7 @@ class TestConfigPathDiscovery:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(sample_yaml_config)
 
-        with patch('pathlib.Path.cwd', return_value=temp_config_dir):
+        with patch("pathlib.Path.cwd", return_value=temp_config_dir):
             config = load_config("custom/myconfig.yaml")
             assert config is not None
 
@@ -320,10 +324,10 @@ class TestConfigDefaults:
         config = get_default_config()
 
         assert config is not None
-        assert hasattr(config, 'messaging')
-        assert hasattr(config, 'locking')
-        assert hasattr(config, 'discovery')
-        assert hasattr(config, 'monitoring')
+        assert hasattr(config, "messaging")
+        assert hasattr(config, "locking")
+        assert hasattr(config, "discovery")
+        assert hasattr(config, "monitoring")
 
     def test_default_config_has_reasonable_rate_limits(self):
         """Test that default rate limits are reasonable."""
@@ -369,7 +373,9 @@ class TestConfigEnvironmentOverrides:
         # This tests the interface if it exists
         assert config.messaging.rate_limit.max_messages >= 10  # At least has value
 
-    def test_env_var_overrides_stale_timeout(self, temp_config_dir, sample_yaml_config, monkeypatch):
+    def test_env_var_overrides_stale_timeout(
+        self, temp_config_dir, sample_yaml_config, monkeypatch
+    ):
         """Test environment variable override for stale timeout."""
         config_path = temp_config_dir / "config.yaml"
         config_path.write_text(sample_yaml_config)
@@ -410,7 +416,7 @@ messaging:
     time_window_seconds: 60
 """
         config_path = temp_config_dir / "unicode.yaml"
-        config_path.write_text(config_content, encoding='utf-8')
+        config_path.write_text(config_content, encoding="utf-8")
 
         config = load_config(config_path)
         assert config.messaging.rate_limit.max_messages == 10

@@ -10,14 +10,11 @@ Tests message delivery failure handling and escalation:
 7. Verify: retry attempts, escalation, alternate agent communication
 """
 
-import pytest
-
 from claudeswarm.messaging import MessageType, broadcast_message, send_message
 
 from .helpers import (
     IntegrationTestContext,
     mock_tmux_environment,
-    verify_message_broadcast,
     verify_message_delivered,
 )
 
@@ -44,11 +41,11 @@ class TestMessageEscalation:
                     tmux_state["panes"].append(agent.pane_index)
 
                 # Step 1: Agent 2 tries to send to Agent 5
-                direct_msg = send_message(
+                send_message(
                     sender_id="agent-2",
                     recipient_id="agent-5",
                     message_type=MessageType.QUESTION,
-                    content="Need help with database schema"
+                    content="Need help with database schema",
                 )
 
                 # Message send will fail because agent-5 pane doesn't exist
@@ -63,7 +60,7 @@ class TestMessageEscalation:
                     sender_id="agent-2",
                     message_type=MessageType.QUESTION,
                     content="[ESCALATED] Need help with database schema - original recipient unavailable",
-                    exclude_self=True
+                    exclude_self=True,
                 )
 
                 # Step 5: Verify broadcast went to available agents
@@ -79,7 +76,7 @@ class TestMessageEscalation:
                     sender_id="agent-4",
                     recipient_id="agent-2",
                     message_type=MessageType.INFO,
-                    content="I can help with the database schema"
+                    content="I can help with the database schema",
                 )
 
                 assert response_msg is not None
@@ -90,20 +87,20 @@ class TestMessageEscalation:
                     sender_id="agent-4",
                     recipient_pane=ctx.get_agent("agent-2").pane_index,
                     msg_type=MessageType.INFO,
-                    content_substring="database schema"
+                    content_substring="database schema",
                 )
 
     def test_retry_strategy_with_backoff(self) -> None:
         """Test that retry strategy uses exponential backoff."""
-        with IntegrationTestContext(num_agents=3) as ctx:
-            with mock_tmux_environment() as tmux_state:
+        with IntegrationTestContext(num_agents=3):
+            with mock_tmux_environment():
                 # Simulate retry behavior
                 retry_intervals = []
                 max_retries = 3
 
                 for attempt in range(max_retries):
                     # Exponential backoff: 2^attempt seconds
-                    expected_delay = 2 ** attempt
+                    expected_delay = 2**attempt
                     retry_intervals.append(expected_delay)
 
                 # Verify exponential growth
@@ -123,11 +120,11 @@ class TestMessageEscalation:
 
                 target_agents = ["agent-2", "agent-3", "agent-4"]
                 for target in target_agents:
-                    msg = send_message(
+                    send_message(
                         sender_id="agent-0",
                         recipient_id=target,
                         message_type=MessageType.QUESTION,
-                        content="Need code review"
+                        content="Need code review",
                     )
                     # These will fail because agents aren't in tmux_state
 
@@ -136,7 +133,7 @@ class TestMessageEscalation:
                     sender_id="agent-0",
                     message_type=MessageType.QUESTION,
                     content="[ESCALATED] Need code review - looking for available reviewer",
-                    exclude_self=True
+                    exclude_self=True,
                 )
 
                 # Should reach agents 1 and 5
@@ -154,7 +151,7 @@ class TestMessageEscalation:
                     sender_id="agent-2",
                     recipient_id="agent-1",
                     message_type=MessageType.BLOCKED,
-                    content="Blocked: Need API endpoint specification before proceeding"
+                    content="Blocked: Need API endpoint specification before proceeding",
                 )
 
                 assert blocked_msg is not None
@@ -165,7 +162,7 @@ class TestMessageEscalation:
                     sender_id="agent-2",
                     recipient_pane=ctx.get_agent("agent-1").pane_index,
                     msg_type=MessageType.BLOCKED,
-                    content_substring="API endpoint"
+                    content_substring="API endpoint",
                 )
 
                 # Agent 1 responds with the needed information
@@ -173,7 +170,7 @@ class TestMessageEscalation:
                     sender_id="agent-1",
                     recipient_id="agent-2",
                     message_type=MessageType.INFO,
-                    content="API endpoint: POST /api/auth/login with {username, password}"
+                    content="API endpoint: POST /api/auth/login with {username, password}",
                 )
 
                 assert response is not None
@@ -183,7 +180,7 @@ class TestMessageEscalation:
                     sender_id="agent-2",
                     recipient_id="agent-1",
                     message_type=MessageType.COMPLETED,
-                    content="Unblocked - proceeding with implementation"
+                    content="Unblocked - proceeding with implementation",
                 )
 
                 assert complete_msg is not None
@@ -201,7 +198,7 @@ class TestMessageEscalation:
                     sender_id="agent-0",
                     message_type=MessageType.INFO,
                     content="Important announcement to all agents",
-                    exclude_self=True
+                    exclude_self=True,
                 )
 
                 # Should reach all 4 other agents
@@ -225,7 +222,7 @@ class TestMessageEscalation:
                     sender_id="agent-1",
                     recipient_id="agent-2",
                     message_type=MessageType.CHALLENGE,
-                    content="CHALLENGE: Are you still working on user-service? Lock has been held for 10 minutes"
+                    content="CHALLENGE: Are you still working on user-service? Lock has been held for 10 minutes",
                 )
 
                 assert challenge is not None
@@ -235,7 +232,7 @@ class TestMessageEscalation:
                     tmux_state["messages_sent"],
                     sender_id="agent-1",
                     recipient_pane=ctx.get_agent("agent-2").pane_index,
-                    msg_type=MessageType.CHALLENGE
+                    msg_type=MessageType.CHALLENGE,
                 )
 
                 # Agent 2 must respond
@@ -243,7 +240,7 @@ class TestMessageEscalation:
                     sender_id="agent-2",
                     recipient_id="agent-1",
                     message_type=MessageType.INFO,
-                    content="Yes, still working - about to finish and release lock"
+                    content="Yes, still working - about to finish and release lock",
                 )
 
                 assert response is not None
@@ -264,7 +261,7 @@ class TestMessageEscalation:
                         sender_id="agent-0",
                         recipient_id="agent-1",
                         message_type=MessageType.INFO,
-                        content=f"Retry attempt {i}"
+                        content=f"Retry attempt {i}",
                     )
 
                     if msg is not None:
@@ -298,7 +295,7 @@ class TestMessageEscalation:
                             sender_id="agent-0",
                             recipient_id=agent_id,
                             message_type=MessageType.INFO,
-                            content="Hello discovered agent"
+                            content="Hello discovered agent",
                         )
                         # Should succeed for active agents
                         assert msg is not None

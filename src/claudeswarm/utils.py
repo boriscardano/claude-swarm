@@ -68,7 +68,7 @@ def atomic_write(filepath: Path, content: str) -> None:
     # Write to temporary file in same directory
     fd, tmp_path = tempfile.mkstemp(dir=filepath.parent, text=True)
     try:
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, "w") as f:
             f.write(content)
         # Atomic rename
         os.replace(tmp_path, filepath)
@@ -248,7 +248,7 @@ def get_or_create_secret(secret_file: Path = None) -> bytes:
     # If secret exists, read it
     if secret_file.exists():
         try:
-            with open(secret_file, 'rb') as f:
+            with open(secret_file, "rb") as f:
                 secret = f.read()
             # Validate secret is not empty
             if len(secret) < 32:
@@ -273,7 +273,7 @@ def get_or_create_secret(secret_file: Path = None) -> bytes:
     # Write secret to file with restrictive permissions
     try:
         # Create file with mode 0o600 (read/write for owner only)
-        with open(secret_file, 'wb') as f:
+        with open(secret_file, "wb") as f:
             f.write(secret)
         # Ensure file has correct permissions
         secret_file.chmod(0o600)

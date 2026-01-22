@@ -12,14 +12,12 @@ Author: Test Coverage Enhancement
 
 import json
 import os
-import tempfile
 from datetime import datetime
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 import pytest
 
-from claudeswarm.cli import cmd_whoami, WHOAMI_MESSAGE_PREVIEW_LIMIT
+from claudeswarm.cli import WHOAMI_MESSAGE_PREVIEW_LIMIT, cmd_whoami
 from claudeswarm.messaging import Message, MessageLogger, MessageType
 
 
@@ -36,11 +34,7 @@ class TestWhoamiMessageDisplay:
         os.environ["TMUX_PANE"] = "%1"
 
         # Mock subprocess to return pane info
-        mock_subprocess.return_value = Mock(
-            returncode=0,
-            stdout="main:0.0\n",
-            stderr=""
-        )
+        mock_subprocess.return_value = Mock(returncode=0, stdout="main:0.0\n", stderr="")
 
         # Create agent registry
         registry_path = tmp_path / "active_agents.json"
@@ -57,17 +51,17 @@ class TestWhoamiMessageDisplay:
                     "status": "active",
                     "last_seen": datetime.now().isoformat(),
                     "session_name": "main",
-                    "tmux_pane_id": "%1"
+                    "tmux_pane_id": "%1",
                 }
-            ]
+            ],
         }
 
-        with open(registry_path, 'w') as f:
+        with open(registry_path, "w") as f:
             json.dump(agent_data, f)
 
         # Create message log with messages
         log_file = tmp_path / "agent_messages.log"
-        with open(log_file, 'w') as f:
+        with open(log_file, "w") as f:
             for i in range(5):
                 msg = {
                     "sender": f"agent-{i}",
@@ -75,9 +69,9 @@ class TestWhoamiMessageDisplay:
                     "msg_type": "INFO",
                     "content": f"Message {i}",
                     "recipients": ["agent-1"],
-                    "msg_id": f"msg-{i}"
+                    "msg_id": f"msg-{i}",
                 }
-                f.write(json.dumps(msg) + '\n')
+                f.write(json.dumps(msg) + "\n")
 
         # Mock MessageLogger to use our test log file
         with patch("claudeswarm.messaging.get_messages_log_path", return_value=log_file):
@@ -98,7 +92,11 @@ class TestWhoamiMessageDisplay:
             assert "RECENT MESSAGES" in captured.out
 
             # Should show at most 3 recent messages (limit)
-            assert "Message 2" in captured.out or "Message 3" in captured.out or "Message 4" in captured.out
+            assert (
+                "Message 2" in captured.out
+                or "Message 3" in captured.out
+                or "Message 4" in captured.out
+            )
 
         # Cleanup
         if "TMUX_PANE" in os.environ:
@@ -128,17 +126,17 @@ class TestWhoamiMessageDisplay:
                     "status": "active",
                     "last_seen": datetime.now().isoformat(),
                     "session_name": "main",
-                    "tmux_pane_id": "%1"
+                    "tmux_pane_id": "%1",
                 }
-            ]
+            ],
         }
 
-        with open(registry_path, 'w') as f:
+        with open(registry_path, "w") as f:
             json.dump(agent_data, f)
 
         # Create message log with 10 messages
         log_file = tmp_path / "agent_messages.log"
-        with open(log_file, 'w') as f:
+        with open(log_file, "w") as f:
             for i in range(10):
                 msg = {
                     "sender": f"agent-sender-{i}",
@@ -146,9 +144,9 @@ class TestWhoamiMessageDisplay:
                     "msg_type": "INFO",
                     "content": f"Test message number {i}",
                     "recipients": ["agent-1"],
-                    "msg_id": f"msg-{i}"
+                    "msg_id": f"msg-{i}",
                 }
-                f.write(json.dumps(msg) + '\n')
+                f.write(json.dumps(msg) + "\n")
 
         with patch("claudeswarm.messaging.get_messages_log_path", return_value=log_file):
             args = argparse.Namespace()
@@ -175,7 +173,9 @@ class TestWhoamiMessageDisplay:
 
     @patch("claudeswarm.cli.get_active_agents_path")
     @patch("subprocess.run")
-    def test_whoami_graceful_handling_when_no_messages(self, mock_subprocess, mock_get_path, tmp_path, capsys):
+    def test_whoami_graceful_handling_when_no_messages(
+        self, mock_subprocess, mock_get_path, tmp_path, capsys
+    ):
         """Test graceful handling when there are no messages."""
         import argparse
 
@@ -197,12 +197,12 @@ class TestWhoamiMessageDisplay:
                     "status": "active",
                     "last_seen": datetime.now().isoformat(),
                     "session_name": "main",
-                    "tmux_pane_id": "%1"
+                    "tmux_pane_id": "%1",
                 }
-            ]
+            ],
         }
 
-        with open(registry_path, 'w') as f:
+        with open(registry_path, "w") as f:
             json.dump(agent_data, f)
 
         # Create empty message log
@@ -225,7 +225,9 @@ class TestWhoamiMessageDisplay:
 
     @patch("claudeswarm.cli.get_active_agents_path")
     @patch("subprocess.run")
-    def test_whoami_graceful_handling_when_logger_fails(self, mock_subprocess, mock_get_path, tmp_path, capsys):
+    def test_whoami_graceful_handling_when_logger_fails(
+        self, mock_subprocess, mock_get_path, tmp_path, capsys
+    ):
         """Test graceful handling when MessageLogger fails."""
         import argparse
 
@@ -247,12 +249,12 @@ class TestWhoamiMessageDisplay:
                     "status": "active",
                     "last_seen": datetime.now().isoformat(),
                     "session_name": "main",
-                    "tmux_pane_id": "%1"
+                    "tmux_pane_id": "%1",
                 }
-            ]
+            ],
         }
 
-        with open(registry_path, 'w') as f:
+        with open(registry_path, "w") as f:
             json.dump(agent_data, f)
 
         # Mock MessageLogger to raise an exception
@@ -304,27 +306,27 @@ class TestWhoamiMessageDisplay:
                     "status": "active",
                     "last_seen": datetime.now().isoformat(),
                     "session_name": "main",
-                    "tmux_pane_id": "%1"
+                    "tmux_pane_id": "%1",
                 }
-            ]
+            ],
         }
 
-        with open(registry_path, 'w') as f:
+        with open(registry_path, "w") as f:
             json.dump(agent_data, f)
 
         # Create message log with specific content
         log_file = tmp_path / "agent_messages.log"
         timestamp = "2025-11-18T14:30:00.123456"
-        with open(log_file, 'w') as f:
+        with open(log_file, "w") as f:
             msg = {
                 "sender": "agent-coordinator",
                 "timestamp": timestamp,
                 "msg_type": "QUESTION",
                 "content": "What is your status?",
                 "recipients": ["agent-1"],
-                "msg_id": "msg-123"
+                "msg_id": "msg-123",
             }
-            f.write(json.dumps(msg) + '\n')
+            f.write(json.dumps(msg) + "\n")
 
         with patch("claudeswarm.messaging.get_messages_log_path", return_value=log_file):
             args = argparse.Namespace()
@@ -345,7 +347,9 @@ class TestWhoamiMessageDisplay:
 
     @patch("claudeswarm.cli.get_active_agents_path")
     @patch("subprocess.run")
-    def test_whoami_shows_commands_available(self, mock_subprocess, mock_get_path, tmp_path, capsys):
+    def test_whoami_shows_commands_available(
+        self, mock_subprocess, mock_get_path, tmp_path, capsys
+    ):
         """Test that whoami shows available commands."""
         import argparse
 
@@ -367,12 +371,12 @@ class TestWhoamiMessageDisplay:
                     "status": "active",
                     "last_seen": datetime.now().isoformat(),
                     "session_name": "main",
-                    "tmux_pane_id": "%1"
+                    "tmux_pane_id": "%1",
                 }
-            ]
+            ],
         }
 
-        with open(registry_path, 'w') as f:
+        with open(registry_path, "w") as f:
             json.dump(agent_data, f)
 
         log_file = tmp_path / "agent_messages.log"
@@ -398,7 +402,9 @@ class TestWhoamiMessageDisplay:
 
     @patch("claudeswarm.cli.get_active_agents_path")
     @patch("subprocess.run")
-    def test_whoami_with_multiple_message_types(self, mock_subprocess, mock_get_path, tmp_path, capsys):
+    def test_whoami_with_multiple_message_types(
+        self, mock_subprocess, mock_get_path, tmp_path, capsys
+    ):
         """Test whoami displays different message types correctly."""
         import argparse
 
@@ -420,18 +426,18 @@ class TestWhoamiMessageDisplay:
                     "status": "active",
                     "last_seen": datetime.now().isoformat(),
                     "session_name": "main",
-                    "tmux_pane_id": "%1"
+                    "tmux_pane_id": "%1",
                 }
-            ]
+            ],
         }
 
-        with open(registry_path, 'w') as f:
+        with open(registry_path, "w") as f:
             json.dump(agent_data, f)
 
         # Create message log with different message types
         log_file = tmp_path / "agent_messages.log"
         message_types = ["INFO", "QUESTION", "BLOCKED"]
-        with open(log_file, 'w') as f:
+        with open(log_file, "w") as f:
             for msg_type in message_types:
                 msg = {
                     "sender": "agent-other",
@@ -439,9 +445,9 @@ class TestWhoamiMessageDisplay:
                     "msg_type": msg_type,
                     "content": f"{msg_type} message",
                     "recipients": ["agent-1"],
-                    "msg_id": f"msg-{msg_type}"
+                    "msg_id": f"msg-{msg_type}",
                 }
-                f.write(json.dumps(msg) + '\n')
+                f.write(json.dumps(msg) + "\n")
 
         with patch("claudeswarm.messaging.get_messages_log_path", return_value=log_file):
             args = argparse.Namespace()
@@ -476,7 +482,7 @@ class TestWhoamiMessageIntegration:
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content=f"Integration test message {i}",
-                recipients=["agent-target"]
+                recipients=["agent-target"],
             )
             logger.log_message(msg, {"agent-target": True})
 

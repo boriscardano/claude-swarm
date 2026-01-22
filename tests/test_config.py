@@ -6,26 +6,26 @@ validation, and management system.
 
 import tempfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
 from claudeswarm.config import (
+    MAX_CONFIG_FILE_SIZE_BYTES,
+    MAX_YAML_NESTING_DEPTH,
     ClaudeSwarmConfig,
     ConfigValidationError,
     DiscoveryConfig,
     LockingConfig,
     OnboardingConfig,
     RateLimitConfig,
-    get_config,
-    load_config,
-    reload_config,
+    _check_yaml_nesting_depth,
     _dict_to_config,
     _find_config_file,
     _merge_config_dict,
-    _check_yaml_nesting_depth,
-    MAX_CONFIG_FILE_SIZE_BYTES,
-    MAX_YAML_NESTING_DEPTH,
+    get_config,
+    load_config,
+    reload_config,
 )
 
 
@@ -98,9 +98,7 @@ class TestLockingConfig:
 
     def test_custom_values(self) -> None:
         """Test creating config with custom values."""
-        config = LockingConfig(
-            stale_timeout=600, auto_cleanup=True, default_reason="testing"
-        )
+        config = LockingConfig(stale_timeout=600, auto_cleanup=True, default_reason="testing")
         assert config.stale_timeout == 600
         assert config.auto_cleanup is True
         assert config.default_reason == "testing"
@@ -216,9 +214,7 @@ class TestOnboardingConfig:
     def test_custom_values(self) -> None:
         """Test creating config with custom values."""
         messages = ["Hello", "World"]
-        config = OnboardingConfig(
-            enabled=False, custom_messages=messages, auto_onboard=True
-        )
+        config = OnboardingConfig(enabled=False, custom_messages=messages, auto_onboard=True)
         assert config.enabled is False
         assert config.custom_messages == messages
         assert config.auto_onboard is True
@@ -457,7 +453,9 @@ class TestLoadConfig:
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
             tmp_path = Path(tmp.name)
         try:
-            with pytest.raises(ConfigValidationError, match="Unsupported configuration file format"):
+            with pytest.raises(
+                ConfigValidationError, match="Unsupported configuration file format"
+            ):
                 load_config(tmp_path)
         finally:
             tmp_path.unlink()
@@ -754,7 +752,7 @@ class TestYAMLFileSizeLimit:
             # Start with minimal valid YAML
             content = "rate_limiting:\n  messages_per_minute: 20\n"
             # Pad with comments to reach the limit
-            current_size = len(content.encode('utf-8'))
+            current_size = len(content.encode("utf-8"))
             padding_needed = MAX_CONFIG_FILE_SIZE_BYTES - current_size - 10  # Leave some margin
             if padding_needed > 0:
                 content += "# " + "x" * (padding_needed - 2) + "\n"

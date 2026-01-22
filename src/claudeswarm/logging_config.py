@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Optional
 
 __all__ = [
     "setup_logging",
@@ -32,9 +31,7 @@ __all__ = [
 
 
 def setup_logging(
-    level: str = "INFO",
-    format_string: Optional[str] = None,
-    log_file: Optional[str] = None
+    level: str = "INFO", format_string: str | None = None, log_file: str | None = None
 ) -> None:
     """Configure logging for claude-swarm.
 
@@ -61,14 +58,14 @@ def setup_logging(
     handlers = [logging.StreamHandler(sys.stderr)]
 
     if log_file:
-        handlers.append(logging.FileHandler(log_file, mode='a'))
+        handlers.append(logging.FileHandler(log_file, mode="a"))
 
     # Configure root logger
     logging.basicConfig(
         level=getattr(logging, level.upper()),
         format=format_string,
         handlers=handlers,
-        force=True  # Override any existing configuration
+        force=True,  # Override any existing configuration
     )
 
     # Set specific loggers for claudeswarm modules
@@ -105,7 +102,7 @@ def get_logger(name: str) -> logging.Logger:
     """
     # Strip 'claudeswarm.' prefix if already present to avoid duplication
     if name.startswith("claudeswarm."):
-        name = name[len("claudeswarm."):]
+        name = name[len("claudeswarm.") :]
 
     # Don't add prefix if it's already "claudeswarm"
     if name == "claudeswarm":

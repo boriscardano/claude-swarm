@@ -8,7 +8,6 @@ Run with: pytest tests/cloud/test_integration_sandbox_mcp.py -v
 Note: Most tests use mocks to avoid requiring E2B API keys during CI
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -100,10 +99,10 @@ class TestCloudSandboxMCPBridgeIntegration:
         sandbox = CloudSandbox(num_agents=4)
 
         # Mock E2B sandbox creation
-        with patch('claudeswarm.cloud.e2b_launcher.E2BSandbox') as mock_e2b:
+        with patch("claudeswarm.cloud.e2b_launcher.E2BSandbox") as mock_e2b:
             mock_e2b.return_value = mock_e2b_sandbox
 
-            with patch.dict('os.environ', {'E2B_API_KEY': 'test_key'}):
+            with patch.dict("os.environ", {"E2B_API_KEY": "test_key"}):
                 # Create sandbox
                 await sandbox.create()
 
@@ -111,7 +110,7 @@ class TestCloudSandboxMCPBridgeIntegration:
                 assert sandbox.mcp_bridge is None
 
                 # Mock MCP attachment
-                with patch.object(MCPBridge, 'attach_mcp') as mock_attach:
+                with patch.object(MCPBridge, "attach_mcp") as mock_attach:
                     mock_attach.return_value = MCPContainerInfo(
                         container_id="test-container",
                         mcp_type=MCPType.GITHUB,
@@ -165,15 +164,15 @@ class TestCloudSandboxMCPBridgeIntegration:
         """Test that MCPBridge is initialized with correct sandbox_id."""
         sandbox = CloudSandbox(num_agents=4)
 
-        with patch('claudeswarm.cloud.e2b_launcher.E2BSandbox') as mock_e2b:
+        with patch("claudeswarm.cloud.e2b_launcher.E2BSandbox") as mock_e2b:
             mock_e2b.return_value = mock_e2b_sandbox
 
-            with patch.dict('os.environ', {'E2B_API_KEY': 'test_key'}):
+            with patch.dict("os.environ", {"E2B_API_KEY": "test_key"}):
                 await sandbox.create()
 
                 # Mock MCP attachment
-                with patch.object(MCPBridge, '__init__', return_value=None) as mock_init:
-                    with patch.object(MCPBridge, 'attach_mcp') as mock_attach:
+                with patch.object(MCPBridge, "__init__", return_value=None) as mock_init:
+                    with patch.object(MCPBridge, "attach_mcp") as mock_attach:
                         mock_attach.return_value = MCPContainerInfo(
                             container_id="test",
                             mcp_type=MCPType.GITHUB,
@@ -206,14 +205,14 @@ class TestErrorPropagation:
         """Test that MCPError from bridge propagates through sandbox."""
         sandbox = CloudSandbox(num_agents=4)
 
-        with patch('claudeswarm.cloud.e2b_launcher.E2BSandbox') as mock_e2b:
+        with patch("claudeswarm.cloud.e2b_launcher.E2BSandbox") as mock_e2b:
             mock_e2b.return_value = mock_e2b_sandbox
 
-            with patch.dict('os.environ', {'E2B_API_KEY': 'test_key'}):
+            with patch.dict("os.environ", {"E2B_API_KEY": "test_key"}):
                 await sandbox.create()
 
                 # Mock MCP attachment to raise error
-                with patch.object(MCPBridge, 'attach_mcp') as mock_attach:
+                with patch.object(MCPBridge, "attach_mcp") as mock_attach:
                     mock_attach.side_effect = MCPError(
                         message="Container failed to start",
                         mcp_name="github",
@@ -238,10 +237,10 @@ class TestErrorPropagation:
         """Test that validation errors are raised for invalid MCP configs."""
         sandbox = CloudSandbox(num_agents=4)
 
-        with patch('claudeswarm.cloud.e2b_launcher.E2BSandbox') as mock_e2b:
+        with patch("claudeswarm.cloud.e2b_launcher.E2BSandbox") as mock_e2b:
             mock_e2b.return_value = mock_e2b_sandbox
 
-            with patch.dict('os.environ', {'E2B_API_KEY': 'test_key'}):
+            with patch.dict("os.environ", {"E2B_API_KEY": "test_key"}):
                 await sandbox.create()
 
                 # Invalid config - missing required fields
@@ -257,15 +256,15 @@ class TestCleanupCoordination:
         """Test that sandbox cleanup also cleans up MCPBridge."""
         sandbox = CloudSandbox(num_agents=4)
 
-        with patch('claudeswarm.cloud.e2b_launcher.E2BSandbox') as mock_e2b:
+        with patch("claudeswarm.cloud.e2b_launcher.E2BSandbox") as mock_e2b:
             mock_e2b.return_value = mock_e2b_sandbox
 
-            with patch.dict('os.environ', {'E2B_API_KEY': 'test_key'}):
+            with patch.dict("os.environ", {"E2B_API_KEY": "test_key"}):
                 await sandbox.create()
 
                 # Mock MCP attachment
-                with patch.object(MCPBridge, 'attach_mcp') as mock_attach:
-                    with patch.object(MCPBridge, 'cleanup') as mock_cleanup:
+                with patch.object(MCPBridge, "attach_mcp") as mock_attach:
+                    with patch.object(MCPBridge, "cleanup") as mock_cleanup:
                         mock_attach.return_value = MCPContainerInfo(
                             container_id="test",
                             mcp_type=MCPType.GITHUB,
@@ -295,10 +294,10 @@ class TestCleanupCoordination:
         """Test that context manager properly cleans up both components."""
         sandbox = CloudSandbox(num_agents=4)
 
-        with patch('claudeswarm.cloud.e2b_launcher.E2BSandbox') as mock_e2b:
+        with patch("claudeswarm.cloud.e2b_launcher.E2BSandbox") as mock_e2b:
             mock_e2b.return_value = mock_e2b_sandbox
 
-            with patch.dict('os.environ', {'E2B_API_KEY': 'test_key'}):
+            with patch.dict("os.environ", {"E2B_API_KEY": "test_key"}):
                 # Use context manager
                 async with sandbox:
                     await sandbox.create()
@@ -328,14 +327,14 @@ class TestSecurityIntegration:
         """Test that API keys are not exposed in error messages."""
         sandbox = CloudSandbox(num_agents=4)
 
-        with patch('claudeswarm.cloud.e2b_launcher.E2BSandbox') as mock_e2b:
+        with patch("claudeswarm.cloud.e2b_launcher.E2BSandbox") as mock_e2b:
             mock_e2b.return_value = mock_e2b_sandbox
 
-            with patch.dict('os.environ', {'E2B_API_KEY': 'test_key'}):
+            with patch.dict("os.environ", {"E2B_API_KEY": "test_key"}):
                 await sandbox.create()
 
                 # Mock MCP attachment to raise error
-                with patch.object(MCPBridge, 'attach_mcp') as mock_attach:
+                with patch.object(MCPBridge, "attach_mcp") as mock_attach:
                     error_msg = "Failed to attach MCP"
                     mock_attach.side_effect = MCPError(
                         message=error_msg,
@@ -371,17 +370,17 @@ class TestEndToEndFlow:
         """
         sandbox = CloudSandbox(num_agents=4)
 
-        with patch('claudeswarm.cloud.e2b_launcher.E2BSandbox') as mock_e2b:
+        with patch("claudeswarm.cloud.e2b_launcher.E2BSandbox") as mock_e2b:
             mock_e2b.return_value = mock_e2b_sandbox
 
-            with patch.dict('os.environ', {'E2B_API_KEY': 'test_key'}):
+            with patch.dict("os.environ", {"E2B_API_KEY": "test_key"}):
                 # Step 1: Create sandbox
                 sandbox_id = await sandbox.create()
                 assert sandbox_id == mock_e2b_sandbox.id
                 assert sandbox.sandbox is not None
 
                 # Step 2: Attach MCP
-                with patch.object(MCPBridge, 'attach_mcp') as mock_attach:
+                with patch.object(MCPBridge, "attach_mcp") as mock_attach:
                     mock_attach.return_value = MCPContainerInfo(
                         container_id="test-container",
                         mcp_type=MCPType.GITHUB,
@@ -398,10 +397,7 @@ class TestEndToEndFlow:
                         port=3000,
                     )
 
-                    mcp_info = await sandbox.attach_mcp(
-                        mcp_type=MCPType.GITHUB,
-                        config=config
-                    )
+                    mcp_info = await sandbox.attach_mcp(mcp_type=MCPType.GITHUB, config=config)
 
                     assert mcp_info.status == MCPStatus.CONNECTED
                     assert sandbox.mcp_bridge is not None

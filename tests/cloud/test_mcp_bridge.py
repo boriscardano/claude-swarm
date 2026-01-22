@@ -5,7 +5,6 @@ These tests use mocking to avoid requiring real Docker containers
 and MCP servers during CI/CD.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,7 +12,6 @@ import pytest
 from claudeswarm.cloud.mcp_bridge import MCPBridge
 from claudeswarm.cloud.types import (
     MCPConfig,
-    MCPContainerInfo,
     MCPError,
     MCPResponse,
     MCPStatus,
@@ -79,9 +77,7 @@ class TestAttachMCP:
         # For now, test with placeholder logic
         # TODO: Update when real Docker integration is implemented
 
-        container_info = await mcp_bridge.attach_mcp(
-            mcp_type=MCPType.GITHUB, config=github_config
-        )
+        container_info = await mcp_bridge.attach_mcp(mcp_type=MCPType.GITHUB, config=github_config)
 
         assert container_info.mcp_type == MCPType.GITHUB
         assert container_info.endpoint_url is not None
@@ -94,17 +90,13 @@ class TestAttachMCP:
     ) -> None:
         """Test attaching an already-attached MCP returns existing instance."""
         # Attach first time
-        container_info1 = await mcp_bridge.attach_mcp(
-            mcp_type=MCPType.GITHUB, config=github_config
-        )
+        container_info1 = await mcp_bridge.attach_mcp(mcp_type=MCPType.GITHUB, config=github_config)
 
         # Mark as healthy
         container_info1.status = MCPStatus.CONNECTED
 
         # Attach second time
-        container_info2 = await mcp_bridge.attach_mcp(
-            mcp_type=MCPType.GITHUB, config=github_config
-        )
+        container_info2 = await mcp_bridge.attach_mcp(mcp_type=MCPType.GITHUB, config=github_config)
 
         # Should return same instance
         assert container_info1 == container_info2
@@ -117,9 +109,7 @@ class TestCallMCP:
     async def test_call_mcp_not_attached(self, mcp_bridge: MCPBridge) -> None:
         """Test calling MCP that is not attached raises error."""
         with pytest.raises(MCPError) as exc_info:
-            await mcp_bridge.call_mcp(
-                mcp_name="github", method="create_repo", params={}
-            )
+            await mcp_bridge.call_mcp(mcp_name="github", method="create_repo", params={})
 
         assert "not attached" in str(exc_info.value)
         assert exc_info.value.mcp_name == "github"
@@ -131,36 +121,26 @@ class TestCallMCP:
     ) -> None:
         """Test calling unhealthy MCP raises error."""
         # Attach MCP but leave it in INITIALIZING state
-        container_info = await mcp_bridge.attach_mcp(
-            mcp_type=MCPType.GITHUB, config=github_config
-        )
+        container_info = await mcp_bridge.attach_mcp(mcp_type=MCPType.GITHUB, config=github_config)
         container_info.status = MCPStatus.INITIALIZING
 
         with pytest.raises(MCPError) as exc_info:
-            await mcp_bridge.call_mcp(
-                mcp_name="github", method="create_repo", params={}
-            )
+            await mcp_bridge.call_mcp(mcp_name="github", method="create_repo", params={})
 
         assert "not healthy" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_call_mcp_success(
-        self, mcp_bridge: MCPBridge, github_config: MCPConfig
-    ) -> None:
+    async def test_call_mcp_success(self, mcp_bridge: MCPBridge, github_config: MCPConfig) -> None:
         """Test successful MCP call."""
         # Attach and mark as healthy
-        container_info = await mcp_bridge.attach_mcp(
-            mcp_type=MCPType.GITHUB, config=github_config
-        )
+        container_info = await mcp_bridge.attach_mcp(mcp_type=MCPType.GITHUB, config=github_config)
         container_info.status = MCPStatus.CONNECTED
 
         # Mock HTTP client
         mock_response = MagicMock()
         mock_response.json.return_value = {"repo_id": 123, "name": "test-repo"}
 
-        with patch.object(
-            mcp_bridge, "_http_client", AsyncMock()
-        ) as mock_client:
+        with patch.object(mcp_bridge, "_http_client", AsyncMock()) as mock_client:
             mock_client.post = AsyncMock(return_value=mock_response)
 
             response = await mcp_bridge.call_mcp(
@@ -181,9 +161,7 @@ class TestCallMCP:
     ) -> None:
         """Test MCP call retries on failure."""
         # Attach and mark as healthy
-        container_info = await mcp_bridge.attach_mcp(
-            mcp_type=MCPType.GITHUB, config=github_config
-        )
+        container_info = await mcp_bridge.attach_mcp(mcp_type=MCPType.GITHUB, config=github_config)
         container_info.status = MCPStatus.CONNECTED
 
         # Mock HTTP client to fail twice, then succeed
@@ -199,14 +177,10 @@ class TestCallMCP:
             mock_response.json.return_value = {"success": True}
             return mock_response
 
-        with patch.object(
-            mcp_bridge, "_http_client", AsyncMock()
-        ) as mock_client:
+        with patch.object(mcp_bridge, "_http_client", AsyncMock()) as mock_client:
             mock_client.post = mock_post
 
-            response = await mcp_bridge.call_mcp(
-                mcp_name="github", method="test", params={}
-            )
+            response = await mcp_bridge.call_mcp(mcp_name="github", method="test", params={})
 
         assert call_count == 3  # Failed twice, succeeded on third try
         assert response.success is True
@@ -224,33 +198,23 @@ class TestRateLimiting:
         github_config.rate_limit = 2
 
         # Attach and mark as healthy
-        container_info = await mcp_bridge.attach_mcp(
-            mcp_type=MCPType.GITHUB, config=github_config
-        )
+        container_info = await mcp_bridge.attach_mcp(mcp_type=MCPType.GITHUB, config=github_config)
         container_info.status = MCPStatus.CONNECTED
 
         # Mock HTTP client
         mock_response = MagicMock()
         mock_response.json.return_value = {"success": True}
 
-        with patch.object(
-            mcp_bridge, "_http_client", AsyncMock()
-        ) as mock_client:
+        with patch.object(mcp_bridge, "_http_client", AsyncMock()) as mock_client:
             mock_client.post = AsyncMock(return_value=mock_response)
 
             # First two calls should succeed
-            await mcp_bridge.call_mcp(
-                mcp_name="github", method="test", params={}
-            )
-            await mcp_bridge.call_mcp(
-                mcp_name="github", method="test", params={}
-            )
+            await mcp_bridge.call_mcp(mcp_name="github", method="test", params={})
+            await mcp_bridge.call_mcp(mcp_name="github", method="test", params={})
 
             # Third call should hit rate limit
             with pytest.raises(MCPError) as exc_info:
-                await mcp_bridge.call_mcp(
-                    mcp_name="github", method="test", params={}
-                )
+                await mcp_bridge.call_mcp(mcp_name="github", method="test", params={})
 
             assert "Rate limit exceeded" in str(exc_info.value)
 
@@ -261,9 +225,7 @@ class TestRateLimiting:
         """Test that rate limit window resets after time."""
         github_config.rate_limit = 1
 
-        container_info = await mcp_bridge.attach_mcp(
-            mcp_type=MCPType.GITHUB, config=github_config
-        )
+        container_info = await mcp_bridge.attach_mcp(mcp_type=MCPType.GITHUB, config=github_config)
         container_info.status = MCPStatus.CONNECTED
 
         # Make first call
@@ -279,9 +241,7 @@ class TestRateLimiting:
 class TestMCPStatus:
     """Tests for MCP status tracking."""
 
-    def test_get_mcp_status(
-        self, mcp_bridge: MCPBridge, github_config: MCPConfig
-    ) -> None:
+    def test_get_mcp_status(self, mcp_bridge: MCPBridge, github_config: MCPConfig) -> None:
         """Test getting MCP status."""
         # Before attachment
         status = mcp_bridge.get_mcp_status("github")

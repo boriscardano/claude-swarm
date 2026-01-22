@@ -14,28 +14,28 @@ Author: agent-1
 Created: 2025-11-19 (E2B Hackathon Prep)
 """
 
-from typing import List, Dict, Optional
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
-import asyncio
 from threading import Lock
 
-from claudeswarm.messaging import MessagingSystem, MessageType
+from claudeswarm.messaging import MessageType, MessagingSystem
 
 
 @dataclass
 class Task:
     """Represents a single development task"""
+
     id: str
     title: str
     description: str
-    files: List[str]
-    dependencies: List[str] = field(default_factory=list)  # Task IDs that must complete first
-    agent_id: Optional[str] = None
+    files: list[str]
+    dependencies: list[str] = field(default_factory=list)  # Task IDs that must complete first
+    agent_id: str | None = None
     status: str = "available"  # available, claimed, in_progress, completed, blocked
     created_at: datetime = field(default_factory=datetime.now)
-    claimed_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    claimed_at: datetime | None = None
+    completed_at: datetime | None = None
     estimated_minutes: int = 30
 
 
@@ -66,15 +66,13 @@ class WorkDistributor:
             raise ValueError("num_agents must be at least 1")
 
         self.num_agents = num_agents
-        self.tasks: Dict[str, Task] = {}
+        self.tasks: dict[str, Task] = {}
         self.messaging = MessagingSystem()
         self._task_lock = Lock()  # Thread safety for task operations
 
     async def decompose_feature(
-        self,
-        feature_description: str,
-        research_results: Optional[Dict] = None
-    ) -> List[Task]:
+        self, feature_description: str, research_results: dict | None = None
+    ) -> list[Task]:
         """
         Break down a feature into specific, actionable tasks.
 
@@ -110,10 +108,8 @@ class WorkDistributor:
         return tasks
 
     def _decompose_auth_feature(
-        self,
-        feature_description: str,
-        research_results: Optional[Dict]
-    ) -> List[Task]:
+        self, feature_description: str, research_results: dict | None
+    ) -> list[Task]:
         """Decompose authentication-related features"""
 
         # Extract recommendations from research if available
@@ -130,7 +126,7 @@ class WorkDistributor:
                 title="Implement user model with password hashing",
                 description=f"Create User model with {'argon2' if use_argon2 else 'bcrypt'} hashing",
                 files=["models/user.py"],
-                estimated_minutes=45
+                estimated_minutes=45,
             ),
             Task(
                 id="auth-task-2",
@@ -138,7 +134,7 @@ class WorkDistributor:
                 description=f"Create JWT service with {'RS256' if use_rs256 else 'HS256'} signing",
                 files=["auth/jwt.py"],
                 dependencies=["auth-task-1"],
-                estimated_minutes=60
+                estimated_minutes=60,
             ),
             Task(
                 id="auth-task-3",
@@ -146,7 +142,7 @@ class WorkDistributor:
                 description="Create login, register, and token refresh endpoints",
                 files=["routers/auth.py"],
                 dependencies=["auth-task-2"],
-                estimated_minutes=50
+                estimated_minutes=50,
             ),
             Task(
                 id="auth-task-4",
@@ -154,7 +150,7 @@ class WorkDistributor:
                 description="Create JWT verification middleware for protected routes",
                 files=["middleware/auth.py"],
                 dependencies=["auth-task-2"],
-                estimated_minutes=40
+                estimated_minutes=40,
             ),
             Task(
                 id="auth-task-5",
@@ -162,17 +158,15 @@ class WorkDistributor:
                 description="Integration tests for full auth flow including edge cases",
                 files=["tests/test_auth.py"],
                 dependencies=["auth-task-3", "auth-task-4"],
-                estimated_minutes=60
-            )
+                estimated_minutes=60,
+            ),
         ]
 
         return tasks
 
     def _decompose_api_feature(
-        self,
-        feature_description: str,
-        research_results: Optional[Dict]
-    ) -> List[Task]:
+        self, feature_description: str, research_results: dict | None
+    ) -> list[Task]:
         """Decompose API endpoint features"""
 
         return [
@@ -181,7 +175,7 @@ class WorkDistributor:
                 title="Design API schema",
                 description="Define request/response models and validation",
                 files=["schemas/api.py"],
-                estimated_minutes=30
+                estimated_minutes=30,
             ),
             Task(
                 id="api-task-2",
@@ -189,7 +183,7 @@ class WorkDistributor:
                 description="Create FastAPI route handlers",
                 files=["routers/api.py"],
                 dependencies=["api-task-1"],
-                estimated_minutes=60
+                estimated_minutes=60,
             ),
             Task(
                 id="api-task-3",
@@ -197,7 +191,7 @@ class WorkDistributor:
                 description="Write OpenAPI/Swagger docs",
                 files=["docs/api.md"],
                 dependencies=["api-task-2"],
-                estimated_minutes=20
+                estimated_minutes=20,
             ),
             Task(
                 id="api-task-4",
@@ -205,15 +199,13 @@ class WorkDistributor:
                 description="Test all endpoints with various inputs",
                 files=["tests/test_api.py"],
                 dependencies=["api-task-2"],
-                estimated_minutes=45
-            )
+                estimated_minutes=45,
+            ),
         ]
 
     def _decompose_database_feature(
-        self,
-        feature_description: str,
-        research_results: Optional[Dict]
-    ) -> List[Task]:
+        self, feature_description: str, research_results: dict | None
+    ) -> list[Task]:
         """Decompose database/model features"""
 
         return [
@@ -222,7 +214,7 @@ class WorkDistributor:
                 title="Design database schema",
                 description="Create SQLAlchemy models",
                 files=["models/database.py"],
-                estimated_minutes=40
+                estimated_minutes=40,
             ),
             Task(
                 id="db-task-2",
@@ -230,7 +222,7 @@ class WorkDistributor:
                 description="Generate Alembic migrations",
                 files=["alembic/versions/"],
                 dependencies=["db-task-1"],
-                estimated_minutes=20
+                estimated_minutes=20,
             ),
             Task(
                 id="db-task-3",
@@ -238,7 +230,7 @@ class WorkDistributor:
                 description="Create database access layer",
                 files=["crud/database.py"],
                 dependencies=["db-task-1"],
-                estimated_minutes=50
+                estimated_minutes=50,
             ),
             Task(
                 id="db-task-4",
@@ -246,15 +238,13 @@ class WorkDistributor:
                 description="Test models and CRUD operations",
                 files=["tests/test_database.py"],
                 dependencies=["db-task-3"],
-                estimated_minutes=40
-            )
+                estimated_minutes=40,
+            ),
         ]
 
     def _decompose_ui_feature(
-        self,
-        feature_description: str,
-        research_results: Optional[Dict]
-    ) -> List[Task]:
+        self, feature_description: str, research_results: dict | None
+    ) -> list[Task]:
         """Decompose UI/frontend features"""
 
         return [
@@ -263,7 +253,7 @@ class WorkDistributor:
                 title="Design component structure",
                 description="Create React/Vue component hierarchy",
                 files=["components/"],
-                estimated_minutes=30
+                estimated_minutes=30,
             ),
             Task(
                 id="ui-task-2",
@@ -271,7 +261,7 @@ class WorkDistributor:
                 description="Build reusable components",
                 files=["components/*.tsx"],
                 dependencies=["ui-task-1"],
-                estimated_minutes=90
+                estimated_minutes=90,
             ),
             Task(
                 id="ui-task-3",
@@ -279,7 +269,7 @@ class WorkDistributor:
                 description="CSS/Tailwind styling",
                 files=["styles/"],
                 dependencies=["ui-task-2"],
-                estimated_minutes=45
+                estimated_minutes=45,
             ),
             Task(
                 id="ui-task-4",
@@ -287,15 +277,13 @@ class WorkDistributor:
                 description="Jest/React Testing Library tests",
                 files=["tests/components/"],
                 dependencies=["ui-task-2"],
-                estimated_minutes=40
-            )
+                estimated_minutes=40,
+            ),
         ]
 
     def _decompose_generic_feature(
-        self,
-        feature_description: str,
-        research_results: Optional[Dict]
-    ) -> List[Task]:
+        self, feature_description: str, research_results: dict | None
+    ) -> list[Task]:
         """Fallback for features that don't match patterns"""
 
         return [
@@ -304,7 +292,7 @@ class WorkDistributor:
                 title="Research and design",
                 description=f"Design solution for: {feature_description}",
                 files=["DESIGN.md"],
-                estimated_minutes=30
+                estimated_minutes=30,
             ),
             Task(
                 id="generic-task-2",
@@ -312,7 +300,7 @@ class WorkDistributor:
                 description="Implement main functionality",
                 files=["src/main.py"],
                 dependencies=["generic-task-1"],
-                estimated_minutes=90
+                estimated_minutes=90,
             ),
             Task(
                 id="generic-task-3",
@@ -320,7 +308,7 @@ class WorkDistributor:
                 description="Comprehensive test coverage",
                 files=["tests/test_main.py"],
                 dependencies=["generic-task-2"],
-                estimated_minutes=45
+                estimated_minutes=45,
             ),
             Task(
                 id="generic-task-4",
@@ -328,11 +316,11 @@ class WorkDistributor:
                 description="Write user documentation",
                 files=["docs/feature.md"],
                 dependencies=["generic-task-2"],
-                estimated_minutes=20
-            )
+                estimated_minutes=20,
+            ),
         ]
 
-    async def broadcast_tasks(self, tasks: List[Task]):
+    async def broadcast_tasks(self, tasks: list[Task]):
         """
         Broadcast available tasks to all agents.
 
@@ -348,11 +336,13 @@ class WorkDistributor:
             return
 
         # Format task list
-        task_list = "\n".join([
-            f"- {t.id}: {t.title}" +
-            (f" (depends on: {', '.join(t.dependencies)})" if t.dependencies else "")
-            for t in available_tasks
-        ])
+        task_list = "\n".join(
+            [
+                f"- {t.id}: {t.title}"
+                + (f" (depends on: {', '.join(t.dependencies)})" if t.dependencies else "")
+                for t in available_tasks
+            ]
+        )
 
         message_content = (
             f"Available tasks:\n{task_list}\n\n"
@@ -367,7 +357,7 @@ class WorkDistributor:
                 self.messaging.broadcast_message,
                 "work-distributor",
                 MessageType.INFO,
-                message_content
+                message_content,
             )
             print(f"📋 Broadcast {len(available_tasks)} available tasks")
         except Exception as e:
@@ -421,7 +411,7 @@ class WorkDistributor:
             self.messaging.broadcast_message(
                 sender_id="work-distributor",
                 msg_type=MessageType.INFO,
-                content=f"{agent_id} claimed: {task.title}"
+                content=f"{agent_id} claimed: {task.title}",
             )
         except Exception as e:
             print(f"⚠️  Failed to broadcast claim: {e}")
@@ -455,7 +445,7 @@ class WorkDistributor:
 
         return True
 
-    def _check_unblocked_tasks(self, completed_task_id: str) -> List[str]:
+    def _check_unblocked_tasks(self, completed_task_id: str) -> list[str]:
         """Check which tasks are now available after a completion"""
 
         unblocked = []
@@ -479,7 +469,7 @@ class WorkDistributor:
 
         return unblocked
 
-    def get_progress_summary(self) -> Dict:
+    def get_progress_summary(self) -> dict:
         """
         Get overall progress summary.
 
@@ -499,10 +489,10 @@ class WorkDistributor:
             "in_progress": in_progress,
             "available": available,
             "blocked": blocked,
-            "completion_pct": (completed / total * 100) if total > 0 else 0
+            "completion_pct": (completed / total * 100) if total > 0 else 0,
         }
 
-    def get_agent_workload(self) -> Dict[str, List[str]]:
+    def get_agent_workload(self) -> dict[str, list[str]]:
         """
         Get which tasks each agent is working on.
 

@@ -18,16 +18,16 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch, call
+from unittest.mock import Mock, patch
 
 import pytest
 
 from claudeswarm.cli import (
     _detect_current_agent,
     cmd_acquire_file_lock,
+    cmd_broadcast_message,
     cmd_release_file_lock,
     cmd_send_message,
-    cmd_broadcast_message,
 )
 
 
@@ -48,7 +48,7 @@ class TestDetectCurrentAgent:
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
                     "session_name": "test-session",
-                    "tmux_pane_id": "%2"
+                    "tmux_pane_id": "%2",
                 },
                 {
                     "id": "agent-2",
@@ -57,9 +57,9 @@ class TestDetectCurrentAgent:
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
                     "session_name": "test-session",
-                    "tmux_pane_id": "%3"
-                }
-            ]
+                    "tmux_pane_id": "%3",
+                },
+            ],
         }
 
         # Create registry file
@@ -67,14 +67,14 @@ class TestDetectCurrentAgent:
         registry_path.write_text(json.dumps(registry_data))
 
         # Mock environment and path
-        with patch.dict(os.environ, {'TMUX_PANE': '%2'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
+        with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
                 agent_id, agent_dict = _detect_current_agent()
 
         assert agent_id == "agent-1"
         assert agent_dict is not None
-        assert agent_dict['id'] == "agent-1"
-        assert agent_dict['tmux_pane_id'] == "%2"
+        assert agent_dict["id"] == "agent-1"
+        assert agent_dict["tmux_pane_id"] == "%2"
 
     def test_detect_missing_tmux_pane_env(self):
         """Test detection fails when TMUX_PANE is not set."""
@@ -88,8 +88,8 @@ class TestDetectCurrentAgent:
         """Test detection fails when registry file doesn't exist."""
         nonexistent_path = tmp_path / "nonexistent" / "ACTIVE_AGENTS.json"
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%2'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=nonexistent_path):
+        with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=nonexistent_path):
                 agent_id, agent_dict = _detect_current_agent()
 
         assert agent_id is None
@@ -100,8 +100,8 @@ class TestDetectCurrentAgent:
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
         registry_path.write_text("{ invalid json }")
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%2'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
+        with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
                 agent_id, agent_dict = _detect_current_agent()
 
         assert agent_id is None
@@ -120,9 +120,9 @@ class TestDetectCurrentAgent:
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
                     "session_name": "test-session",
-                    "tmux_pane_id": "%99"  # Different pane ID
+                    "tmux_pane_id": "%99",  # Different pane ID
                 }
-            ]
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
@@ -133,13 +133,13 @@ class TestDetectCurrentAgent:
         mock_result.returncode = 0
         mock_result.stdout = "test:0.0\n"
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%2'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
-                with patch('subprocess.run', return_value=mock_result):
+        with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
+                with patch("subprocess.run", return_value=mock_result):
                     agent_id, agent_dict = _detect_current_agent()
 
         assert agent_id == "agent-1"
-        assert agent_dict['pane_index'] == "test:0.0"
+        assert agent_dict["pane_index"] == "test:0.0"
 
     def test_detect_tmux_subprocess_failure(self, tmp_path):
         """Test handling of tmux subprocess failures."""
@@ -153,18 +153,18 @@ class TestDetectCurrentAgent:
                     "pid": 12345,
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
-                    "session_name": "test-session"
+                    "session_name": "test-session",
                 }
-            ]
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
         registry_path.write_text(json.dumps(registry_data))
 
         # Mock subprocess to fail
-        with patch.dict(os.environ, {'TMUX_PANE': '%2'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
-                with patch('subprocess.run', side_effect=subprocess.TimeoutExpired(['tmux'], 2.0)):
+        with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
+                with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["tmux"], 2.0)):
                     agent_id, agent_dict = _detect_current_agent()
 
         # Should return None when tmux fails and no tmux_pane_id match
@@ -176,15 +176,15 @@ class TestDetectCurrentAgent:
         registry_data = {
             "session_name": "test-session",
             "updated_at": "2025-11-18T10:00:00Z",
-            "agents": []
+            "agents": [],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
         registry_path.write_text(json.dumps(registry_data))
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%2'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
-                with patch('subprocess.run', side_effect=FileNotFoundError()):
+        with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
+                with patch("subprocess.run", side_effect=FileNotFoundError()):
                     agent_id, agent_dict = _detect_current_agent()
 
         assert agent_id is None
@@ -202,10 +202,10 @@ class TestDetectCurrentAgent:
                     "pid": 12345,
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
-                    "session_name": "test-session"
+                    "session_name": "test-session",
                     # No tmux_pane_id field
                 }
-            ]
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
@@ -216,9 +216,9 @@ class TestDetectCurrentAgent:
         mock_result.returncode = 0
         mock_result.stdout = "test:0.0\n"
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%2'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
-                with patch('subprocess.run', return_value=mock_result):
+        with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
+                with patch("subprocess.run", return_value=mock_result):
                     agent_id, agent_dict = _detect_current_agent()
 
         assert agent_id == "agent-1"
@@ -236,7 +236,7 @@ class TestDetectCurrentAgent:
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
                     "session_name": "test-session",
-                    "tmux_pane_id": "%2"
+                    "tmux_pane_id": "%2",
                 },
                 {
                     "id": "agent-2",
@@ -245,7 +245,7 @@ class TestDetectCurrentAgent:
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
                     "session_name": "test-session",
-                    "tmux_pane_id": "%3"
+                    "tmux_pane_id": "%3",
                 },
                 {
                     "id": "agent-3",
@@ -254,34 +254,34 @@ class TestDetectCurrentAgent:
                     "status": "active",
                     "last_seen": "2025-11-18T10:00:00Z",
                     "session_name": "test-session",
-                    "tmux_pane_id": "%4"
-                }
-            ]
+                    "tmux_pane_id": "%4",
+                },
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
         registry_path.write_text(json.dumps(registry_data))
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%3'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
+        with patch.dict(os.environ, {"TMUX_PANE": "%3"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
                 agent_id, agent_dict = _detect_current_agent()
 
         assert agent_id == "agent-2"
-        assert agent_dict['tmux_pane_id'] == "%3"
+        assert agent_dict["tmux_pane_id"] == "%3"
 
     def test_detect_empty_agents_list(self, tmp_path):
         """Test detection with empty agents list."""
         registry_data = {
             "session_name": "test-session",
             "updated_at": "2025-11-18T10:00:00Z",
-            "agents": []
+            "agents": [],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
         registry_path.write_text(json.dumps(registry_data))
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%2'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
+        with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
                 agent_id, agent_dict = _detect_current_agent()
 
         assert agent_id is None
@@ -296,15 +296,17 @@ class TestAutoDetectInLockCommands:
         registry_data = {
             "session_name": "test",
             "updated_at": "2025-11-18T10:00:00Z",
-            "agents": [{
-                "id": "agent-1",
-                "pane_index": "test:0.0",
-                "pid": 12345,
-                "status": "active",
-                "last_seen": "2025-11-18T10:00:00Z",
-                "session_name": "test",
-                "tmux_pane_id": "%2"
-            }]
+            "agents": [
+                {
+                    "id": "agent-1",
+                    "pane_index": "test:0.0",
+                    "pid": 12345,
+                    "status": "active",
+                    "last_seen": "2025-11-18T10:00:00Z",
+                    "session_name": "test",
+                    "tmux_pane_id": "%2",
+                }
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
@@ -314,12 +316,12 @@ class TestAutoDetectInLockCommands:
             project_root=tmp_path,
             filepath="test.txt",
             agent_id=None,  # No agent ID provided
-            reason="testing"
+            reason="testing",
         )
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%2'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
-                with patch('claudeswarm.cli.LockManager') as mock_manager_class:
+        with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
+                with patch("claudeswarm.cli.LockManager") as mock_manager_class:
                     mock_manager = Mock()
                     mock_manager.acquire_lock.return_value = (True, None)
                     mock_manager_class.return_value = mock_manager
@@ -331,7 +333,7 @@ class TestAutoDetectInLockCommands:
                     # Verify the call used auto-detected agent ID
                     mock_manager.acquire_lock.assert_called_once()
                     call_kwargs = mock_manager.acquire_lock.call_args[1]
-                    assert call_kwargs['agent_id'] == "agent-1"
+                    assert call_kwargs["agent_id"] == "agent-1"
 
     def test_acquire_lock_auto_detect_failure(self, capsys):
         """Test acquire-file-lock fails when auto-detection fails."""
@@ -339,7 +341,7 @@ class TestAutoDetectInLockCommands:
             project_root=Path("/test"),
             filepath="test.txt",
             agent_id=None,  # No agent ID provided
-            reason="testing"
+            reason="testing",
         )
 
         with patch.dict(os.environ, {}, clear=True):  # No TMUX_PANE
@@ -355,29 +357,29 @@ class TestAutoDetectInLockCommands:
         registry_data = {
             "session_name": "test",
             "updated_at": "2025-11-18T10:00:00Z",
-            "agents": [{
-                "id": "agent-1",
-                "pane_index": "test:0.0",
-                "pid": 12345,
-                "status": "active",
-                "last_seen": "2025-11-18T10:00:00Z",
-                "session_name": "test",
-                "tmux_pane_id": "%2"
-            }]
+            "agents": [
+                {
+                    "id": "agent-1",
+                    "pane_index": "test:0.0",
+                    "pid": 12345,
+                    "status": "active",
+                    "last_seen": "2025-11-18T10:00:00Z",
+                    "session_name": "test",
+                    "tmux_pane_id": "%2",
+                }
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
         registry_path.write_text(json.dumps(registry_data))
 
         args = argparse.Namespace(
-            project_root=tmp_path,
-            filepath="test.txt",
-            agent_id=None  # No agent ID provided
+            project_root=tmp_path, filepath="test.txt", agent_id=None  # No agent ID provided
         )
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%2'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
-                with patch('claudeswarm.cli.LockManager') as mock_manager_class:
+        with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
+                with patch("claudeswarm.cli.LockManager") as mock_manager_class:
                     mock_manager = Mock()
                     mock_manager.release_lock.return_value = True
                     mock_manager_class.return_value = mock_manager
@@ -389,14 +391,12 @@ class TestAutoDetectInLockCommands:
                     # Verify the call used auto-detected agent ID
                     mock_manager.release_lock.assert_called_once()
                     call_kwargs = mock_manager.release_lock.call_args[1]
-                    assert call_kwargs['agent_id'] == "agent-1"
+                    assert call_kwargs["agent_id"] == "agent-1"
 
     def test_release_lock_auto_detect_failure(self, capsys):
         """Test release-file-lock fails when auto-detection fails."""
         args = argparse.Namespace(
-            project_root=Path("/test"),
-            filepath="test.txt",
-            agent_id=None  # No agent ID provided
+            project_root=Path("/test"), filepath="test.txt", agent_id=None  # No agent ID provided
         )
 
         with patch.dict(os.environ, {}, clear=True):  # No TMUX_PANE
@@ -413,10 +413,10 @@ class TestAutoDetectInLockCommands:
             project_root=Path("/test"),
             filepath="test.txt",
             agent_id="agent-explicit",  # Explicit agent ID
-            reason="testing"
+            reason="testing",
         )
 
-        with patch('claudeswarm.cli.LockManager') as mock_manager_class:
+        with patch("claudeswarm.cli.LockManager") as mock_manager_class:
             mock_manager = Mock()
             mock_manager.acquire_lock.return_value = (True, None)
             mock_manager_class.return_value = mock_manager
@@ -427,7 +427,7 @@ class TestAutoDetectInLockCommands:
             assert exc_info.value.code == 0
             # Verify the call used explicit agent ID
             call_kwargs = mock_manager.acquire_lock.call_args[1]
-            assert call_kwargs['agent_id'] == "agent-explicit"
+            assert call_kwargs["agent_id"] == "agent-explicit"
 
 
 class TestAutoDetectInMessagingCommands:
@@ -438,15 +438,17 @@ class TestAutoDetectInMessagingCommands:
         registry_data = {
             "session_name": "test",
             "updated_at": "2025-11-18T10:00:00Z",
-            "agents": [{
-                "id": "agent-1",
-                "pane_index": "test:0.0",
-                "pid": 12345,
-                "status": "active",
-                "last_seen": "2025-11-18T10:00:00Z",
-                "session_name": "test",
-                "tmux_pane_id": "%2"
-            }]
+            "agents": [
+                {
+                    "id": "agent-1",
+                    "pane_index": "test:0.0",
+                    "pid": 12345,
+                    "status": "active",
+                    "last_seen": "2025-11-18T10:00:00Z",
+                    "session_name": "test",
+                    "tmux_pane_id": "%2",
+                }
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
@@ -457,16 +459,16 @@ class TestAutoDetectInMessagingCommands:
             recipient_id="agent-2",
             type="INFO",
             content="Test message",
-            json=False
+            json=False,
         )
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%2'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
-                with patch('claudeswarm.cli.validate_agent_id', side_effect=lambda x: x):
-                    with patch('claudeswarm.cli.validate_message_content', side_effect=lambda x: x):
-                        with patch('claudeswarm.messaging.send_message') as mock_send:
+        with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
+                with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
+                    with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
+                        with patch("claudeswarm.messaging.send_message") as mock_send:
                             mock_msg = Mock()
-                            mock_msg.to_dict.return_value = {'delivery_status': {'agent-2': True}}
+                            mock_msg.to_dict.return_value = {"delivery_status": {"agent-2": True}}
                             mock_send.return_value = mock_msg
 
                             with pytest.raises(SystemExit) as exc_info:
@@ -475,7 +477,7 @@ class TestAutoDetectInMessagingCommands:
                             assert exc_info.value.code == 0
                             # Verify the call used auto-detected sender ID
                             call_kwargs = mock_send.call_args[1]
-                            assert call_kwargs['sender_id'] == "agent-1"
+                            assert call_kwargs["sender_id"] == "agent-1"
 
     def test_send_message_auto_detect_failure(self, capsys):
         """Test send-message fails when auto-detection fails."""
@@ -484,7 +486,7 @@ class TestAutoDetectInMessagingCommands:
             recipient_id="agent-2",
             type="INFO",
             content="Test message",
-            json=False
+            json=False,
         )
 
         with patch.dict(os.environ, {}, clear=True):  # No TMUX_PANE
@@ -500,15 +502,17 @@ class TestAutoDetectInMessagingCommands:
         registry_data = {
             "session_name": "test",
             "updated_at": "2025-11-18T10:00:00Z",
-            "agents": [{
-                "id": "agent-1",
-                "pane_index": "test:0.0",
-                "pid": 12345,
-                "status": "active",
-                "last_seen": "2025-11-18T10:00:00Z",
-                "session_name": "test",
-                "tmux_pane_id": "%2"
-            }]
+            "agents": [
+                {
+                    "id": "agent-1",
+                    "pane_index": "test:0.0",
+                    "pid": 12345,
+                    "status": "active",
+                    "last_seen": "2025-11-18T10:00:00Z",
+                    "session_name": "test",
+                    "tmux_pane_id": "%2",
+                }
+            ],
         }
 
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
@@ -520,14 +524,14 @@ class TestAutoDetectInMessagingCommands:
             content="Broadcast test",
             include_self=False,
             json=False,
-            verbose=False
+            verbose=False,
         )
 
-        with patch.dict(os.environ, {'TMUX_PANE': '%2'}):
-            with patch('claudeswarm.project.get_active_agents_path', return_value=registry_path):
-                with patch('claudeswarm.cli.validate_agent_id', side_effect=lambda x: x):
-                    with patch('claudeswarm.cli.validate_message_content', side_effect=lambda x: x):
-                        with patch('claudeswarm.messaging.broadcast_message') as mock_broadcast:
+        with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
+            with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
+                with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
+                    with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
+                        with patch("claudeswarm.messaging.broadcast_message") as mock_broadcast:
                             mock_broadcast.return_value = {"agent-2": True}
 
                             with pytest.raises(SystemExit) as exc_info:
@@ -536,7 +540,7 @@ class TestAutoDetectInMessagingCommands:
                             assert exc_info.value.code == 0
                             # Verify the call used auto-detected sender ID
                             call_kwargs = mock_broadcast.call_args[1]
-                            assert call_kwargs['sender_id'] == "agent-1"
+                            assert call_kwargs["sender_id"] == "agent-1"
 
     def test_broadcast_message_auto_detect_failure(self, capsys):
         """Test broadcast-message fails when auto-detection fails."""
@@ -546,7 +550,7 @@ class TestAutoDetectInMessagingCommands:
             content="Broadcast test",
             include_self=False,
             json=False,
-            verbose=False
+            verbose=False,
         )
 
         with patch.dict(os.environ, {}, clear=True):  # No TMUX_PANE

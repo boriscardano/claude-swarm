@@ -15,9 +15,7 @@ Priority order:
 """
 
 import os
-import sys
 from pathlib import Path
-from typing import Optional
 
 __all__ = [
     "get_project_root",
@@ -29,16 +27,16 @@ __all__ = [
 
 # Marker files that indicate a project root
 PROJECT_MARKERS = [
-    ".git",                    # Git repository
-    ".claudeswarm.yaml",      # Claude Swarm config
-    "ACTIVE_AGENTS.json",     # Active agents registry
-    ".agent_locks",           # Lock directory
-    "pyproject.toml",         # Python project
-    "package.json",           # Node project
+    ".git",  # Git repository
+    ".claudeswarm.yaml",  # Claude Swarm config
+    "ACTIVE_AGENTS.json",  # Active agents registry
+    ".agent_locks",  # Lock directory
+    "pyproject.toml",  # Python project
+    "package.json",  # Node project
 ]
 
 
-def find_project_root(start_path: Optional[Path] = None, max_depth: int = 10) -> Optional[Path]:
+def find_project_root(start_path: Path | None = None, max_depth: int = 10) -> Path | None:
     """Find project root by searching for marker files.
 
     Searches upward from start_path looking for common project markers
@@ -77,7 +75,7 @@ def find_project_root(start_path: Optional[Path] = None, max_depth: int = 10) ->
     return None
 
 
-def get_project_root(project_root: Optional[Path] = None) -> Path:
+def get_project_root(project_root: Path | None = None) -> Path:
     """Get the project root directory with smart detection.
 
     This function determines the project root using the following priority:
@@ -121,7 +119,7 @@ def get_project_root(project_root: Optional[Path] = None) -> Path:
     return Path.cwd().resolve()
 
 
-def get_active_agents_path(project_root: Optional[Path] = None) -> Path:
+def get_active_agents_path(project_root: Path | None = None) -> Path:
     """Get the path to the ACTIVE_AGENTS.json file.
 
     Args:
@@ -133,7 +131,7 @@ def get_active_agents_path(project_root: Optional[Path] = None) -> Path:
     return get_project_root(project_root) / "ACTIVE_AGENTS.json"
 
 
-def get_messages_log_path(project_root: Optional[Path] = None) -> Path:
+def get_messages_log_path(project_root: Path | None = None) -> Path:
     """Get the path to the agent_messages.log file.
 
     Args:
@@ -145,7 +143,7 @@ def get_messages_log_path(project_root: Optional[Path] = None) -> Path:
     return get_project_root(project_root) / "agent_messages.log"
 
 
-def get_locks_dir_path(project_root: Optional[Path] = None) -> Path:
+def get_locks_dir_path(project_root: Path | None = None) -> Path:
     """Get the path to the .agent_locks directory.
 
     Args:

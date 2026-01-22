@@ -18,36 +18,37 @@ Created: 2025-11-19 (E2B Hackathon Prep)
 """
 
 import asyncio
-from typing import Dict, List, Optional
-from datetime import datetime
 from dataclasses import dataclass
+from datetime import datetime
 
-from claudeswarm.messaging import MessagingSystem, MessageType
-from claudeswarm.workflows.work_distributor import WorkDistributor
+from claudeswarm.messaging import MessageType, MessagingSystem
 from claudeswarm.workflows.code_review import CodeReviewProtocol
 from claudeswarm.workflows.consensus import ConsensusEngine
+from claudeswarm.workflows.work_distributor import WorkDistributor
 
 
 @dataclass
 class Task:
     """Represents a single development task"""
+
     id: str
     title: str
     description: str
-    files: List[str]
-    agent_id: Optional[str] = None
+    files: list[str]
+    agent_id: str | None = None
     status: str = "available"  # available, claimed, in_progress, completed, blocked
 
 
 @dataclass
 class ReviewFeedback:
     """Code review feedback from an agent"""
+
     reviewer_id: str
     author_id: str
-    files: List[str]
-    issues: List[str]
-    suggestions: List[str]
-    evidence: List[str]  # Links to docs/research supporting feedback
+    files: list[str]
+    issues: list[str]
+    suggestions: list[str]
+    evidence: list[str]  # Links to docs/research supporting feedback
     approved: bool
 
 
@@ -74,12 +75,7 @@ class AutonomousDevelopmentLoop:
     # Maximum number of agents allowed to prevent resource exhaustion
     MAX_AGENTS = 100
 
-    def __init__(
-        self,
-        sandbox_id: str,
-        num_agents: int = 4,
-        mcp_bridge=None  # MCPBridge instance
-    ):
+    def __init__(self, sandbox_id: str, num_agents: int = 4, mcp_bridge=None):  # MCPBridge instance
         if num_agents > self.MAX_AGENTS:
             raise ValueError(f"num_agents must not exceed {self.MAX_AGENTS}")
         if num_agents < 1:
@@ -96,14 +92,10 @@ class AutonomousDevelopmentLoop:
         self.consensus = ConsensusEngine(num_agents)
         self.messaging = MessagingSystem()
 
-        self.tasks: List[Task] = []
-        self.research_results: Optional[Dict] = None
+        self.tasks: list[Task] = []
+        self.research_results: dict | None = None
 
-    async def develop_feature(
-        self,
-        feature_description: str,
-        max_duration_hours: int = 8
-    ) -> str:
+    async def develop_feature(self, feature_description: str, max_duration_hours: int = 8) -> str:
         """
         Main entry point for autonomous development.
 
@@ -142,7 +134,7 @@ class AutonomousDevelopmentLoop:
             reviews = await self.review_phase(implementations)
 
             # Phase 5: Consensus (if needed)
-            if reviews.get('disagreements'):
+            if reviews.get("disagreements"):
                 print("\n🗳️  Phase 5: Consensus...")
                 await self.consensus_phase(reviews)
 
@@ -151,7 +143,7 @@ class AutonomousDevelopmentLoop:
             test_results = await self.testing_phase()
 
             # Phase 7: Deployment
-            if test_results['passed']:
+            if test_results["passed"]:
                 print("\n🚢 Phase 7: Deployment...")
                 pr_url = await self.deployment_phase()
 
@@ -167,7 +159,7 @@ class AutonomousDevelopmentLoop:
             print(f"\n❌ Error during development: {e}")
             raise
 
-    async def research_phase(self, feature_description: str) -> Dict:
+    async def research_phase(self, feature_description: str) -> dict:
         """
         Agent 0 researches the feature using Exa and Perplexity MCPs.
 
@@ -207,37 +199,39 @@ class AutonomousDevelopmentLoop:
                 "Set token expiry to 15 minutes for access tokens",
                 "Implement refresh token rotation",
                 "Use argon2 for password hashing",
-                "Validate all inputs"
+                "Validate all inputs",
             ],
             "security": [
                 "Never log JWT tokens",
                 "Use HTTPS only",
                 "Implement rate limiting on auth endpoints",
-                "Use secure random for token generation"
+                "Use secure random for token generation",
             ],
             "recommendations": [
                 "Follow OWASP best practices",
                 "Implement proper error handling",
-                "Add comprehensive tests"
-            ]
+                "Add comprehensive tests",
+            ],
         }
 
         # Broadcast research complete
         try:
-            recommendations_str = ", ".join(research_summary['recommendations'][:2])
+            recommendations_str = ", ".join(research_summary["recommendations"][:2])
             self.messaging.broadcast_message(
                 sender_id=agent_id,
                 msg_type=MessageType.INFO,
-                content=f"Research complete. Key recommendations: {recommendations_str}"
+                content=f"Research complete. Key recommendations: {recommendations_str}",
             )
         except Exception as e:
             print(f"⚠️  Failed to broadcast research completion: {e}")
 
-        print(f"  [{agent_id}] Research complete. Found {len(research_summary['best_practices'])} best practices")
+        print(
+            f"  [{agent_id}] Research complete. Found {len(research_summary['best_practices'])} best practices"
+        )
 
         return research_summary
 
-    async def planning_phase(self, research_results: Dict) -> List[Task]:
+    async def planning_phase(self, research_results: dict) -> list[Task]:
         """
         Break down feature into specific tasks based on research.
 
@@ -248,7 +242,7 @@ class AutonomousDevelopmentLoop:
             List of tasks for agents to claim
         """
 
-        print(f"  [coordinator] Breaking down feature into tasks...")
+        print("  [coordinator] Breaking down feature into tasks...")
 
         # TODO: Use AI to intelligently decompose feature
         # For now, use heuristic based on common patterns
@@ -262,32 +256,32 @@ class AutonomousDevelopmentLoop:
                     id="task-1",
                     title="Implement user model with password hashing",
                     description="Create User model, use argon2 for hashing as per research",
-                    files=["models/user.py"]
+                    files=["models/user.py"],
                 ),
                 Task(
                     id="task-2",
                     title="Implement JWT token generation and validation",
                     description="Create JWT service with RS256 signing, 15min expiry",
-                    files=["auth/jwt.py"]
+                    files=["auth/jwt.py"],
                 ),
                 Task(
                     id="task-3",
                     title="Implement authentication endpoints",
                     description="Create login, register, refresh token endpoints",
-                    files=["routers/auth.py"]
+                    files=["routers/auth.py"],
                 ),
                 Task(
                     id="task-4",
                     title="Implement auth middleware",
                     description="JWT verification middleware for protected routes",
-                    files=["middleware/auth.py"]
+                    files=["middleware/auth.py"],
                 ),
                 Task(
                     id="task-5",
                     title="Write integration tests",
                     description="Test full auth flow including edge cases",
-                    files=["tests/test_auth.py"]
-                )
+                    files=["tests/test_auth.py"],
+                ),
             ]
         else:
             # Generic task breakdown
@@ -296,20 +290,20 @@ class AutonomousDevelopmentLoop:
                     id="task-1",
                     title="Research and design",
                     description=f"Design solution for: {research_results['feature']}",
-                    files=["DESIGN.md"]
+                    files=["DESIGN.md"],
                 ),
                 Task(
                     id="task-2",
                     title="Core implementation",
                     description="Implement core functionality",
-                    files=["src/main.py"]
+                    files=["src/main.py"],
                 ),
                 Task(
                     id="task-3",
                     title="Write tests",
                     description="Comprehensive test coverage",
-                    files=["tests/test_main.py"]
-                )
+                    files=["tests/test_main.py"],
+                ),
             ]
 
         # Broadcast available tasks via WorkDistributor
@@ -321,7 +315,7 @@ class AutonomousDevelopmentLoop:
 
         return tasks
 
-    async def implementation_phase(self, tasks: List[Task]) -> List[Dict]:
+    async def implementation_phase(self, tasks: list[Task]) -> list[dict]:
         """
         Agents claim and implement tasks in parallel.
 
@@ -332,13 +326,13 @@ class AutonomousDevelopmentLoop:
             List of implementations with status
         """
 
-        print(f"  [system] Agents claiming tasks...")
+        print("  [system] Agents claiming tasks...")
 
         # Simulate agents claiming tasks
         # In real implementation, agents would message to claim
         implementations = []
 
-        for i, task in enumerate(tasks[:self.num_agents-1]):  # Leave one agent for testing
+        for i, task in enumerate(tasks[: self.num_agents - 1]):  # Leave one agent for testing
             agent_id = f"agent-{i+1}"
             task.agent_id = agent_id
             task.status = "in_progress"
@@ -364,20 +358,16 @@ class AutonomousDevelopmentLoop:
                 self.messaging.broadcast_message(
                     sender_id=agent_id,
                     msg_type=MessageType.COMPLETED,
-                    content=f"Completed {task.title}"
+                    content=f"Completed {task.title}",
                 )
             except Exception as e:
                 print(f"⚠️  Failed to broadcast completion: {e}")
 
-            implementations.append({
-                "task": task,
-                "agent": agent_id,
-                "status": "completed"
-            })
+            implementations.append({"task": task, "agent": agent_id, "status": "completed"})
 
         return implementations
 
-    async def review_phase(self, implementations: List[Dict]) -> Dict:
+    async def review_phase(self, implementations: list[dict]) -> dict:
         """
         Agents cross-review each other's work.
 
@@ -388,17 +378,14 @@ class AutonomousDevelopmentLoop:
             Dictionary with reviews and any disagreements
         """
 
-        print(f"  [system] Starting code reviews...")
+        print("  [system] Starting code reviews...")
 
-        reviews = {
-            "reviews": [],
-            "disagreements": []
-        }
+        reviews = {"reviews": [], "disagreements": []}
 
         # Each agent reviews another's work (round-robin)
         for i, impl in enumerate(implementations):
             reviewer_id = f"agent-{(i+2) % self.num_agents}"
-            author_id = impl['agent']
+            author_id = impl["agent"]
 
             if reviewer_id == author_id:
                 continue  # Skip self-review
@@ -409,19 +396,19 @@ class AutonomousDevelopmentLoop:
             await self.code_review.request_review(
                 author_agent=author_id,
                 reviewer_agent=reviewer_id,
-                files=impl['task'].files,
-                task_description=impl['task'].description
+                files=impl["task"].files,
+                task_description=impl["task"].description,
             )
 
             # Simulate review (in real implementation, AI would review code)
             review_feedback = ReviewFeedback(
                 reviewer=reviewer_id,
                 author=author_id,
-                files=impl['task'].files,
+                files=impl["task"].files,
                 issues=[],
                 suggestions=["Consider adding error handling"],
                 evidence=["https://docs.python.org/3/tutorial/errors.html"],
-                approved=True
+                approved=True,
             )
 
             reviews["reviews"].append(review_feedback)
@@ -434,14 +421,14 @@ class AutonomousDevelopmentLoop:
                     "position_a": "Use bcrypt (widely supported)",
                     "agent_b": reviewer_id,
                     "position_b": "Use argon2 (research recommends)",
-                    "evidence_b": ["Research phase recommended argon2"]
+                    "evidence_b": ["Research phase recommended argon2"],
                 }
                 reviews["disagreements"].append(disagreement)
                 print(f"    ⚠️  Disagreement: {disagreement['topic']}")
 
         return reviews
 
-    async def consensus_phase(self, reviews: Dict):
+    async def consensus_phase(self, reviews: dict):
         """
         Resolve disagreements through evidence-based voting.
 
@@ -452,7 +439,7 @@ class AutonomousDevelopmentLoop:
         print(f"  [system] Resolving {len(reviews['disagreements'])} disagreements...")
 
         for disagreement in reviews["disagreements"]:
-            topic = disagreement['topic']
+            topic = disagreement["topic"]
 
             print(f"    📊 Voting on: {topic}")
             print(f"       Option A ({disagreement['agent_a']}): {disagreement['position_a']}")
@@ -466,10 +453,7 @@ class AutonomousDevelopmentLoop:
             # )
 
             # Simulate voting (in real implementation, collect agent votes)
-            votes = {
-                "option_a": 1,
-                "option_b": 3  # Majority agrees with research
-            }
+            votes = {"option_a": 1, "option_b": 3}  # Majority agrees with research
 
             winner = "B" if votes["option_b"] > votes["option_a"] else "A"
             print(f"       ✅ Consensus reached: Option {winner} (votes: {votes})")
@@ -479,12 +463,12 @@ class AutonomousDevelopmentLoop:
                 self.messaging.broadcast_message(
                     sender_id="coordinator",
                     msg_type=MessageType.INFO,
-                    content=f"Consensus on {topic}: Option {winner} (votes: {votes})"
+                    content=f"Consensus on {topic}: Option {winner} (votes: {votes})",
                 )
             except Exception as e:
                 print(f"⚠️  Failed to broadcast consensus decision: {e}")
 
-    async def testing_phase(self) -> Dict:
+    async def testing_phase(self) -> dict:
         """
         Run tests and validate implementation.
 
@@ -504,17 +488,19 @@ class AutonomousDevelopmentLoop:
             "total_tests": 12,
             "passed_tests": 12,
             "failed_tests": 0,
-            "failures": []
+            "failures": [],
         }
 
-        print(f"  [{agent_id}] Tests: {test_results['passed_tests']}/{test_results['total_tests']} passed")
+        print(
+            f"  [{agent_id}] Tests: {test_results['passed_tests']}/{test_results['total_tests']} passed"
+        )
 
         # Broadcast test results
         try:
             self.messaging.broadcast_message(
                 sender_id=agent_id,
                 msg_type=MessageType.INFO,
-                content=f"Tests: {test_results['passed_tests']}/{test_results['total_tests']} passed"
+                content=f"Tests: {test_results['passed_tests']}/{test_results['total_tests']} passed",
             )
         except Exception as e:
             print(f"⚠️  Failed to broadcast test results: {e}")
@@ -553,16 +539,14 @@ class AutonomousDevelopmentLoop:
         # Broadcast completion
         try:
             self.messaging.broadcast_message(
-                sender_id=agent_id,
-                msg_type=MessageType.COMPLETED,
-                content=f"PR created: {pr_url}"
+                sender_id=agent_id, msg_type=MessageType.COMPLETED, content=f"PR created: {pr_url}"
             )
         except Exception as e:
             print(f"⚠️  Failed to broadcast PR creation: {e}")
 
         return pr_url
 
-    async def fix_and_retry(self, test_results: Dict) -> str:
+    async def fix_and_retry(self, test_results: dict) -> str:
         """
         Fix test failures and retry.
 
@@ -590,7 +574,6 @@ AGENT_PROMPTS = {
     4. Write research summary in RESEARCH.md
     5. Broadcast findings to team using claudeswarm broadcast-message
     """,
-
     "implement": """
     You are Agent {id} (Developer). Your task:
     1. Read RESEARCH.md for context
@@ -602,7 +585,6 @@ AGENT_PROMPTS = {
     7. Release lock: claudeswarm release-file-lock <file>
     8. Broadcast completion: claudeswarm broadcast-message COMPLETED "Finished {task}"
     """,
-
     "review": """
     You are Agent {id} (Reviewer). Your task:
     1. Wait for REVIEW_REQUEST messages
@@ -612,7 +594,6 @@ AGENT_PROMPTS = {
     5. If you disagree with an approach, challenge it with evidence
     6. Send review: claudeswarm send-message {author_id} REVIEW_REQUEST "feedback"
     """,
-
     "test": """
     You are Agent 0 (QA). Your task:
     1. Review all implemented code
@@ -620,5 +601,5 @@ AGENT_PROMPTS = {
     3. Run full test suite: pytest tests/
     4. Report failures to team: claudeswarm broadcast-message BLOCKED "Test failures: ..."
     5. Verify fixes when agents respond
-    """
+    """,
 }

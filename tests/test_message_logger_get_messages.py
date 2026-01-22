@@ -37,21 +37,21 @@ class TestMessageLoggerGetMessagesForAgent:
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content="Message to agent-2",
-                recipients=["agent-2"]
+                recipients=["agent-2"],
             )
             msg2 = Message(
                 sender_id="agent-3",
                 timestamp=datetime.now(),
                 msg_type=MessageType.QUESTION,
                 content="Question for agent-2",
-                recipients=["agent-2"]
+                recipients=["agent-2"],
             )
             msg3 = Message(
                 sender_id="agent-1",
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content="Message to agent-4",
-                recipients=["agent-4"]
+                recipients=["agent-4"],
             )
 
             logger.log_message(msg1, {"agent-2": True})
@@ -63,10 +63,7 @@ class TestMessageLoggerGetMessagesForAgent:
 
             # Should have 2 messages for agent-2
             assert len(messages) == 2
-            assert all(
-                "agent-2" in msg.get("recipients", [])
-                for msg in messages
-            )
+            assert all("agent-2" in msg.get("recipients", []) for msg in messages)
 
     def test_get_messages_with_limit(self):
         """Test limit parameter works correctly."""
@@ -81,7 +78,7 @@ class TestMessageLoggerGetMessagesForAgent:
                     timestamp=datetime.now(),
                     msg_type=MessageType.INFO,
                     content=f"Message {i}",
-                    recipients=["agent-target"]
+                    recipients=["agent-target"],
                 )
                 logger.log_message(msg, {"agent-target": True})
 
@@ -112,7 +109,7 @@ class TestMessageLoggerGetMessagesForAgent:
                     timestamp=datetime.now(),
                     msg_type=MessageType.INFO,
                     content=f"Message {i}",
-                    recipients=["agent-target"]
+                    recipients=["agent-target"],
                 )
                 logger.log_message(msg, {"agent-target": True})
 
@@ -135,7 +132,7 @@ class TestMessageLoggerGetMessagesForAgent:
                     timestamp=datetime.now(),
                     msg_type=MessageType.INFO,
                     content=f"Message {i}",
-                    recipients=["agent-target"]
+                    recipients=["agent-target"],
                 )
                 logger.log_message(msg, {"agent-target": True})
 
@@ -181,7 +178,7 @@ class TestMessageLoggerGetMessagesForAgent:
             logger = MessageLogger(log_file)
 
             # Write some valid and some invalid JSON lines
-            with open(log_file, 'w') as f:
+            with open(log_file, "w") as f:
                 # Valid message
                 valid_msg = {
                     "sender": "agent-1",
@@ -189,9 +186,9 @@ class TestMessageLoggerGetMessagesForAgent:
                     "msg_type": "INFO",
                     "content": "Valid message",
                     "recipients": ["agent-2"],
-                    "msg_id": "test-1"
+                    "msg_id": "test-1",
                 }
-                f.write(json.dumps(valid_msg) + '\n')
+                f.write(json.dumps(valid_msg) + "\n")
 
                 # Invalid JSON (syntax error)
                 f.write('{ "sender": "agent-2", "invalid json\n')
@@ -203,9 +200,9 @@ class TestMessageLoggerGetMessagesForAgent:
                     "msg_type": "QUESTION",
                     "content": "Another valid message",
                     "recipients": ["agent-2"],
-                    "msg_id": "test-2"
+                    "msg_id": "test-2",
                 }
-                f.write(json.dumps(valid_msg2) + '\n')
+                f.write(json.dumps(valid_msg2) + "\n")
 
             # Get messages for agent-2
             messages = logger.get_messages_for_agent("agent-2")
@@ -229,7 +226,7 @@ class TestMessageLoggerGetMessagesForAgent:
                     timestamp=datetime.now(),
                     msg_type=MessageType.INFO,
                     content=f"Message for {recipient}",
-                    recipients=[recipient]
+                    recipients=[recipient],
                 )
                 logger.log_message(msg, {recipient: True})
 
@@ -251,7 +248,7 @@ class TestMessageLoggerGetMessagesForAgent:
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content="Message for agent-1",
-                recipients=["agent-1"]
+                recipients=["agent-1"],
             )
             logger.log_message(msg, {"agent-1": True})
 
@@ -273,7 +270,7 @@ class TestMessageLoggerGetMessagesForAgent:
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content="Broadcast to all",
-                recipients=["all"]
+                recipients=["all"],
             )
             logger.log_message(msg, {"all": True})
 
@@ -296,7 +293,7 @@ class TestMessageLoggerGetMessagesForAgent:
                     timestamp=datetime.now(),
                     msg_type=MessageType.INFO,
                     content=f"Message {i}",
-                    recipients=["agent-target"]
+                    recipients=["agent-target"],
                 )
                 logger.log_message(msg, {"agent-target": True})
 
@@ -318,7 +315,7 @@ class TestMessageLoggerGetMessagesForAgent:
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content="Message to multiple agents",
-                recipients=["agent-1", "agent-2", "agent-3"]
+                recipients=["agent-1", "agent-2", "agent-3"],
             )
             logger.log_message(msg, {"agent-1": True, "agent-2": True, "agent-3": True})
 
@@ -335,27 +332,27 @@ class TestMessageLoggerGetMessagesForAgent:
             logger = MessageLogger(log_file)
 
             # Write messages with empty lines
-            with open(log_file, 'w') as f:
+            with open(log_file, "w") as f:
                 msg1 = {
                     "sender": "agent-1",
                     "timestamp": datetime.now().isoformat(),
                     "msg_type": "INFO",
                     "content": "First message",
                     "recipients": ["agent-2"],
-                    "msg_id": "test-1"
+                    "msg_id": "test-1",
                 }
-                f.write(json.dumps(msg1) + '\n')
-                f.write('\n')  # Empty line
-                f.write('   \n')  # Whitespace line
+                f.write(json.dumps(msg1) + "\n")
+                f.write("\n")  # Empty line
+                f.write("   \n")  # Whitespace line
                 msg2 = {
                     "sender": "agent-3",
                     "timestamp": datetime.now().isoformat(),
                     "msg_type": "INFO",
                     "content": "Second message",
                     "recipients": ["agent-2"],
-                    "msg_id": "test-2"
+                    "msg_id": "test-2",
                 }
-                f.write(json.dumps(msg2) + '\n')
+                f.write(json.dumps(msg2) + "\n")
 
             messages = logger.get_messages_for_agent("agent-2")
 
@@ -373,7 +370,7 @@ class TestMessageLoggerGetMessagesForAgent:
                 timestamp=datetime.now(),
                 msg_type=MessageType.QUESTION,
                 content="Test message",
-                recipients=["agent-2"]
+                recipients=["agent-2"],
             )
             logger.log_message(msg, {"agent-2": True})
 

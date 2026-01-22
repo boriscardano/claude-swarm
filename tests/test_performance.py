@@ -86,7 +86,7 @@ class TestRateLimiterPerformance:
         limiter = RateLimiter(max_messages=5, window_seconds=1)
 
         # Simulate 10 cycles of activity
-        for cycle in range(10):
+        for _cycle in range(10):
             # Multiple agents send messages
             for agent_num in range(20):
                 agent_id = f"agent-{agent_num}"
@@ -146,14 +146,12 @@ class TestLogTailerRotation:
         lines = tailer.tail_new_lines()
         assert lines == ["line1"]
 
-        old_inode = tailer.last_inode
-
         # Simulate rotation by replacing file
         log_path.unlink()
         log_path.write_text("rotated line 1\n")
 
         # New file should have different inode
-        new_stat = log_path.stat()
+        log_path.stat()
         # Note: on some filesystems, inode might be reused immediately
 
         lines = tailer.tail_new_lines()

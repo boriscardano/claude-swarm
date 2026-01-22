@@ -7,7 +7,7 @@ to prevent common vulnerabilities (command injection, XSS, etc.).
 
 import re
 import shlex
-from typing import Any, Optional
+from typing import Any
 
 
 class ValidationError(ValueError):
@@ -42,7 +42,7 @@ def validate_sandbox_id(sandbox_id: str) -> str:
         raise ValidationError("Sandbox ID cannot be empty")
 
     # Allow alphanumeric, hyphens, and underscores only
-    if not re.match(r'^[a-zA-Z0-9_-]+$', sandbox_id):
+    if not re.match(r"^[a-zA-Z0-9_-]+$", sandbox_id):
         raise ValidationError(
             f"Invalid sandbox ID '{sandbox_id}'. "
             "Must contain only alphanumeric characters, hyphens, and underscores."
@@ -79,9 +79,7 @@ def validate_num_agents(num_agents: Any) -> int:
     try:
         num = int(num_agents)
     except (ValueError, TypeError):
-        raise ValidationError(
-            f"Invalid num_agents value '{num_agents}'. Must be an integer."
-        )
+        raise ValidationError(f"Invalid num_agents value '{num_agents}'. Must be an integer.")
 
     if num < 1:
         raise ValidationError(f"num_agents must be >= 1, got {num}")
@@ -120,14 +118,14 @@ def validate_git_url(url: str) -> str:
         raise ValidationError("Git URL cannot be empty")
 
     # Only allow https://, git+https://, and git@ URLs
-    allowed_prefixes = ('https://', 'git+https://', 'git@')
+    allowed_prefixes = ("https://", "git+https://", "git@")
     if not any(url.startswith(prefix) for prefix in allowed_prefixes):
         raise ValidationError(
             f"Invalid Git URL '{url}'. Must start with https://, git+https://, or git@"
         )
 
     # Prevent dangerous protocols (check at START of URL only)
-    dangerous_protocols = ('file://', 'ftp://', 'ssh://', 'ext::')
+    dangerous_protocols = ("file://", "ftp://", "ssh://", "ext::")
     url_lower = url.lower()
     if any(url_lower.startswith(protocol) for protocol in dangerous_protocols):
         raise ValidationError(
@@ -135,47 +133,43 @@ def validate_git_url(url: str) -> str:
         )
 
     # Prevent command injection through URL
-    dangerous_chars = [';', '|', '&', '\n', '\r', '`', '$']
+    dangerous_chars = [";", "|", "&", "\n", "\r", "`", "$"]
     if any(char in url for char in dangerous_chars):
-        raise ValidationError(
-            f"Git URL contains dangerous characters: {url}"
-        )
+        raise ValidationError(f"Git URL contains dangerous characters: {url}")
 
     # Security: Prevent path traversal attacks
-    if '..' in url:
-        raise ValidationError(
-            f"Git URL contains path traversal (..) which is not allowed: {url}"
-        )
+    if ".." in url:
+        raise ValidationError(f"Git URL contains path traversal (..) which is not allowed: {url}")
 
     # Security: Prevent SSRF attacks by blocking IP addresses
     # Block both IPv4 and IPv6 addresses in the URL
-    ip_pattern = r'(?:(?:\d{1,3}\.){3}\d{1,3})|(?:\[?[0-9a-fA-F:]+\]?)'
-    if url.startswith('https://'):
+    ip_pattern = r"(?:(?:\d{1,3}\.){3}\d{1,3})|(?:\[?[0-9a-fA-F:]+\]?)"
+    if url.startswith("https://"):
         # Extract domain part after https://
-        domain_part = url[8:].split('/')[0]
+        domain_part = url[8:].split("/")[0]
         # Check if it looks like an IP address
-        if re.match(r'^' + ip_pattern + r'(?::\d+)?$', domain_part):
-            raise ValidationError(
-                f"Git URL cannot use IP addresses (potential SSRF attack): {url}"
-            )
+        if re.match(r"^" + ip_pattern + r"(?::\d+)?$", domain_part):
+            raise ValidationError(f"Git URL cannot use IP addresses (potential SSRF attack): {url}")
 
     # Validate basic URL structure with stricter domain validation
-    if url.startswith('https://') or url.startswith('git+https://'):
+    if url.startswith("https://") or url.startswith("git+https://"):
         # Stricter check for https URLs - domain must be valid DNS format
         # Allows: github.com, api.github.com, etc.
         # Allow optional @ref suffix for commit refs (e.g., @abc123)
-        protocol_prefix = 'git+https://' if url.startswith('git+https://') else 'https://'
-        if not re.match(rf'^{re.escape(protocol_prefix)}[a-zA-Z0-9]([a-zA-Z0-9-]{{0,61}}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{{0,61}}[a-zA-Z0-9])?)*(/[\w\-./]+)?\.git(@[\w\-.]+)?$', url):
-            raise ValidationError(
-                f"Invalid HTTPS Git URL format: {url}"
-            )
-    elif url.startswith('git@'):
+        protocol_prefix = "git+https://" if url.startswith("git+https://") else "https://"
+        if not re.match(
+            rf"^{re.escape(protocol_prefix)}[a-zA-Z0-9]([a-zA-Z0-9-]{{0,61}}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{{0,61}}[a-zA-Z0-9])?)*(/[\w\-./]+)?\.git(@[\w\-.]+)?$",
+            url,
+        ):
+            raise ValidationError(f"Invalid HTTPS Git URL format: {url}")
+    elif url.startswith("git@"):
         # Basic check for git@ URLs
         # Allow optional @ref suffix for commit refs (e.g., @abc123)
-        if not re.match(r'^git@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*:[\w\-./]+\.git(@[\w\-.]+)?$', url):
-            raise ValidationError(
-                f"Invalid git@ URL format: {url}"
-            )
+        if not re.match(
+            r"^git@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*:[\w\-./]+\.git(@[\w\-.]+)?$",
+            url,
+        ):
+            raise ValidationError(f"Invalid git@ URL format: {url}")
 
     return url
 
@@ -227,7 +221,7 @@ def sanitize_container_name(name: str) -> str:
         raise ValidationError("Container name cannot be empty")
 
     # Docker names: [a-zA-Z0-9][a-zA-Z0-9_.-]+
-    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_.-]+$', name):
+    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$", name):
         raise ValidationError(
             f"Invalid container name '{name}'. "
             "Must start with alphanumeric and contain only [a-zA-Z0-9_.-]"
@@ -297,16 +291,16 @@ def validate_port(port: Any) -> int:
         raise ValidationError(f"Invalid port '{port}'. Must be an integer.")
 
     if port_num < 1 or port_num > 65535:
-        raise ValidationError(
-            f"Port {port_num} out of range. Must be 1-65535."
-        )
+        raise ValidationError(f"Port {port_num} out of range. Must be 1-65535.")
 
     # Warn about privileged ports (< 1024) but don't block
     # (may be running in Docker where this is OK)
     if port_num < 1024:
         import warnings
+
         warnings.warn(
-            f"Port {port_num} is privileged (<1024). May require elevated permissions."
+            f"Port {port_num} is privileged (<1024). May require elevated permissions.",
+            stacklevel=2,
         )
 
     return port_num
@@ -341,22 +335,20 @@ def validate_timeout(timeout: Any) -> float:
         raise ValidationError(f"Timeout must be > 0, got {timeout_val}")
 
     if timeout_val > 3600:
-        raise ValidationError(
-            f"Timeout too long ({timeout_val}s). Maximum is 3600s (1 hour)."
-        )
+        raise ValidationError(f"Timeout too long ({timeout_val}s). Maximum is 3600s (1 hour).")
 
     return timeout_val
 
 
 # Export all public functions
 __all__ = [
-    'ValidationError',
-    'validate_sandbox_id',
-    'validate_num_agents',
-    'validate_git_url',
-    'sanitize_for_shell',
-    'sanitize_container_name',
-    'sanitize_api_key_for_logging',
-    'validate_port',
-    'validate_timeout',
+    "ValidationError",
+    "validate_sandbox_id",
+    "validate_num_agents",
+    "validate_git_url",
+    "sanitize_for_shell",
+    "sanitize_container_name",
+    "sanitize_api_key_for_logging",
+    "validate_port",
+    "validate_timeout",
 ]

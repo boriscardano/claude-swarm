@@ -8,9 +8,7 @@ Author: Agent 4 - Tests & Documentation
 
 import json
 import time
-from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch, mock_open
+from unittest.mock import patch
 
 import pytest
 
@@ -28,10 +26,12 @@ class TestDashboardAPI:
         """Create mock FastAPI app for testing."""
         try:
             from src.claudeswarm.web.server import app
+
             return app
         except ImportError:
             # If web module doesn't exist yet, create a minimal mock
             from fastapi import FastAPI
+
             app = FastAPI()
 
             @app.get("/")
@@ -66,14 +66,16 @@ class TestDashboardAPI:
         response = client.get("/")
         assert response.status_code == 200
         # Could be HTML or JSON depending on implementation
-        assert response.headers["content-type"] in [
-            "text/html; charset=utf-8",
-            "application/json"
-        ] or "text/html" in response.headers["content-type"]
+        assert (
+            response.headers["content-type"] in ["text/html; charset=utf-8", "application/json"]
+            or "text/html" in response.headers["content-type"]
+        )
 
     def test_get_agents_empty(self, client, tmp_path):
         """Test GET /api/agents with no agents."""
-        with patch("src.claudeswarm.web.server.ACTIVE_AGENTS_FILE", tmp_path / "ACTIVE_AGENTS.json"):
+        with patch(
+            "src.claudeswarm.web.server.ACTIVE_AGENTS_FILE", tmp_path / "ACTIVE_AGENTS.json"
+        ):
             response = client.get("/api/v1/agents")
             assert response.status_code == 200
             data = response.json()
@@ -89,14 +91,14 @@ class TestDashboardAPI:
                     "id": "agent-0",
                     "pane_index": "main:0.0",
                     "status": "active",
-                    "last_seen": "2025-11-10T12:00:00Z"
+                    "last_seen": "2025-11-10T12:00:00Z",
                 },
                 {
                     "id": "agent-1",
                     "pane_index": "main:0.1",
                     "status": "active",
-                    "last_seen": "2025-11-10T12:01:00Z"
-                }
+                    "last_seen": "2025-11-10T12:01:00Z",
+                },
             ]
         }
         agents_file.write_text(json.dumps(agents_data))
@@ -151,8 +153,18 @@ class TestDashboardAPI:
         """Test GET /api/messages returns message list."""
         messages_file = tmp_path / "agent_messages.log"
         messages = [
-            {"sender_id": "agent-0", "msg_type": "INFO", "content": "Message 1", "timestamp": "2025-11-10T12:00:00Z"},
-            {"sender_id": "agent-1", "msg_type": "QUESTION", "content": "Message 2", "timestamp": "2025-11-10T12:01:00Z"},
+            {
+                "sender_id": "agent-0",
+                "msg_type": "INFO",
+                "content": "Message 1",
+                "timestamp": "2025-11-10T12:00:00Z",
+            },
+            {
+                "sender_id": "agent-1",
+                "msg_type": "QUESTION",
+                "content": "Message 2",
+                "timestamp": "2025-11-10T12:01:00Z",
+            },
         ]
         messages_file.write_text("\n".join(json.dumps(m) for m in messages))
 
@@ -167,7 +179,12 @@ class TestDashboardAPI:
         """Test GET /api/messages?limit=10."""
         messages_file = tmp_path / "agent_messages.log"
         messages = [
-            {"sender_id": f"agent-{i}", "msg_type": "INFO", "content": f"Message {i}", "timestamp": f"2025-11-10T12:{i:02d}:00Z"}
+            {
+                "sender_id": f"agent-{i}",
+                "msg_type": "INFO",
+                "content": f"Message {i}",
+                "timestamp": f"2025-11-10T12:{i:02d}:00Z",
+            }
             for i in range(50)
         ]
         messages_file.write_text("\n".join(json.dumps(m) for m in messages))
@@ -215,7 +232,7 @@ class TestDashboardAPI:
             "filepath": "src/test.py",
             "agent_id": "agent-1",
             "reason": "Implementing feature",
-            "locked_at": time.time()
+            "locked_at": time.time(),
         }
         lock_file.write_text(json.dumps(lock_data))
 
@@ -284,6 +301,7 @@ class TestDashboardSSE:
         """Create mock FastAPI app with SSE."""
         try:
             from src.claudeswarm.web.server import app
+
             return app
         except ImportError:
             from fastapi import FastAPI
@@ -292,14 +310,11 @@ class TestDashboardSSE:
             app = FastAPI()
 
             async def event_generator():
-                yield "data: {\"type\": \"test\"}\n\n"
+                yield 'data: {"type": "test"}\n\n'
 
             @app.get("/api/v1/stream")
             async def stream():
-                return StreamingResponse(
-                    event_generator(),
-                    media_type="text/event-stream"
-                )
+                return StreamingResponse(event_generator(), media_type="text/event-stream")
 
             return app
 
@@ -328,6 +343,7 @@ class TestDashboardErrorHandling:
         """Create test client."""
         try:
             from src.claudeswarm.web.server import app
+
             return TestClient(app)
         except ImportError:
             pytest.skip("Web module not implemented yet")
@@ -375,6 +391,7 @@ class TestDashboardCORS:
         """Create test client."""
         try:
             from src.claudeswarm.web.server import app
+
             return TestClient(app)
         except ImportError:
             pytest.skip("Web module not implemented yet")
@@ -397,6 +414,7 @@ class TestDashboardStaticFiles:
         """Create test client."""
         try:
             from src.claudeswarm.web.server import app
+
             return TestClient(app)
         except ImportError:
             pytest.skip("Web module not implemented yet")

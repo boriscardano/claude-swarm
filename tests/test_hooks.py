@@ -12,7 +12,6 @@ Author: Test Coverage Enhancement
 
 import os
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -68,15 +67,11 @@ class TestCheckForMessagesHook:
 
         # Execute hook in clean environment (no TMUX_PANE, etc.)
         env = os.environ.copy()
-        env.pop('TMUX_PANE', None)
-        env.pop('AGENT_ID', None)
+        env.pop("TMUX_PANE", None)
+        env.pop("AGENT_ID", None)
 
         result = subprocess.run(
-            [str(hook_path)],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=10
+            [str(hook_path)], capture_output=True, text=True, env=env, timeout=10
         )
 
         # Should exit cleanly (exit code 0) even without agent context
@@ -98,16 +93,18 @@ class TestCheckForMessagesHook:
             pytest.skip("Hook script not found")
 
         # Read the script to verify it has agent ID validation
-        with open(hook_path, 'r') as f:
+        with open(hook_path) as f:
             script_content = f.read()
 
         # Verify script has validation logic
-        assert "agent_id" in script_content.lower() or "AGENT_ID" in script_content, \
-            "Hook should reference agent ID"
+        assert (
+            "agent_id" in script_content.lower() or "AGENT_ID" in script_content
+        ), "Hook should reference agent ID"
 
         # Verify it has regex pattern matching for validation
-        assert "[a-zA-Z0-9_-]" in script_content or "regex" in script_content.lower(), \
-            "Hook should validate agent ID format"
+        assert (
+            "[a-zA-Z0-9_-]" in script_content or "regex" in script_content.lower()
+        ), "Hook should validate agent ID format"
 
     def test_hook_timeout_behavior(self):
         """Test timeout behavior of hook."""
@@ -122,15 +119,16 @@ class TestCheckForMessagesHook:
             pytest.skip("Hook script not found")
 
         # Read script to verify timeout is used
-        with open(hook_path, 'r') as f:
+        with open(hook_path) as f:
             script_content = f.read()
 
         # Verify script uses timeout command
         assert "timeout" in script_content, "Hook should use timeout to prevent hanging"
 
         # Verify timeout value is reasonable (should be 5s based on current implementation)
-        assert "5s" in script_content or "timeout 5" in script_content, \
-            "Hook should have 5 second timeout"
+        assert (
+            "5s" in script_content or "timeout 5" in script_content
+        ), "Hook should have 5 second timeout"
 
     def test_hook_graceful_degradation(self):
         """Test graceful degradation when claudeswarm commands fail."""
@@ -145,7 +143,7 @@ class TestCheckForMessagesHook:
             pytest.skip("Hook script not found")
 
         # Read script to verify error handling
-        with open(hook_path, 'r') as f:
+        with open(hook_path) as f:
             script_content = f.read()
 
         # Verify script has error handling (|| echo "" or similar)
@@ -157,9 +155,7 @@ class TestCheckForMessagesHook:
         # Verify script has set -e (exit on error) to prevent cascading failures
         # OR verify it has proper error handling
         has_error_handling = (
-            "set -e" in script_content or
-            "|| echo" in script_content or
-            "|| true" in script_content
+            "set -e" in script_content or "|| echo" in script_content or "|| true" in script_content
         )
         assert has_error_handling, "Hook should have error handling"
 
@@ -175,13 +171,14 @@ class TestCheckForMessagesHook:
         if not hook_path.exists():
             pytest.skip("Hook script not found")
 
-        with open(hook_path, 'r') as f:
+        with open(hook_path) as f:
             script_content = f.read()
 
         # Verify hook uses whoami to detect agent ID
         assert "whoami" in script_content, "Hook should use 'whoami' command to detect agent ID"
-        assert "claudeswarm whoami" in script_content, \
-            "Hook should use 'claudeswarm whoami' to get agent info"
+        assert (
+            "claudeswarm whoami" in script_content
+        ), "Hook should use 'claudeswarm whoami' to get agent info"
 
     def test_hook_checks_messages_with_limit(self):
         """Test that hook uses check-messages with limit parameter."""
@@ -195,15 +192,16 @@ class TestCheckForMessagesHook:
         if not hook_path.exists():
             pytest.skip("Hook script not found")
 
-        with open(hook_path, 'r') as f:
+        with open(hook_path) as f:
             script_content = f.read()
 
         # Verify hook uses check-messages command
         assert "check-messages" in script_content, "Hook should use 'check-messages' command"
 
         # Verify hook limits number of messages (to avoid context bloat)
-        assert "--limit" in script_content or "-l" in script_content, \
-            "Hook should limit number of messages"
+        assert (
+            "--limit" in script_content or "-l" in script_content
+        ), "Hook should limit number of messages"
 
     def test_hook_has_proper_shebang(self):
         """Test that hook has proper shebang."""
@@ -217,7 +215,7 @@ class TestCheckForMessagesHook:
         if not hook_path.exists():
             pytest.skip("Hook script not found")
 
-        with open(hook_path, 'r') as f:
+        with open(hook_path) as f:
             first_line = f.readline().strip()
 
         # Should start with #!/bin/bash or #!/usr/bin/env bash
@@ -236,15 +234,18 @@ class TestCheckForMessagesHook:
         if not hook_path.exists():
             pytest.skip("Hook script not found")
 
-        with open(hook_path, 'r') as f:
+        with open(hook_path) as f:
             script_content = f.read()
 
         # Verify hook has output formatting for messages
-        assert "NEW MESSAGES" in script_content or "MESSAGES FROM" in script_content, \
-            "Hook should have header for messages"
+        assert (
+            "NEW MESSAGES" in script_content or "MESSAGES FROM" in script_content
+        ), "Hook should have header for messages"
 
         # Verify hook uses visual separators (box drawing or similar)
-        has_formatting = any(char in script_content for char in ["═", "─", "║", "╔", "╚", "***", "---"])
+        has_formatting = any(
+            char in script_content for char in ["═", "─", "║", "╔", "╚", "***", "---"]
+        )
         assert has_formatting, "Hook should have visual formatting"
 
     def test_hook_conditional_output(self):
@@ -259,7 +260,7 @@ class TestCheckForMessagesHook:
         if not hook_path.exists():
             pytest.skip("Hook script not found")
 
-        with open(hook_path, 'r') as f:
+        with open(hook_path) as f:
             script_content = f.read()
 
         # Verify hook checks for message content before outputting
@@ -267,9 +268,9 @@ class TestCheckForMessagesHook:
 
         # Should check for "No messages" or similar to avoid unnecessary output
         has_message_check = (
-            "No messages" in script_content or
-            "[ -n" in script_content or  # Check for non-empty
-            "[ ! -z" in script_content   # Check for non-zero
+            "No messages" in script_content
+            or "[ -n" in script_content  # Check for non-empty
+            or "[ ! -z" in script_content  # Check for non-zero
         )
         assert has_message_check, "Hook should check if messages exist before outputting"
 
@@ -285,16 +286,18 @@ class TestCheckForMessagesHook:
         if not hook_path.exists():
             pytest.skip("Hook script not found")
 
-        with open(hook_path, 'r') as f:
+        with open(hook_path) as f:
             script_content = f.read()
 
         # Verify hook has debug mode support
-        assert "DEBUG" in script_content or "debug" in script_content, \
-            "Hook should support debug mode"
+        assert (
+            "DEBUG" in script_content or "debug" in script_content
+        ), "Hook should support debug mode"
 
         # Should check environment variable for debug mode
-        assert "CLAUDESWARM_DEBUG" in script_content or "$DEBUG" in script_content, \
-            "Hook should check debug environment variable"
+        assert (
+            "CLAUDESWARM_DEBUG" in script_content or "$DEBUG" in script_content
+        ), "Hook should check debug environment variable"
 
 
 class TestHookIntegration:
@@ -313,12 +316,13 @@ class TestHookIntegration:
         if not hook_path.exists():
             pytest.skip("Hook script not found")
 
-        with open(hook_path, 'r') as f:
+        with open(hook_path) as f:
             script_content = f.read()
 
         # Verify hook calls claudeswarm check-messages
-        assert "claudeswarm check-messages" in script_content, \
-            "Hook should call 'claudeswarm check-messages'"
+        assert (
+            "claudeswarm check-messages" in script_content
+        ), "Hook should call 'claudeswarm check-messages'"
 
     def test_hook_exit_code_always_zero(self):
         """Test that hook always exits with code 0 (for Claude Code compatibility)."""
@@ -332,20 +336,21 @@ class TestHookIntegration:
         if not hook_path.exists():
             pytest.skip("Hook script not found")
 
-        with open(hook_path, 'r') as f:
+        with open(hook_path) as f:
             script_content = f.read()
 
         # Verify script ends with exit 0
-        lines = script_content.strip().split('\n')
+        lines = script_content.strip().split("\n")
         last_non_comment_line = None
         for line in reversed(lines):
             stripped = line.strip()
-            if stripped and not stripped.startswith('#'):
+            if stripped and not stripped.startswith("#"):
                 last_non_comment_line = stripped
                 break
 
-        assert last_non_comment_line == "exit 0", \
-            "Hook should always exit with code 0 for Claude Code compatibility"
+        assert (
+            last_non_comment_line == "exit 0"
+        ), "Hook should always exit with code 0 for Claude Code compatibility"
 
 
 if __name__ == "__main__":

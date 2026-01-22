@@ -7,7 +7,7 @@ ensuring type safety and consistent error handling across all MCP implementation
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class MCPStatus(str, Enum):
@@ -70,7 +70,7 @@ class MCPResponse:
 
     success: bool
     data: Any = None
-    error: Optional[str] = None
+    error: str | None = None
     mcp_name: str = ""
     method: str = ""
     duration_ms: float = 0.0
@@ -97,7 +97,7 @@ class MCPError(Exception):
     message: str
     mcp_name: str = ""
     method: str = ""
-    original_error: Optional[Exception] = None
+    original_error: Exception | None = None
     retry_count: int = 0
 
     def __str__(self) -> str:

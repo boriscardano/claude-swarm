@@ -10,25 +10,26 @@ import json
 import os
 import secrets
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, APIRouter, Request, Response, Depends, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from ..file_lock import FileLock, FileLockError, FileLockTimeout
 
 # Import project utilities
 from ..project import (
-    get_project_root,
     get_active_agents_path,
-    get_messages_log_path,
     get_locks_dir_path,
+    get_messages_log_path,
+    get_project_root,
 )
-from ..file_lock import FileLock, FileLockTimeout, FileLockError
 
 # Project paths
 PROJECT_ROOT = get_project_root()
@@ -43,6 +44,7 @@ app = FastAPI(
     description="Real-time monitoring dashboard for Claude Swarm multi-agent system",
     version="1.0.0",
 )
+
 
 # Security headers middleware
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -61,6 +63,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         )
         response.headers["X-XSS-Protection"] = "1; mode=block"
         return response
+
 
 app.add_middleware(SecurityHeadersMiddleware)
 
@@ -111,15 +114,19 @@ def get_current_user(credentials: HTTPBasicCredentials | None = Depends(security
 
     return credentials.username
 
+
 # CORS configuration - restrictive by default for security
 # To allow external origins, set ALLOWED_ORIGINS environment variable (comma-separated)
-default_origins = "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000"
+default_origins = (
+    "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000"
+)
 allowed_origins_str = os.getenv("ALLOWED_ORIGINS", default_origins)
 
 # Validate ALLOWED_ORIGINS to prevent wildcard injection
 if "*" in allowed_origins_str and allowed_origins_str.strip() != "*":
     # If mixed with other origins, log warning and use default
     import logging
+
     logging.warning("ALLOWED_ORIGINS contains wildcard mixed with other origins - using default")
     allowed_origins_str = default_origins
 
@@ -166,21 +173,21 @@ def safe_load_json(file_path: Path) -> dict[str, Any] | None:
         if file_path.name == "ACTIVE_AGENTS.json":
             try:
                 with FileLock(file_path, timeout=2.0, shared=True):
-                    with open(file_path, "r", encoding="utf-8") as f:
+                    with open(file_path, encoding="utf-8") as f:
                         return json.load(f)
             except FileLockTimeout:
                 # If we can't get the lock, return None gracefully
                 # Dashboard will retry on next poll
                 return None
-            except (FileLockError, OSError, IOError):
+            except (FileLockError, OSError):
                 # Other locking or I/O errors - return None gracefully
                 return None
         else:
             # For other JSON files, read without locking
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 return json.load(f)
 
-    except (json.JSONDecodeError, IOError, OSError):
+    except (json.JSONDecodeError, OSError):
         return None
 
 
@@ -199,7 +206,7 @@ def tail_log_file(file_path: Path, limit: int = 50) -> list[dict[str, Any]]:
         if not file_path.exists():
             return messages
 
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             lines = f.readlines()
             # Get last 'limit' lines
             for line in lines[-limit:]:
@@ -211,7 +218,7 @@ def tail_log_file(file_path: Path, limit: int = 50) -> list[dict[str, Any]]:
                     except json.JSONDecodeError:
                         # Skip malformed lines
                         continue
-    except (IOError, OSError):
+    except OSError:
         pass
 
     return messages
@@ -230,11 +237,11 @@ def get_lock_files() -> list[dict[str, Any]]:
 
         for lock_file in AGENT_LOCKS_DIR.glob("*.lock"):
             try:
-                with open(lock_file, "r", encoding="utf-8") as f:
+                with open(lock_file, encoding="utf-8") as f:
                     lock_data = json.load(f)
                     lock_data["lock_file"] = lock_file.name
                     locks.append(lock_data)
-            except (json.JSONDecodeError, IOError, OSError):
+            except (json.JSONDecodeError, OSError):
                 # Skip corrupt lock files
                 continue
     except OSError:
@@ -311,12 +318,13 @@ async def dashboard(user: str | None = Depends(get_current_user)) -> HTMLRespons
     index_file = STATIC_DIR / "index.html"
     if index_file.exists():
         try:
-            with open(index_file, "r", encoding="utf-8") as f:
+            with open(index_file, encoding="utf-8") as f:
                 content = f.read()
             return HTMLResponse(content=content)
-        except (IOError, OSError) as e:
+        except OSError as e:
             # Log the detailed error server-side, return generic message to client
             import logging
+
             logging.error(f"Failed to load dashboard: {e}")
             raise HTTPException(status_code=500, detail="Failed to load dashboard")
 
@@ -427,7 +435,9 @@ async def get_locks(user: str | None = Depends(get_current_user)) -> dict[str, A
 
 
 @api_v1.get("/messages")
-async def get_messages(limit: int = 50, user: str | None = Depends(get_current_user)) -> dict[str, Any]:
+async def get_messages(
+    limit: int = 50, user: str | None = Depends(get_current_user)
+) -> dict[str, Any]:
     """Get recent messages from log file.
 
     Args:
@@ -514,7 +524,7 @@ async def event_stream(user: str | None = Depends(get_current_user)) -> Streamin
         tracker = StateTracker()
 
         # Send initial connection event
-        yield f"event: connected\ndata: {json.dumps({'status': 'connected', 'timestamp': datetime.now(timezone.utc).isoformat()})}\n\n"
+        yield f"event: connected\ndata: {json.dumps({'status': 'connected', 'timestamp': datetime.now(UTC).isoformat()})}\n\n"
 
         while True:
             try:
@@ -541,7 +551,7 @@ async def event_stream(user: str | None = Depends(get_current_user)) -> Streamin
                 yield f"event: stats\ndata: {json.dumps(stats_data)}\n\n"
 
                 # Send heartbeat
-                yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.now(timezone.utc).isoformat()})}\n\n"
+                yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.now(UTC).isoformat()})}\n\n"
 
                 # Wait before next check
                 await asyncio.sleep(1.0)
@@ -552,10 +562,14 @@ async def event_stream(user: str | None = Depends(get_current_user)) -> Streamin
             except Exception as e:
                 # Log the full error server-side for debugging
                 import logging
+
                 logging.error(f"SSE stream error: {e}", exc_info=True)
 
                 # Send generic error to client without exposing internal details
-                error_data = {"error": "An error occurred", "timestamp": datetime.now(timezone.utc).isoformat()}
+                error_data = {
+                    "error": "An error occurred",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
                 yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
                 await asyncio.sleep(1.0)
 
@@ -576,7 +590,9 @@ app.include_router(api_v1)
 
 # Legacy API redirects for backwards compatibility
 @app.get("/api/agents")
-async def legacy_agents_redirect(request: Request, user: str | None = Depends(get_current_user)) -> RedirectResponse:
+async def legacy_agents_redirect(
+    request: Request, user: str | None = Depends(get_current_user)
+) -> RedirectResponse:
     """Redirect legacy /api/agents to /api/v1/agents."""
     url = "/api/v1/agents"
     if request.query_params:
@@ -585,7 +601,9 @@ async def legacy_agents_redirect(request: Request, user: str | None = Depends(ge
 
 
 @app.get("/api/locks")
-async def legacy_locks_redirect(request: Request, user: str | None = Depends(get_current_user)) -> RedirectResponse:
+async def legacy_locks_redirect(
+    request: Request, user: str | None = Depends(get_current_user)
+) -> RedirectResponse:
     """Redirect legacy /api/locks to /api/v1/locks."""
     url = "/api/v1/locks"
     if request.query_params:
@@ -594,7 +612,9 @@ async def legacy_locks_redirect(request: Request, user: str | None = Depends(get
 
 
 @app.get("/api/messages")
-async def legacy_messages_redirect(request: Request, user: str | None = Depends(get_current_user)) -> RedirectResponse:
+async def legacy_messages_redirect(
+    request: Request, user: str | None = Depends(get_current_user)
+) -> RedirectResponse:
     """Redirect legacy /api/messages to /api/v1/messages."""
     url = "/api/v1/messages"
     if request.query_params:
@@ -603,7 +623,9 @@ async def legacy_messages_redirect(request: Request, user: str | None = Depends(
 
 
 @app.get("/api/stats")
-async def legacy_stats_redirect(request: Request, user: str | None = Depends(get_current_user)) -> RedirectResponse:
+async def legacy_stats_redirect(
+    request: Request, user: str | None = Depends(get_current_user)
+) -> RedirectResponse:
     """Redirect legacy /api/stats to /api/v1/stats."""
     url = "/api/v1/stats"
     if request.query_params:
@@ -612,7 +634,9 @@ async def legacy_stats_redirect(request: Request, user: str | None = Depends(get
 
 
 @app.get("/api/stream")
-async def legacy_stream_redirect(request: Request, user: str | None = Depends(get_current_user)) -> RedirectResponse:
+async def legacy_stream_redirect(
+    request: Request, user: str | None = Depends(get_current_user)
+) -> RedirectResponse:
     """Redirect legacy /api/stream to /api/v1/stream."""
     url = "/api/v1/stream"
     if request.query_params:
@@ -629,7 +653,7 @@ async def health_check() -> dict[str, Any]:
     """
     return {
         "status": "healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "files": {
             "agents": ACTIVE_AGENTS_FILE.exists(),
             "messages": AGENT_MESSAGES_LOG.exists(),

@@ -10,12 +10,13 @@ Author: Agent-Security
 """
 
 import tempfile
-from pathlib import Path
-import pytest
 from datetime import datetime
+from pathlib import Path
 
-from claudeswarm.messaging import Message, MessageType, TmuxMessageDelivery
+import pytest
+
 from claudeswarm.locking import LockManager
+from claudeswarm.messaging import Message, MessageType, TmuxMessageDelivery
 
 
 class TestCommandInjectionPrevention:
@@ -75,9 +76,7 @@ class TestPathTraversalPrevention:
             # Attempt to lock file outside project using ..
             with pytest.raises(ValueError, match="Path traversal detected|outside project root"):
                 lm.acquire_lock(
-                    filepath="../../../etc/passwd",
-                    agent_id="agent-1",
-                    reason="malicious"
+                    filepath="../../../etc/passwd", agent_id="agent-1", reason="malicious"
                 )
 
     def test_rejects_absolute_path_outside_project(self):
@@ -90,11 +89,7 @@ class TestPathTraversalPrevention:
 
             # Attempt to lock file with absolute path outside project
             with pytest.raises(ValueError, match="outside project root"):
-                lm.acquire_lock(
-                    filepath="/etc/passwd",
-                    agent_id="agent-1",
-                    reason="malicious"
-                )
+                lm.acquire_lock(filepath="/etc/passwd", agent_id="agent-1", reason="malicious")
 
     def test_allows_valid_relative_paths(self):
         """Test that valid relative paths within project are allowed."""
@@ -105,9 +100,7 @@ class TestPathTraversalPrevention:
 
             # Valid relative path should work
             success, conflict = lm.acquire_lock(
-                filepath="src/test.py",
-                agent_id="agent-1",
-                reason="legitimate lock"
+                filepath="src/test.py", agent_id="agent-1", reason="legitimate lock"
             )
 
             assert success
@@ -122,9 +115,7 @@ class TestPathTraversalPrevention:
 
             # Valid path with subdirectories should work
             success, conflict = lm.acquire_lock(
-                filepath="src/auth/login.py",
-                agent_id="agent-1",
-                reason="legitimate lock"
+                filepath="src/auth/login.py", agent_id="agent-1", reason="legitimate lock"
             )
 
             assert success
@@ -189,7 +180,15 @@ class TestMonitoringCommandInjectionPrevention:
         from claudeswarm.monitoring import MessageFilter, MessageType
 
         # All valid MessageType values should work
-        valid_types = ["INFO", "QUESTION", "BLOCKED", "COMPLETED", "ACK", "CHALLENGE", "REVIEW-REQUEST"]
+        valid_types = [
+            "INFO",
+            "QUESTION",
+            "BLOCKED",
+            "COMPLETED",
+            "ACK",
+            "CHALLENGE",
+            "REVIEW-REQUEST",
+        ]
 
         for msg_type in valid_types:
             msg_filter = MessageFilter()
@@ -255,7 +254,7 @@ class TestMessageAuthentication:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="Test message",
-            recipients=["agent-2"]
+            recipients=["agent-2"],
         )
 
         # Initially no signature
@@ -275,7 +274,7 @@ class TestMessageAuthentication:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="Test message",
-            recipients=["agent-2"]
+            recipients=["agent-2"],
         )
 
         msg.sign()
@@ -290,7 +289,7 @@ class TestMessageAuthentication:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="Original message",
-            recipients=["agent-2"]
+            recipients=["agent-2"],
         )
 
         msg.sign()
@@ -308,7 +307,7 @@ class TestMessageAuthentication:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="Test message",
-            recipients=["agent-2"]
+            recipients=["agent-2"],
         )
 
         msg.sign()
@@ -326,7 +325,7 @@ class TestMessageAuthentication:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="Test message",
-            recipients=["agent-2"]
+            recipients=["agent-2"],
         )
 
         msg.sign()
@@ -343,7 +342,7 @@ class TestMessageAuthentication:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="Test message",
-            recipients=["agent-2"]
+            recipients=["agent-2"],
         )
 
         msg.sign()

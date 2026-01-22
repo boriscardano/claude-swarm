@@ -22,8 +22,9 @@ import ipaddress
 import os
 import re
 import unicodedata
+from collections.abc import Callable
 from pathlib import Path, PurePath
-from typing import Any, Callable, Optional, Tuple
+from typing import Any
 
 __all__ = [
     "ValidationError",
@@ -55,32 +56,32 @@ MIN_RATE_LIMIT_WINDOW = 1
 MAX_RATE_LIMIT_WINDOW = 3600
 
 # Pattern for valid agent IDs: alphanumeric + hyphens + underscores
-AGENT_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+AGENT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Pattern for valid tmux pane IDs: must match ^%\d+$ format
-TMUX_PANE_ID_PATTERN = re.compile(r'^%\d+$')
+TMUX_PANE_ID_PATTERN = re.compile(r"^%\d+$")
 
 # Dangerous Unicode characters to remove
 # Bidirectional text override characters (CVE-2021-42574 - Trojan Source attack)
 BIDI_OVERRIDE_CHARS = {
-    '\u202A',  # LEFT-TO-RIGHT EMBEDDING
-    '\u202B',  # RIGHT-TO-LEFT EMBEDDING
-    '\u202C',  # POP DIRECTIONAL FORMATTING
-    '\u202D',  # LEFT-TO-RIGHT OVERRIDE
-    '\u202E',  # RIGHT-TO-LEFT OVERRIDE
-    '\u2066',  # LEFT-TO-RIGHT ISOLATE
-    '\u2067',  # RIGHT-TO-LEFT ISOLATE
-    '\u2068',  # FIRST STRONG ISOLATE
-    '\u2069',  # POP DIRECTIONAL ISOLATE
+    "\u202a",  # LEFT-TO-RIGHT EMBEDDING
+    "\u202b",  # RIGHT-TO-LEFT EMBEDDING
+    "\u202c",  # POP DIRECTIONAL FORMATTING
+    "\u202d",  # LEFT-TO-RIGHT OVERRIDE
+    "\u202e",  # RIGHT-TO-LEFT OVERRIDE
+    "\u2066",  # LEFT-TO-RIGHT ISOLATE
+    "\u2067",  # RIGHT-TO-LEFT ISOLATE
+    "\u2068",  # FIRST STRONG ISOLATE
+    "\u2069",  # POP DIRECTIONAL ISOLATE
 }
 
 # Zero-width characters (can hide content)
 ZERO_WIDTH_CHARS = {
-    '\u200B',  # ZERO WIDTH SPACE
-    '\u200C',  # ZERO WIDTH NON-JOINER
-    '\u200D',  # ZERO WIDTH JOINER
-    '\u2060',  # WORD JOINER
-    '\uFEFF',  # ZERO WIDTH NO-BREAK SPACE (BOM)
+    "\u200b",  # ZERO WIDTH SPACE
+    "\u200c",  # ZERO WIDTH NON-JOINER
+    "\u200d",  # ZERO WIDTH JOINER
+    "\u2060",  # WORD JOINER
+    "\ufeff",  # ZERO WIDTH NO-BREAK SPACE (BOM)
 }
 
 # All dangerous Unicode characters combined
@@ -93,6 +94,7 @@ class ValidationError(ValueError):
     This is a subclass of ValueError for backward compatibility,
     but provides a more specific exception type for validation errors.
     """
+
     pass
 
 
@@ -126,9 +128,7 @@ def validate_agent_id(agent_id: Any) -> str:
     """
     # Type check
     if not isinstance(agent_id, str):
-        raise ValidationError(
-            f"Agent ID must be a string, got {type(agent_id).__name__}"
-        )
+        raise ValidationError(f"Agent ID must be a string, got {type(agent_id).__name__}")
 
     # Empty check
     if not agent_id or agent_id.strip() == "":
@@ -140,8 +140,7 @@ def validate_agent_id(agent_id: Any) -> str:
     # Length check
     if len(agent_id) > MAX_AGENT_ID_LENGTH:
         raise ValidationError(
-            f"Agent ID too long (max {MAX_AGENT_ID_LENGTH} characters, "
-            f"got {len(agent_id)})"
+            f"Agent ID too long (max {MAX_AGENT_ID_LENGTH} characters, " f"got {len(agent_id)})"
         )
 
     # Pattern check
@@ -152,10 +151,8 @@ def validate_agent_id(agent_id: Any) -> str:
         )
 
     # Edge cases: no leading/trailing hyphens
-    if agent_id.startswith('-') or agent_id.endswith('-'):
-        raise ValidationError(
-            f"Agent ID cannot start or end with a hyphen: '{agent_id}'"
-        )
+    if agent_id.startswith("-") or agent_id.endswith("-"):
+        raise ValidationError(f"Agent ID cannot start or end with a hyphen: '{agent_id}'")
 
     return agent_id
 
@@ -188,20 +185,17 @@ def validate_message_content(content: Any, max_length: int = MAX_MESSAGE_LENGTH)
     """
     # Type check
     if not isinstance(content, str):
-        raise ValidationError(
-            f"Message content must be a string, got {type(content).__name__}"
-        )
+        raise ValidationError(f"Message content must be a string, got {type(content).__name__}")
 
     # Empty check (after stripping)
     if not content.strip():
         raise ValidationError("Message content cannot be empty")
 
     # Length check (in bytes for Unicode safety)
-    content_bytes = content.encode('utf-8')
+    content_bytes = content.encode("utf-8")
     if len(content_bytes) > max_length:
         raise ValidationError(
-            f"Message content too long (max {max_length} bytes, "
-            f"got {len(content_bytes)} bytes)"
+            f"Message content too long (max {max_length} bytes, " f"got {len(content_bytes)} bytes)"
         )
 
     return content
@@ -236,25 +230,26 @@ def sanitize_message_content(content: str) -> str:
         content = str(content)
 
     # Remove null bytes
-    content = content.replace('\x00', '')
+    content = content.replace("\x00", "")
 
     # Remove dangerous Unicode characters (bidi overrides, zero-width)
     for char in DANGEROUS_UNICODE_CHARS:
-        content = content.replace(char, '')
+        content = content.replace(char, "")
 
     # Remove other control characters (keep tab \x09, newline \x0A, carriage return \x0D)
-    content = ''.join(
-        char for char in content
-        if char in '\t\n\r' or (ord(char) >= 32 and ord(char) < 127) or ord(char) >= 128
+    content = "".join(
+        char
+        for char in content
+        if char in "\t\n\r" or (ord(char) >= 32 and ord(char) < 127) or ord(char) >= 128
     )
 
     # Normalize line endings
-    content = content.replace('\r\n', '\n').replace('\r', '\n')
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
 
     # Trim each line
-    lines = content.split('\n')
+    lines = content.split("\n")
     lines = [line.rstrip() for line in lines]
-    content = '\n'.join(lines)
+    content = "\n".join(lines)
 
     # Trim overall
     content = content.strip()
@@ -262,7 +257,7 @@ def sanitize_message_content(content: str) -> str:
     return content
 
 
-def contains_dangerous_unicode(text: str) -> Tuple[bool, list[str]]:
+def contains_dangerous_unicode(text: str) -> tuple[bool, list[str]]:
     """Check if text contains dangerous Unicode characters.
 
     This function detects:
@@ -298,8 +293,8 @@ def validate_file_path(
     filepath: Any,
     must_exist: bool = False,
     must_be_relative: bool = False,
-    project_root: Optional[Path] = None,
-    check_traversal: bool = True
+    project_root: Path | None = None,
+    check_traversal: bool = True,
 ) -> Path:
     """Validate a file path.
 
@@ -344,26 +339,22 @@ def validate_file_path(
             raise ValidationError("File path cannot be empty")
 
         # Check for null bytes (common injection technique)
-        if '\x00' in filepath:
-            raise ValidationError(
-                f"Path contains null bytes: '{filepath}'"
-            )
+        if "\x00" in filepath:
+            raise ValidationError(f"Path contains null bytes: '{filepath}'")
 
         # Normalize Unicode to prevent homoglyph attacks
         # NFC (Canonical Decomposition, followed by Canonical Composition)
-        filepath = unicodedata.normalize('NFC', filepath)
+        filepath = unicodedata.normalize("NFC", filepath)
 
         # Normalize backslashes to forward slashes for cross-platform path traversal detection
         # On Windows, Path() handles both automatically, but on POSIX, backslashes are
         # treated as valid filename characters, which can bypass traversal detection
-        if '\\' in filepath:
+        if "\\" in filepath:
             # Check if this looks like a Windows-style path traversal
-            if '..\\' in filepath or '\\..\\' in filepath or filepath.endswith('\\..'):
-                raise ValidationError(
-                    f"Potentially dangerous path pattern detected: '{filepath}'"
-                )
+            if "..\\" in filepath or "\\..\\" in filepath or filepath.endswith("\\.."):
+                raise ValidationError(f"Potentially dangerous path pattern detected: '{filepath}'")
             # Also normalize backslashes for consistent handling
-            filepath = filepath.replace('\\', '/')
+            filepath = filepath.replace("\\", "/")
 
         try:
             path = Path(filepath)
@@ -372,15 +363,11 @@ def validate_file_path(
     elif isinstance(filepath, (Path, PurePath)):
         path = Path(filepath)
     else:
-        raise ValidationError(
-            f"File path must be a string or Path, got {type(filepath).__name__}"
-        )
+        raise ValidationError(f"File path must be a string or Path, got {type(filepath).__name__}")
 
     # Relative/absolute check
     if must_be_relative and path.is_absolute():
-        raise ValidationError(
-            f"File path must be relative, got absolute path: {path}"
-        )
+        raise ValidationError(f"File path must be relative, got absolute path: {path}")
 
     # Enhanced path traversal check using resolve() and relative_to()
     if check_traversal:
@@ -392,6 +379,7 @@ def validate_file_path(
             # Get project root
             if project_root is None:
                 from .project import get_project_root
+
                 project_root = get_project_root()
 
             try:
@@ -427,7 +415,9 @@ def validate_file_path(
                     # verify the symlink target using readlink (atomic operation)
                     if path.exists() and path.is_symlink():
                         # Use os.readlink for atomic symlink reading
-                        symlink_target = os.readlink(path if path.is_absolute() else project_root_resolved / path)
+                        symlink_target = os.readlink(
+                            path if path.is_absolute() else project_root_resolved / path
+                        )
                         # If symlink target is absolute, check it directly
                         if os.path.isabs(symlink_target):
                             target_path = Path(symlink_target).resolve(strict=False)
@@ -464,15 +454,15 @@ def validate_file_path(
     elif project_root is not None:
         try:
             project_root_resolved = Path(project_root).resolve()
-            resolved_path = path.resolve() if path.is_absolute() else (project_root_resolved / path).resolve()
+            resolved_path = (
+                path.resolve() if path.is_absolute() else (project_root_resolved / path).resolve()
+            )
 
             # Check if resolved path is within project root
             try:
                 resolved_path.relative_to(project_root_resolved)
             except ValueError:
-                raise ValidationError(
-                    f"File path is outside project root: {path}"
-                )
+                raise ValidationError(f"File path is outside project root: {path}")
         except (OSError, RuntimeError) as e:
             raise ValidationError(f"Error resolving path: {e}")
 
@@ -539,15 +529,12 @@ def validate_timeout(timeout: Any, min_val: int = MIN_TIMEOUT, max_val: int = MA
     try:
         timeout_int = int(timeout)
     except (TypeError, ValueError):
-        raise ValidationError(
-            f"Timeout must be an integer, got {type(timeout).__name__}"
-        )
+        raise ValidationError(f"Timeout must be an integer, got {type(timeout).__name__}")
 
     # Range check
     if timeout_int < min_val or timeout_int > max_val:
         raise ValidationError(
-            f"Timeout must be between {min_val} and {max_val} seconds, "
-            f"got {timeout_int}"
+            f"Timeout must be between {min_val} and {max_val} seconds, " f"got {timeout_int}"
         )
 
     return timeout_int
@@ -583,9 +570,7 @@ def validate_retry_count(retry_count: Any, max_retries: int = MAX_RETRY_COUNT) -
     try:
         count_int = int(retry_count)
     except (TypeError, ValueError):
-        raise ValidationError(
-            f"Retry count must be an integer, got {type(retry_count).__name__}"
-        )
+        raise ValidationError(f"Retry count must be an integer, got {type(retry_count).__name__}")
 
     # Non-negative check
     if count_int < 0:
@@ -593,17 +578,12 @@ def validate_retry_count(retry_count: Any, max_retries: int = MAX_RETRY_COUNT) -
 
     # Max check
     if count_int > max_retries:
-        raise ValidationError(
-            f"Retry count must not exceed {max_retries}, got {count_int}"
-        )
+        raise ValidationError(f"Retry count must not exceed {max_retries}, got {count_int}")
 
     return count_int
 
 
-def validate_rate_limit_config(
-    max_messages: Any,
-    window_seconds: Any
-) -> tuple[int, int]:
+def validate_rate_limit_config(max_messages: Any, window_seconds: Any) -> tuple[int, int]:
     """Validate rate limit configuration.
 
     Args:
@@ -626,9 +606,7 @@ def validate_rate_limit_config(
     try:
         max_msg_int = int(max_messages)
     except (TypeError, ValueError):
-        raise ValidationError(
-            f"max_messages must be an integer, got {type(max_messages).__name__}"
-        )
+        raise ValidationError(f"max_messages must be an integer, got {type(max_messages).__name__}")
 
     if max_msg_int < MIN_RATE_LIMIT_MESSAGES or max_msg_int > MAX_RATE_LIMIT_MESSAGES:
         raise ValidationError(
@@ -682,8 +660,7 @@ def validate_recipient_list(recipients: Any) -> list[str]:
     # Type check
     if not isinstance(recipients, (list, tuple, set)):
         raise ValidationError(
-            f"Recipients must be a list, tuple, or set, "
-            f"got {type(recipients).__name__}"
+            f"Recipients must be a list, tuple, or set, " f"got {type(recipients).__name__}"
         )
 
     # Convert to list
@@ -701,15 +678,11 @@ def validate_recipient_list(recipients: Any) -> list[str]:
         try:
             validated_id = validate_agent_id(recipient)
         except ValidationError as e:
-            raise ValidationError(
-                f"Invalid recipient agent ID at index {i}: {e}"
-            )
+            raise ValidationError(f"Invalid recipient agent ID at index {i}: {e}")
 
         # Check for duplicates
         if validated_id in seen:
-            raise ValidationError(
-                f"Duplicate recipient at index {i}: '{validated_id}'"
-            )
+            raise ValidationError(f"Duplicate recipient at index {i}: '{validated_id}'")
 
         seen.add(validated_id)
         validated_recipients.append(validated_id)
@@ -749,9 +722,7 @@ def validate_tmux_pane_id(pane_id: Any) -> str:
     """
     # Type check
     if not isinstance(pane_id, str):
-        raise ValidationError(
-            f"Tmux pane ID must be a string, got {type(pane_id).__name__}"
-        )
+        raise ValidationError(f"Tmux pane ID must be a string, got {type(pane_id).__name__}")
 
     # Empty check
     if not pane_id:
@@ -769,28 +740,28 @@ def validate_tmux_pane_id(pane_id: Any) -> str:
 
 # Valid hostname pattern (RFC 1123)
 HOSTNAME_PATTERN = re.compile(
-    r'^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.[A-Za-z0-9-]{1,63})*$'
+    r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.[A-Za-z0-9-]{1,63})*$"
 )
 
 
 def validate_host(
     host: str,
     allow_all_interfaces: bool = False,
-    warn_callback: Optional[Callable[[str], None]] = None
+    warn_callback: Callable[[str], None] | None = None,
 ) -> str:
     """Validate a hostname or IP address.
-    
+
     Args:
         host: Hostname or IP address to validate
         allow_all_interfaces: If False, warn about 0.0.0.0
         warn_callback: Optional callback to issue warnings
-        
+
     Returns:
         Validated host string
-        
+
     Raises:
         ValidationError: If host is invalid
-        
+
     Examples:
         >>> validate_host("localhost")
         'localhost'
@@ -805,17 +776,17 @@ def validate_host(
     """
     if not host or not isinstance(host, str):
         raise ValidationError("Host must be a non-empty string")
-    
+
     host = host.strip()
-    
+
     # Check for dangerous all-interfaces binding
-    if host in ('0.0.0.0', '::') and not allow_all_interfaces:
+    if host in ("0.0.0.0", "::") and not allow_all_interfaces:
         if warn_callback:
             warn_callback(
                 f"Warning: Binding to '{host}' exposes the service to all network interfaces. "
                 "Consider using '127.0.0.1' or 'localhost' for local-only access."
             )
-    
+
     # Try parsing as IP address first
     try:
         ip = ipaddress.ip_address(host)
@@ -828,29 +799,29 @@ def validate_host(
         return host
     except ValueError:
         pass
-    
+
     # Validate as hostname
     if not HOSTNAME_PATTERN.match(host):
         raise ValidationError(
             f"Invalid hostname: '{host}'. Must be a valid hostname or IP address."
         )
-    
+
     return host
 
 
 def validate_port(port: Any, allow_privileged: bool = False) -> int:
     """Validate a port number.
-    
+
     Args:
         port: Port number to validate
         allow_privileged: If False, warn about ports < 1024
-        
+
     Returns:
         Validated port as integer
-        
+
     Raises:
         ValidationError: If port is invalid
-        
+
     Examples:
         >>> validate_port(8080)
         8080
@@ -867,8 +838,8 @@ def validate_port(port: Any, allow_privileged: bool = False) -> int:
         port = int(port)
     except (TypeError, ValueError):
         raise ValidationError(f"Port must be an integer, got: {type(port).__name__}")
-    
+
     if port < 1 or port > 65535:
         raise ValidationError(f"Port must be between 1 and 65535, got: {port}")
-    
+
     return port

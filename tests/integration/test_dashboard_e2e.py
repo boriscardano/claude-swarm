@@ -9,8 +9,6 @@ Author: Agent 4 - Tests & Documentation
 import json
 import multiprocessing
 import time
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 import requests
@@ -37,17 +35,14 @@ class TestDashboardE2E:
         locks_dir = project_root / ".agent_locks"
         locks_dir.mkdir()
 
-        return {
-            "agents": agents_file,
-            "messages": messages_file,
-            "locks_dir": locks_dir
-        }
+        return {"agents": agents_file, "messages": messages_file, "locks_dir": locks_dir}
 
     def start_dashboard_server(self, port, project_root):
         """Start dashboard server in subprocess."""
         try:
-            from src.claudeswarm.web.server import create_app
             import uvicorn
+
+            from src.claudeswarm.web.server import create_app
 
             app = create_app(project_root=str(project_root))
             uvicorn.run(app, host="127.0.0.1", port=port, log_level="error")
@@ -77,8 +72,7 @@ class TestDashboardE2E:
 
         # Start server in subprocess
         server_process = multiprocessing.Process(
-            target=self.start_dashboard_server,
-            args=(test_port, project_root)
+            target=self.start_dashboard_server, args=(test_port, project_root)
         )
         server_process.start()
 
@@ -113,8 +107,7 @@ class TestDashboardE2E:
 
         # Start dashboard
         server_process = multiprocessing.Process(
-            target=self.start_dashboard_server,
-            args=(test_port, project_root)
+            target=self.start_dashboard_server, args=(test_port, project_root)
         )
         server_process.start()
 
@@ -128,7 +121,7 @@ class TestDashboardE2E:
                         "id": "agent-0",
                         "pane_index": "main:0.0",
                         "status": "active",
-                        "last_seen": "2025-11-10T12:00:00Z"
+                        "last_seen": "2025-11-10T12:00:00Z",
                     }
                 ]
             }
@@ -159,8 +152,7 @@ class TestDashboardE2E:
 
         # Start dashboard
         server_process = multiprocessing.Process(
-            target=self.start_dashboard_server,
-            args=(test_port, project_root)
+            target=self.start_dashboard_server, args=(test_port, project_root)
         )
         server_process.start()
 
@@ -172,7 +164,7 @@ class TestDashboardE2E:
                 "sender_id": "agent-0",
                 "msg_type": "INFO",
                 "content": "Test message",
-                "timestamp": "2025-11-10T12:00:00Z"
+                "timestamp": "2025-11-10T12:00:00Z",
             }
             with dashboard_files["messages"].open("a") as f:
                 f.write(json.dumps(message) + "\n")
@@ -202,8 +194,7 @@ class TestDashboardE2E:
 
         # Start dashboard
         server_process = multiprocessing.Process(
-            target=self.start_dashboard_server,
-            args=(test_port, project_root)
+            target=self.start_dashboard_server, args=(test_port, project_root)
         )
         server_process.start()
 
@@ -215,7 +206,7 @@ class TestDashboardE2E:
                 "filepath": "src/test.py",
                 "agent_id": "agent-1",
                 "reason": "Testing",
-                "locked_at": time.time()
+                "locked_at": time.time(),
             }
             lock_file = dashboard_files["locks_dir"] / "test.py.lock"
             lock_file.write_text(json.dumps(lock_data))
@@ -245,8 +236,7 @@ class TestDashboardE2E:
 
         # Start dashboard
         server_process = multiprocessing.Process(
-            target=self.start_dashboard_server,
-            args=(test_port, project_root)
+            target=self.start_dashboard_server, args=(test_port, project_root)
         )
         server_process.start()
 
@@ -282,8 +272,7 @@ class TestDashboardE2E:
 
         # Start dashboard
         server_process = multiprocessing.Process(
-            target=self.start_dashboard_server,
-            args=(test_port, project_root)
+            target=self.start_dashboard_server, args=(test_port, project_root)
         )
         server_process.start()
 
@@ -292,9 +281,7 @@ class TestDashboardE2E:
 
             # Connect to SSE stream (with short timeout)
             response = requests.get(
-                f"http://127.0.0.1:{test_port}/api/stream",
-                stream=True,
-                timeout=2
+                f"http://127.0.0.1:{test_port}/api/stream", stream=True, timeout=2
             )
 
             # Verify SSE headers
@@ -327,8 +314,7 @@ class TestDashboardE2E:
 
         # Start dashboard
         server_process = multiprocessing.Process(
-            target=self.start_dashboard_server,
-            args=(test_port, project_root)
+            target=self.start_dashboard_server, args=(test_port, project_root)
         )
         server_process.start()
 
@@ -360,8 +346,7 @@ class TestDashboardE2E:
 
         # Start first server
         server1 = multiprocessing.Process(
-            target=self.start_dashboard_server,
-            args=(test_port, project_root)
+            target=self.start_dashboard_server, args=(test_port, project_root)
         )
         server1.start()
 
@@ -370,8 +355,7 @@ class TestDashboardE2E:
 
             # Try to start second server on same port
             server2 = multiprocessing.Process(
-                target=self.start_dashboard_server,
-                args=(test_port, project_root)
+                target=self.start_dashboard_server, args=(test_port, project_root)
             )
             server2.start()
 
@@ -386,7 +370,7 @@ class TestDashboardE2E:
             server1.join(timeout=5)
             if server1.is_alive():
                 server1.kill()
-            if 'server2' in locals():
+            if "server2" in locals():
                 server2.terminate()
                 server2.join(timeout=5)
                 if server2.is_alive():
@@ -402,8 +386,7 @@ class TestDashboardE2E:
 
         # Start dashboard
         server_process = multiprocessing.Process(
-            target=self.start_dashboard_server,
-            args=(test_port, project_root)
+            target=self.start_dashboard_server, args=(test_port, project_root)
         )
         server_process.start()
 
@@ -417,7 +400,7 @@ class TestDashboardE2E:
                     "sender_id": f"agent-{i % 3}",
                     "msg_type": "INFO",
                     "content": f"Message {i}",
-                    "timestamp": f"2025-11-10T12:{i % 60:02d}:00Z"
+                    "timestamp": f"2025-11-10T12:{i % 60:02d}:00Z",
                 }
                 messages.append(json.dumps(message))
 
@@ -449,15 +432,12 @@ class TestDashboardCLIIntegration:
             pytest.skip("Dashboard CLI not implemented yet")
 
         import argparse
+
         args = argparse.Namespace(
-            project_root=tmp_path,
-            port=8889,
-            host="127.0.0.1",
-            no_browser=True,
-            reload=False
+            project_root=tmp_path, port=8889, host="127.0.0.1", no_browser=True, reload=False
         )
 
         # This test just verifies the command exists and accepts args
         # Full testing would require mocking the server
-        assert hasattr(args, 'port')
-        assert hasattr(args, 'no_browser')
+        assert hasattr(args, "port")
+        assert hasattr(args, "no_browser")

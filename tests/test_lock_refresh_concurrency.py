@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from claudeswarm.locking import FileLock, LockManager
+from claudeswarm.locking import LockManager
 
 
 @pytest.fixture
@@ -131,9 +131,7 @@ class TestLockRefreshAtomicity:
             """Agent 1 continuously refreshes their lock."""
             while not stop_flag:
                 try:
-                    success, conflict = lock_manager.acquire_lock(
-                        filepath, "agent-1", "refresh"
-                    )
+                    success, conflict = lock_manager.acquire_lock(filepath, "agent-1", "refresh")
                     results["agent-1"].append((success, conflict))
                     time.sleep(0.001)
                 except Exception as e:
@@ -144,9 +142,7 @@ class TestLockRefreshAtomicity:
             """Agent 2 continuously tries to acquire lock."""
             while not stop_flag:
                 try:
-                    success, conflict = lock_manager.acquire_lock(
-                        filepath, "agent-2", "steal"
-                    )
+                    success, conflict = lock_manager.acquire_lock(filepath, "agent-2", "steal")
                     results["agent-2"].append((success, conflict))
                     time.sleep(0.001)
                 except Exception as e:
@@ -221,6 +217,7 @@ class TestLockRefreshAtomicity:
         # Make lock directory read-only to cause write errors
         # (We'll do this by creating a mock that raises an error)
         import os
+
         original_replace = os.replace
 
         call_count = [0]
@@ -271,9 +268,7 @@ class TestLockRefreshAtomicity:
             """Agent continuously refreshes their lock."""
             while not stop_flag:
                 try:
-                    success, conflict = lock_manager.acquire_lock(
-                        filepath, agent_id, "refresh"
-                    )
+                    success, conflict = lock_manager.acquire_lock(filepath, agent_id, "refresh")
                     results[agent_id].append((success, conflict))
                     time.sleep(0.001)
                 except Exception as e:
@@ -390,7 +385,7 @@ class TestLockRefreshAtomicity:
 
         # All should succeed
         assert len(results) == 50
-        for iteration, success, conflict in results:
+        for iteration, success, _conflict in results:
             assert success, f"Refresh {iteration} failed"
 
         # Lock should exist and be valid
@@ -431,13 +426,12 @@ class TestAtomicRenameImplementation:
 
     def test_temp_file_naming_convention(self, lock_manager):
         """Test that temp files use .lock.tmp suffix."""
-        import os
 
         filepath = "test.py"
         lock_manager.acquire_lock(filepath, "agent-1", "initial")
 
         lock_path = lock_manager._get_lock_path(filepath)
-        expected_temp_path = lock_path.with_suffix('.lock.tmp')
+        expected_temp_path = lock_path.with_suffix(".lock.tmp")
 
         # Track temp file creation
         temp_file_created = False
@@ -445,7 +439,7 @@ class TestAtomicRenameImplementation:
 
         def tracked_open(self, *args, **kwargs):
             nonlocal temp_file_created
-            if self.suffix == '.tmp':
+            if self.suffix == ".tmp":
                 temp_file_created = True
                 assert self == expected_temp_path, f"Wrong temp path: {self}"
             return original_open(self, *args, **kwargs)

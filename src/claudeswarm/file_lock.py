@@ -20,7 +20,6 @@ import stat
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
 
 from .logging_config import get_logger
 
@@ -31,14 +30,16 @@ LOCK_RETRY_INTERVAL = 0.05  # 50ms between lock attempts
 
 # Platform-specific imports
 _system = platform.system()
-if _system in ('Linux', 'Darwin'):  # Unix-like systems
+if _system in ("Linux", "Darwin"):  # Unix-like systems
     import fcntl
-    _LOCK_MODULE = 'fcntl'
-elif _system == 'Windows':
-    import msvcrt
+
+    _LOCK_MODULE = "fcntl"
+elif _system == "Windows":
     import ctypes
+    import msvcrt
     from ctypes import wintypes
-    _LOCK_MODULE = 'win32'
+
+    _LOCK_MODULE = "win32"
 
     # Win32 API constants for LockFileEx
     LOCKFILE_FAIL_IMMEDIATELY = 0x00000001
@@ -50,21 +51,21 @@ elif _system == 'Windows':
     # LockFileEx signature
     kernel32.LockFileEx.argtypes = [
         wintypes.HANDLE,  # hFile
-        wintypes.DWORD,   # dwFlags
-        wintypes.DWORD,   # dwReserved
-        wintypes.DWORD,   # nNumberOfBytesToLockLow
-        wintypes.DWORD,   # nNumberOfBytesToLockHigh
-        ctypes.POINTER(wintypes.OVERLAPPED)  # lpOverlapped
+        wintypes.DWORD,  # dwFlags
+        wintypes.DWORD,  # dwReserved
+        wintypes.DWORD,  # nNumberOfBytesToLockLow
+        wintypes.DWORD,  # nNumberOfBytesToLockHigh
+        ctypes.POINTER(wintypes.OVERLAPPED),  # lpOverlapped
     ]
     kernel32.LockFileEx.restype = wintypes.BOOL
 
     # UnlockFileEx signature
     kernel32.UnlockFileEx.argtypes = [
         wintypes.HANDLE,  # hFile
-        wintypes.DWORD,   # dwReserved
-        wintypes.DWORD,   # nNumberOfBytesToUnlockLow
-        wintypes.DWORD,   # nNumberOfBytesToUnlockHigh
-        ctypes.POINTER(wintypes.OVERLAPPED)  # lpOverlapped
+        wintypes.DWORD,  # dwReserved
+        wintypes.DWORD,  # nNumberOfBytesToUnlockLow
+        wintypes.DWORD,  # nNumberOfBytesToUnlockHigh
+        ctypes.POINTER(wintypes.OVERLAPPED),  # lpOverlapped
     ]
     kernel32.UnlockFileEx.restype = wintypes.BOOL
 
@@ -90,7 +91,7 @@ elif _system == 'Windows':
     # GetFileInformationByHandle signature
     kernel32.GetFileInformationByHandle.argtypes = [
         wintypes.HANDLE,
-        ctypes.POINTER(BY_HANDLE_FILE_INFORMATION)
+        ctypes.POINTER(BY_HANDLE_FILE_INFORMATION),
     ]
     kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
 else:
@@ -100,16 +101,19 @@ else:
 
 class FileLockError(Exception):
     """Base exception for file locking errors."""
+
     pass
 
 
 class FileLockTimeout(FileLockError):
     """Raised when file lock acquisition times out."""
+
     pass
 
 
 class FileLockUnsupported(FileLockError):
     """Raised when file locking is not supported on this platform."""
+
     pass
 
 
@@ -149,12 +153,7 @@ class FileLock:
                 data = json.load(f)
     """
 
-    def __init__(
-        self,
-        file_path: Path | str,
-        timeout: Optional[float] = 10.0,
-        shared: bool = False
-    ):
+    def __init__(self, file_path: Path | str, timeout: float | None = 10.0, shared: bool = False):
         """Initialize file lock.
 
         Args:
@@ -163,9 +162,7 @@ class FileLock:
             shared: If True, use shared lock (read); if False, exclusive lock (write)
         """
         if _LOCK_MODULE is None:
-            raise FileLockUnsupported(
-                f"File locking not supported on platform: {_system}"
-            )
+            raise FileLockUnsupported(f"File locking not supported on platform: {_system}")
 
         self.file_path = Path(file_path)
         self.timeout = timeout
@@ -228,9 +225,9 @@ class FileLock:
 
         while True:
             try:
-                if _LOCK_MODULE == 'fcntl':
+                if _LOCK_MODULE == "fcntl":
                     self._acquire_fcntl()
-                elif _LOCK_MODULE == 'win32':
+                elif _LOCK_MODULE == "win32":
                     self._acquire_win32()
 
                 # Verify file integrity after acquiring lock
@@ -244,7 +241,7 @@ class FileLock:
                 )
                 return
 
-            except (IOError, OSError) as e:
+            except OSError as e:
                 # Lock is held by another process
                 if self.timeout is None:
                     # Wait indefinitely
@@ -267,7 +264,7 @@ class FileLock:
             IOError: If lock cannot be acquired (file handle closed on error)
         """
         # Open file in binary mode for cross-platform compatibility
-        mode = 'rb' if self.shared else 'r+b'
+        mode = "rb" if self.shared else "r+b"
         lock_file = None
 
         try:
@@ -306,7 +303,7 @@ class FileLock:
             IOError: If lock cannot be acquired (file handle closed on error)
         """
         # Open file in binary mode for cross-platform compatibility
-        mode = 'rb' if self.shared else 'r+b'
+        mode = "rb" if self.shared else "r+b"
         lock_file = None
 
         try:
@@ -320,10 +317,7 @@ class FileLock:
 
             # Get proper Windows file identity using GetFileInformationByHandle
             file_info = BY_HANDLE_FILE_INFORMATION()
-            result = kernel32.GetFileInformationByHandle(
-                file_handle,
-                ctypes.byref(file_info)
-            )
+            result = kernel32.GetFileInformationByHandle(file_handle, ctypes.byref(file_info))
             if not result:
                 error_code = kernel32.GetLastError()
                 raise FileLockError(
@@ -335,7 +329,7 @@ class FileLock:
             self._file_inode = (
                 file_info.dwVolumeSerialNumber,
                 file_info.nFileIndexHigh,
-                file_info.nFileIndexLow
+                file_info.nFileIndexLow,
             )
 
             # Set lock flags
@@ -355,12 +349,12 @@ class FileLock:
                 0,  # dwReserved
                 1,  # nNumberOfBytesToLockLow (lock 1 byte)
                 0,  # nNumberOfBytesToLockHigh
-                ctypes.byref(overlapped)
+                ctypes.byref(overlapped),
             )
 
             if not result:
                 error_code = kernel32.GetLastError()
-                raise IOError(
+                raise OSError(
                     f"Failed to acquire lock on {self.file_path}. "
                     f"Win32 error code: {error_code}"
                 )
@@ -395,17 +389,14 @@ class FileLock:
                 )
 
             # Get current file identity based on platform
-            if _LOCK_MODULE == 'win32':
+            if _LOCK_MODULE == "win32":
                 # Use Windows file identity via GetFileInformationByHandle
                 file_handle = msvcrt.get_osfhandle(self._lock_fd)
                 if file_handle == -1:
                     raise FileLockError("Failed to get OS file handle for integrity check")
 
                 file_info = BY_HANDLE_FILE_INFORMATION()
-                result = kernel32.GetFileInformationByHandle(
-                    file_handle,
-                    ctypes.byref(file_info)
-                )
+                result = kernel32.GetFileInformationByHandle(file_handle, ctypes.byref(file_info))
                 if not result:
                     error_code = kernel32.GetLastError()
                     raise FileLockError(
@@ -416,7 +407,7 @@ class FileLock:
                 current_inode = (
                     file_info.dwVolumeSerialNumber,
                     file_info.nFileIndexHigh,
-                    file_info.nFileIndexLow
+                    file_info.nFileIndexLow,
                 )
             else:
                 # Use Unix inode for file identity
@@ -447,9 +438,9 @@ class FileLock:
             return
 
         try:
-            if _LOCK_MODULE == 'fcntl':
+            if _LOCK_MODULE == "fcntl":
                 self._release_fcntl()
-            elif _LOCK_MODULE == 'win32':
+            elif _LOCK_MODULE == "win32":
                 self._release_win32()
 
             logger.debug(f"Released lock on {self.file_path}")
@@ -493,7 +484,7 @@ class FileLock:
                 0,  # dwReserved
                 1,  # nNumberOfBytesToUnlockLow
                 0,  # nNumberOfBytesToUnlockHigh
-                ctypes.byref(overlapped)
+                ctypes.byref(overlapped),
             )
 
             if not result:
@@ -505,11 +496,7 @@ class FileLock:
 
 
 @contextmanager
-def file_lock(
-    file_path: Path | str,
-    timeout: Optional[float] = 10.0,
-    shared: bool = False
-):
+def file_lock(file_path: Path | str, timeout: float | None = 10.0, shared: bool = False):
     """Context manager for file locking (convenience wrapper).
 
     Args:

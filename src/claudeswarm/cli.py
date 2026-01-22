@@ -1023,8 +1023,7 @@ def _prepare_onboarding_content(agents: list) -> list[str]:
     agent_list = ", ".join(a.id for a in agents)
 
     # Single comprehensive onboarding message
-    return [
-        f"""=== CLAUDE SWARM COORDINATION ACTIVE ===
+    return [f"""=== CLAUDE SWARM COORDINATION ACTIVE ===
 Multi-agent coordination is now available in this session.
 
 ACTIVE AGENTS: {agent_list}
@@ -1086,8 +1085,7 @@ DOCUMENTATION & HELP:
 • claudeswarm --help - All available commands
 • COORDINATION.md - Sprint goals and current work assignments
 
-COORDINATION READY! 🎉"""
-    ]
+COORDINATION READY! 🎉"""]
 
 
 def _send_onboarding_messages(
@@ -2964,8 +2962,7 @@ def main() -> NoReturn:
 
 def print_help() -> None:
     """Print CLI help message."""
-    print(
-        """
+    print("""
 Claude Swarm - Multi-agent coordination system
 
 Usage:
@@ -3012,8 +3009,7 @@ Other:
 
 For detailed help on each command, run:
     claudeswarm <command> --help
-"""
-    )
+""")
 
 
 def print_version() -> None:

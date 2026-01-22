@@ -9,11 +9,10 @@ agents to call MCP methods.
 import asyncio
 import time
 from collections import defaultdict
-from typing import Any, Optional
+from typing import Any
 
 import docker
 import httpx
-from docker.models.containers import Container
 
 from claudeswarm.cloud.security_utils import (
     ValidationError,
@@ -109,7 +108,7 @@ class MCPBridge:
         self.mcp_containers: dict[str, MCPContainerInfo] = {}
         self.mcp_configs: dict[str, MCPConfig] = {}
         self._rate_limiters: dict[str, list[float]] = defaultdict(list)
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> "MCPBridge":
         """Async context manager entry."""
@@ -120,9 +119,7 @@ class MCPBridge:
         """Async context manager exit."""
         await self.cleanup()
 
-    async def attach_mcp(
-        self, mcp_type: MCPType, config: MCPConfig
-    ) -> MCPContainerInfo:
+    async def attach_mcp(self, mcp_type: MCPType, config: MCPConfig) -> MCPContainerInfo:
         """
         Attach an MCP server by starting its Docker container.
 
@@ -179,9 +176,13 @@ class MCPBridge:
 
             # Security: Sanitize environment variables for logging
             # Check for common credential patterns in environment variable names
-            credential_patterns = ['key', 'token', 'secret', 'password', 'auth', 'credential']
-            safe_env = {
-                k: sanitize_api_key_for_logging(v) if any(pattern in k.lower() for pattern in credential_patterns) else v
+            credential_patterns = ["key", "token", "secret", "password", "auth", "credential"]
+            {
+                k: (
+                    sanitize_api_key_for_logging(v)
+                    if any(pattern in k.lower() for pattern in credential_patterns)
+                    else v
+                )
                 for k, v in config.environment.items()
             }
 
@@ -206,7 +207,7 @@ class MCPBridge:
 
             # Get container network info
             container.reload()
-            ip_address = container.attrs['NetworkSettings']['IPAddress']
+            ip_address = container.attrs["NetworkSettings"]["IPAddress"]
             if not ip_address:
                 # If bridge mode, use localhost
                 ip_address = "127.0.0.1"
@@ -238,9 +239,7 @@ class MCPBridge:
                 original_error=e,
             ) from e
 
-    async def call_mcp(
-        self, mcp_name: str, method: str, params: dict[str, Any]
-    ) -> MCPResponse:
+    async def call_mcp(self, mcp_name: str, method: str, params: dict[str, Any]) -> MCPResponse:
         """
         Call an MCP server method with retry logic and rate limiting.
 
@@ -304,7 +303,7 @@ class MCPBridge:
 
         # Make request with retries
         start_time = time.time()
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
 
         for retry_count in range(config.max_retries):
             try:
@@ -368,9 +367,7 @@ class MCPBridge:
         # This is a placeholder - real MCP servers may use different protocols
         url = f"{endpoint_url}/mcp/{method}"
 
-        response = await self._http_client.post(
-            url, json=params, timeout=timeout
-        )
+        response = await self._http_client.post(url, json=params, timeout=timeout)
         response.raise_for_status()
 
         return response.json()
@@ -406,9 +403,7 @@ class MCPBridge:
         # Record this request
         self._rate_limiters[mcp_name].append(now)
 
-    async def _wait_for_health(
-        self, container_info: MCPContainerInfo, timeout: float = 30
-    ) -> None:
+    async def _wait_for_health(self, container_info: MCPContainerInfo, timeout: float = 30) -> None:
         """
         Wait for MCP container to become healthy.
 
@@ -432,8 +427,7 @@ class MCPBridge:
 
                 # Simple health check - try to reach the endpoint
                 response = await self._http_client.get(
-                    f"{container_info.endpoint_url}/health",
-                    timeout=2.0
+                    f"{container_info.endpoint_url}/health", timeout=2.0
                 )
 
                 if response.status_code == 200:
@@ -453,7 +447,7 @@ class MCPBridge:
             method="_wait_for_health",
         )
 
-    def get_mcp_status(self, mcp_name: str) -> Optional[MCPContainerInfo]:
+    def get_mcp_status(self, mcp_name: str) -> MCPContainerInfo | None:
         """
         Get status of an MCP container.
 

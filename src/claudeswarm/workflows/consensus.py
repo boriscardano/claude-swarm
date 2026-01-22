@@ -15,17 +15,17 @@ Author: agent-1
 Created: 2025-11-19 (E2B Hackathon Prep)
 """
 
-from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from threading import Lock
 
-from claudeswarm.messaging import MessagingSystem, MessageType, MessageDeliveryError
+from claudeswarm.messaging import MessageDeliveryError, MessageType, MessagingSystem
 
 
 class VoteOption(Enum):
     """Vote options for binary decisions"""
+
     OPTION_A = "A"
     OPTION_B = "B"
     ABSTAIN = "ABSTAIN"
@@ -43,10 +43,11 @@ class Vote:
         evidence: Links to research/docs supporting their vote
         confidence: How confident they are (0.0 to 1.0)
     """
+
     agent_id: str
     option: VoteOption
     rationale: str
-    evidence: List[str] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
     confidence: float = 1.0
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -65,10 +66,11 @@ class ConsensusResult:
         confidence: Overall confidence in decision
         unanimous: Whether all agents agreed
     """
+
     topic: str
     winner: VoteOption
-    votes: List[Vote]
-    vote_counts: Dict[VoteOption, int]
+    votes: list[Vote]
+    vote_counts: dict[VoteOption, int]
     decision_rationale: str
     confidence: float
     unanimous: bool
@@ -77,6 +79,7 @@ class ConsensusResult:
 
 class ConsensusStrategy(Enum):
     """Different strategies for reaching consensus"""
+
     SIMPLE_MAJORITY = "simple_majority"  # >50% wins
     SUPERMAJORITY = "supermajority"  # ≥66% wins
     UNANIMOUS = "unanimous"  # 100% agreement
@@ -112,9 +115,7 @@ class ConsensusEngine:
     MAX_STRING_LENGTH = 1000
 
     def __init__(
-        self,
-        num_agents: int = 4,
-        strategy: ConsensusStrategy = ConsensusStrategy.EVIDENCE_BASED
+        self, num_agents: int = 4, strategy: ConsensusStrategy = ConsensusStrategy.EVIDENCE_BASED
     ):
         if num_agents > self.MAX_AGENTS:
             raise ValueError(f"num_agents must not exceed {self.MAX_AGENTS}")
@@ -123,8 +124,8 @@ class ConsensusEngine:
 
         self.num_agents = num_agents
         self.strategy = strategy
-        self.active_votes: Dict[str, List[Vote]] = {}
-        self.completed_votes: List[ConsensusResult] = []
+        self.active_votes: dict[str, list[Vote]] = {}
+        self.completed_votes: list[ConsensusResult] = []
         self.messaging = MessagingSystem()
         self._vote_lock = Lock()  # Thread safety for vote operations
 
@@ -133,10 +134,10 @@ class ConsensusEngine:
         topic: str,
         option_a: str,
         option_b: str,
-        agents: List[str],
-        evidence_a: Optional[List[str]] = None,
-        evidence_b: Optional[List[str]] = None,
-        timeout: int = 300
+        agents: list[str],
+        evidence_a: list[str] | None = None,
+        evidence_b: list[str] | None = None,
+        timeout: int = 300,
     ) -> str:
         """
         Start a consensus vote.
@@ -185,16 +186,13 @@ class ConsensusEngine:
 
         # Broadcast vote request
         vote_message = self._format_vote_request(
-            topic, option_a, option_b,
-            evidence_a or [], evidence_b or []
+            topic, option_a, option_b, evidence_a or [], evidence_b or []
         )
 
         try:
             # Broadcast and check delivery status
             delivery_status = self.messaging.broadcast_message(
-                sender_id="consensus-engine",
-                msg_type=MessageType.QUESTION,
-                content=vote_message
+                sender_id="consensus-engine", msg_type=MessageType.QUESTION, content=vote_message
             )
 
             # Check if broadcast succeeded
@@ -204,7 +202,9 @@ class ConsensusEngine:
             if success_count == 0:
                 raise MessageDeliveryError("Vote broadcast failed - no agents reachable")
             elif success_count < total_agents // 2:
-                print(f"⚠️  Only {success_count}/{total_agents} agents reached - consensus may fail")
+                print(
+                    f"⚠️  Only {success_count}/{total_agents} agents reached - consensus may fail"
+                )
 
         except MessageDeliveryError:
             # Re-raise delivery errors - don't silently continue
@@ -221,8 +221,8 @@ class ConsensusEngine:
         agent_id: str,
         option: VoteOption,
         rationale: str,
-        evidence: Optional[List[str]] = None,
-        confidence: float = 1.0
+        evidence: list[str] | None = None,
+        confidence: float = 1.0,
     ) -> bool:
         """
         Cast a vote in an active consensus.
@@ -241,7 +241,9 @@ class ConsensusEngine:
 
         # Validate rationale length to prevent DoS
         if len(rationale) > self.MAX_STRING_LENGTH:
-            raise ValueError(f"rationale length must not exceed {self.MAX_STRING_LENGTH} characters")
+            raise ValueError(
+                f"rationale length must not exceed {self.MAX_STRING_LENGTH} characters"
+            )
 
         # Validate evidence list length to prevent DoS
         if evidence and len(evidence) > self.MAX_EVIDENCE_ITEMS:
@@ -251,7 +253,9 @@ class ConsensusEngine:
         if evidence:
             for item in evidence:
                 if len(item) > self.MAX_STRING_LENGTH:
-                    raise ValueError(f"evidence item length must not exceed {self.MAX_STRING_LENGTH} characters")
+                    raise ValueError(
+                        f"evidence item length must not exceed {self.MAX_STRING_LENGTH} characters"
+                    )
 
         # Validate confidence range
         if not (0.0 <= confidence <= 1.0):
@@ -264,8 +268,7 @@ class ConsensusEngine:
 
             # Check if agent already voted
             existing_vote = next(
-                (v for v in self.active_votes[vote_id] if v.agent_id == agent_id),
-                None
+                (v for v in self.active_votes[vote_id] if v.agent_id == agent_id), None
             )
             if existing_vote:
                 print(f"⚠️  {agent_id} already voted, ignoring duplicate")
@@ -276,7 +279,7 @@ class ConsensusEngine:
                 option=option,
                 rationale=rationale,
                 evidence=evidence or [],
-                confidence=confidence
+                confidence=confidence,
             )
 
             self.active_votes[vote_id].append(vote)
@@ -289,10 +292,7 @@ class ConsensusEngine:
 
         return True
 
-    def determine_winner(
-        self,
-        vote_id: str
-    ) -> ConsensusResult:
+    def determine_winner(self, vote_id: str) -> ConsensusResult:
         """
         Determine winner based on configured strategy.
 
@@ -329,17 +329,17 @@ class ConsensusEngine:
             self.completed_votes.append(result)
             del self.active_votes[vote_id]
 
-        print(f"\n✅ CONSENSUS REACHED")
+        print("\n✅ CONSENSUS REACHED")
         print(f"   Winner: {result.winner.value}")
         print(f"   Vote counts: {result.vote_counts}")
         print(f"   Rationale: {result.decision_rationale}")
         print(f"   Confidence: {result.confidence:.1%}")
         if result.unanimous:
-            print(f"   (Unanimous decision)")
+            print("   (Unanimous decision)")
 
         return result
 
-    def _simple_majority(self, votes: List[Vote]) -> ConsensusResult:
+    def _simple_majority(self, votes: list[Vote]) -> ConsensusResult:
         """Simple majority: most votes wins"""
 
         vote_counts = self._count_votes(votes)
@@ -369,10 +369,10 @@ class ConsensusEngine:
             vote_counts=vote_counts,
             decision_rationale=rationale,
             confidence=confidence,
-            unanimous=unanimous
+            unanimous=unanimous,
         )
 
-    def _supermajority(self, votes: List[Vote]) -> ConsensusResult:
+    def _supermajority(self, votes: list[Vote]) -> ConsensusResult:
         """Supermajority: requires ≥66% agreement"""
 
         vote_counts = self._count_votes(votes)
@@ -388,13 +388,13 @@ class ConsensusEngine:
                     vote_counts=vote_counts,
                     decision_rationale=f"{option.value} achieved supermajority with {count}/{len(votes)} votes",
                     confidence=count / len(votes),
-                    unanimous=count == len(votes)
+                    unanimous=count == len(votes),
                 )
 
         # No supermajority - use fallback
         return self._simple_majority(votes)
 
-    def _weighted_vote(self, votes: List[Vote]) -> ConsensusResult:
+    def _weighted_vote(self, votes: list[Vote]) -> ConsensusResult:
         """Weighted by confidence scores"""
 
         weighted_counts = {}
@@ -417,10 +417,10 @@ class ConsensusEngine:
             vote_counts=vote_counts,
             decision_rationale=f"{winner.value} won with weighted score {weighted_counts[winner]:.2f}/{total_weight:.2f}",
             confidence=weighted_counts[winner] / total_weight,
-            unanimous=vote_counts[winner] == len(votes)
+            unanimous=vote_counts[winner] == len(votes),
         )
 
-    def _evidence_based(self, votes: List[Vote]) -> ConsensusResult:
+    def _evidence_based(self, votes: list[Vote]) -> ConsensusResult:
         """Decision based on quality of evidence"""
 
         # Score each option by evidence quality
@@ -434,7 +434,7 @@ class ConsensusEngine:
             evidence_scores[vote.option] += len(vote.evidence)
 
             # Higher confidence = higher multiplier
-            evidence_scores[vote.option] *= (1 + vote.confidence)
+            evidence_scores[vote.option] *= 1 + vote.confidence
 
         # Find winner
         winner = max(evidence_scores.items(), key=lambda x: x[1])[0]
@@ -449,10 +449,10 @@ class ConsensusEngine:
             vote_counts=vote_counts,
             decision_rationale=f"{winner.value} had strongest evidence ({total_evidence} sources) and support ({vote_counts[winner]} votes)",
             confidence=evidence_scores[winner] / sum(evidence_scores.values()),
-            unanimous=vote_counts[winner] == len(votes)
+            unanimous=vote_counts[winner] == len(votes),
         )
 
-    def _count_votes(self, votes: List[Vote]) -> Dict[VoteOption, int]:
+    def _count_votes(self, votes: list[Vote]) -> dict[VoteOption, int]:
         """Simple vote counting"""
 
         counts = {VoteOption.OPTION_A: 0, VoteOption.OPTION_B: 0, VoteOption.ABSTAIN: 0}
@@ -462,11 +462,7 @@ class ConsensusEngine:
 
         return counts
 
-    def _tiebreaker(
-        self,
-        votes: List[Vote],
-        tied_options: List[VoteOption]
-    ) -> VoteOption:
+    def _tiebreaker(self, votes: list[Vote], tied_options: list[VoteOption]) -> VoteOption:
         """
         Resolve ties using tiebreaker rules.
 
@@ -480,18 +476,11 @@ class ConsensusEngine:
         # Tiebreaker 1: Most evidence
         evidence_count = {}
         for option in tied_options:
-            total_evidence = sum(
-                len(v.evidence)
-                for v in votes
-                if v.option == option
-            )
+            total_evidence = sum(len(v.evidence) for v in votes if v.option == option)
             evidence_count[option] = total_evidence
 
         max_evidence = max(evidence_count.values())
-        best_by_evidence = [
-            opt for opt, count in evidence_count.items()
-            if count == max_evidence
-        ]
+        best_by_evidence = [opt for opt, count in evidence_count.items() if count == max_evidence]
 
         if len(best_by_evidence) == 1:
             print(f"   Tiebreaker: {best_by_evidence[0].value} had most evidence")
@@ -500,22 +489,18 @@ class ConsensusEngine:
         # Tiebreaker 2: Highest total confidence
         confidence_totals = {}
         for option in best_by_evidence:
-            total_conf = sum(
-                v.confidence
-                for v in votes
-                if v.option == option
-            )
+            total_conf = sum(v.confidence for v in votes if v.option == option)
             confidence_totals[option] = total_conf
 
         winner = max(confidence_totals.items(), key=lambda x: x[1])[0]
         print(f"   Tiebreaker: {winner.value} had highest confidence")
         return winner
 
-    def get_consensus_history(self) -> List[ConsensusResult]:
+    def get_consensus_history(self) -> list[ConsensusResult]:
         """Get all completed consensus votes"""
         return self.completed_votes
 
-    def get_consensus_statistics(self) -> Dict:
+    def get_consensus_statistics(self) -> dict:
         """Get statistics about consensus votes"""
 
         total_votes = len(self.completed_votes)
@@ -526,10 +511,7 @@ class ConsensusEngine:
         unanimous_count = sum(1 for v in self.completed_votes if v.unanimous)
         avg_confidence = sum(v.confidence for v in self.completed_votes) / total_votes
 
-        option_a_wins = sum(
-            1 for v in self.completed_votes
-            if v.winner == VoteOption.OPTION_A
-        )
+        option_a_wins = sum(1 for v in self.completed_votes if v.winner == VoteOption.OPTION_A)
 
         return {
             "total_votes": total_votes,
@@ -538,29 +520,18 @@ class ConsensusEngine:
             "avg_confidence": avg_confidence,
             "option_a_wins": option_a_wins,
             "option_b_wins": total_votes - option_a_wins,
-            "strategy": self.strategy.value
+            "strategy": self.strategy.value,
         }
 
     def _format_vote_request(
-        self,
-        topic: str,
-        option_a: str,
-        option_b: str,
-        evidence_a: List[str],
-        evidence_b: List[str]
+        self, topic: str, option_a: str, option_b: str, evidence_a: list[str], evidence_b: list[str]
     ) -> str:
         """Format vote request message"""
 
-        lines = [
-            "🗳️  CONSENSUS VOTE NEEDED",
-            "",
-            f"Topic: {topic}",
-            "",
-            f"Option A: {option_a}"
-        ]
+        lines = ["🗳️  CONSENSUS VOTE NEEDED", "", f"Topic: {topic}", "", f"Option A: {option_a}"]
 
         if evidence_a:
-            lines.append(f"Evidence for A:")
+            lines.append("Evidence for A:")
             for ev in evidence_a:
                 lines.append(f"  - {ev}")
 
@@ -568,15 +539,17 @@ class ConsensusEngine:
         lines.append(f"Option B: {option_b}")
 
         if evidence_b:
-            lines.append(f"Evidence for B:")
+            lines.append("Evidence for B:")
             for ev in evidence_b:
                 lines.append(f"  - {ev}")
 
-        lines.extend([
-            "",
-            "To vote, use:",
-            "claudeswarm send-message consensus-engine INFO 'vote:A|B rationale:your_reason evidence:link1,link2'",
-            ""
-        ])
+        lines.extend(
+            [
+                "",
+                "To vote, use:",
+                "claudeswarm send-message consensus-engine INFO 'vote:A|B rationale:your_reason evidence:link1,link2'",
+                "",
+            ]
+        )
 
         return "\n".join(lines)

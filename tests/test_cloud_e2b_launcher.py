@@ -5,7 +5,6 @@ Tests the CloudSandbox class for creating and managing E2B sandboxes
 with multi-agent coordination capabilities.
 """
 
-import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -43,8 +42,9 @@ class TestCloudSandbox:
         # Mock the E2B Sandbox class
         mock_sandbox_class = MagicMock()
 
-        with patch("claudeswarm.cloud.e2b_launcher.E2BSandbox", mock_sandbox_class), patch.dict(
-            os.environ, {}, clear=True
+        with (
+            patch("claudeswarm.cloud.e2b_launcher.E2BSandbox", mock_sandbox_class),
+            patch.dict(os.environ, {}, clear=True),
         ):
             sandbox = CloudSandbox(num_agents=4)
             with pytest.raises(RuntimeError, match="E2B_API_KEY environment variable not set"):
@@ -65,8 +65,9 @@ class TestCloudSandbox:
 
         mock_sandbox_class = MagicMock(return_value=mock_sandbox_instance)
 
-        with patch("claudeswarm.cloud.e2b_launcher.E2BSandbox", mock_sandbox_class), patch.dict(
-            os.environ, {"E2B_API_KEY": "test-key"}
+        with (
+            patch("claudeswarm.cloud.e2b_launcher.E2BSandbox", mock_sandbox_class),
+            patch.dict(os.environ, {"E2B_API_KEY": "test-key"}),
         ):
             sandbox = CloudSandbox(num_agents=4)
             sandbox_id = await sandbox.create()
@@ -88,8 +89,9 @@ class TestCloudSandbox:
 
         mock_sandbox_class = MagicMock(return_value=mock_sandbox_instance)
 
-        with patch("claudeswarm.cloud.e2b_launcher.E2BSandbox", mock_sandbox_class), patch.dict(
-            os.environ, {"E2B_API_KEY": "test-key"}
+        with (
+            patch("claudeswarm.cloud.e2b_launcher.E2BSandbox", mock_sandbox_class),
+            patch.dict(os.environ, {"E2B_API_KEY": "test-key"}),
         ):
             sandbox = CloudSandbox(num_agents=4)
             sandbox.sandbox = mock_sandbox_instance
@@ -215,9 +217,11 @@ class TestCloudSandbox:
 
         mock_sandbox_class = MagicMock(return_value=mock_sandbox_instance)
 
-        with patch("claudeswarm.cloud.e2b_launcher.E2BSandbox", mock_sandbox_class), patch.dict(
-            os.environ, {"E2B_API_KEY": "test-key"}
-        ), patch("asyncio.sleep", new_callable=AsyncMock):
+        with (
+            patch("claudeswarm.cloud.e2b_launcher.E2BSandbox", mock_sandbox_class),
+            patch.dict(os.environ, {"E2B_API_KEY": "test-key"}),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
             async with CloudSandbox(num_agents=4) as sandbox:
                 assert sandbox.sandbox_id == "test-sandbox-123"
 

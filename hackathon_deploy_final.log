@@ -1,5 +1,0 @@
-❌ Deployment failed: E2B_API_KEY environment variable not set. Get your API key from https://e2b.dev/docs
-🚀 Deploying Claude Swarm to E2B cloud...
-   Agents: 4
-   MCPs: github,filesystem
-
