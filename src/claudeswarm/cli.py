@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -18,6 +17,7 @@ from typing import List, NoReturn, Optional
 
 from claudeswarm.locking import LockManager
 from claudeswarm.discovery import refresh_registry, list_active_agents
+from claudeswarm.logging_config import get_logger, setup_logging
 from claudeswarm.monitoring import start_monitoring
 from claudeswarm.config import (
     load_config,
@@ -39,7 +39,7 @@ from claudeswarm.validators import (
 __all__ = ["main"]
 
 # Configure logging
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Command-line validation constants
 # Lock reason length limit (enforces concise lock descriptions)
@@ -919,33 +919,18 @@ def cmd_start_dashboard(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def cmd_onboard(args: argparse.Namespace) -> None:
-    """Onboard all discovered agents to the coordination system.
-
-    This command:
-    1. Discovers all active Claude Code agents via tmux
-    2. Broadcasts onboarding messages to all discovered agents
-    3. Provides coordination protocol documentation
+def _discover_agents_for_onboarding(args: argparse.Namespace) -> list:
+    """Discover active agents in current project.
 
     Args:
         args: Parsed command-line arguments
 
-    Side Effects:
-        - Refreshes agent registry (ACTIVE_AGENTS.json)
-        - Sends multiple broadcast messages to all agents
-        - May trigger rate limiting in messaging system
+    Returns:
+        List of discovered agents
 
     Exit Codes:
-        0: Success - all agents onboarded
-        1: Error - discovery failed or no agents found
+        1: Error during discovery or no agents found
     """
-    import time
-    from claudeswarm.messaging import broadcast_message, MessageType
-
-    print("=== Claude Swarm Agent Onboarding ===")
-    print()
-
-    # Step 1: Discover agents (project-filtered)
     print("Step 1: Discovering active agents in current project...")
     try:
         # refresh_registry() discovers agents filtered by current project
@@ -959,6 +944,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
 
         print(f"Found {len(agents)} agent(s) in current project: {', '.join(a.id for a in agents)}")
         print()
+        return agents
 
     except subprocess.CalledProcessError as e:
         print(f"Error: tmux command failed. Is tmux running?", file=sys.stderr)
@@ -971,14 +957,20 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         print(f"Error during discovery: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Step 2: Send onboarding messages
-    print("Step 2: Broadcasting onboarding messages to project agents...")
 
-    # Consolidate into fewer, comprehensive messages to avoid rate limiting
+def _prepare_onboarding_content(agents: list) -> list[str]:
+    """Prepare the onboarding message content.
+
+    Args:
+        agents: List of discovered agents
+
+    Returns:
+        List of onboarding messages to send
+    """
     agent_list = ', '.join(a.id for a in agents)
 
-    messages = [
-        # Single comprehensive onboarding message
+    # Single comprehensive onboarding message
+    return [
         f"""=== CLAUDE SWARM COORDINATION ACTIVE ===
 Multi-agent coordination is now available in this session.
 
@@ -1041,18 +1033,33 @@ DOCUMENTATION & HELP:
 • claudeswarm --help - All available commands
 • COORDINATION.md - Sprint goals and current work assignments
 
-COORDINATION READY! 🎉""",
+COORDINATION READY! 🎉"""
     ]
 
-    messages_to_send = messages
+
+def _send_onboarding_messages(agents: list, messages: list[str], args: argparse.Namespace) -> tuple[int, int]:
+    """Send onboarding messages to all agents.
+
+    Args:
+        agents: List of agents to send messages to
+        messages: List of message content to broadcast
+        args: Parsed command-line arguments
+
+    Returns:
+        Tuple of (messages_sent, failed_messages) counts
+    """
+    import time
+    from claudeswarm.messaging import broadcast_message, MessageType
+
+    print("Step 2: Broadcasting onboarding messages to project agents...")
 
     messages_sent = 0
     failed_messages = 0
     MESSAGE_DELAY = 0.5  # Rate limiting: wait between messages
 
-    for i, msg in enumerate(messages_to_send, 1):
+    for i, msg in enumerate(messages, 1):
         # Progress indication
-        print(f"  Sending message {i}/{len(messages_to_send)}...", end='\r')
+        print(f"  Sending message {i}/{len(messages)}...", end='\r')
         sys.stdout.flush()
 
         try:
@@ -1070,18 +1077,33 @@ COORDINATION READY! 🎉""",
                 messages_sent += 1
 
             # Rate limiting: wait between messages to avoid overwhelming the system
-            if i < len(messages_to_send):
+            if i < len(messages):
                 time.sleep(MESSAGE_DELAY)
 
         except Exception as e:
             print(f"\nWarning: Failed to send message: {e}", file=sys.stderr)
             failed_messages += 1
 
-    print(f"  Sent {messages_sent}/{len(messages_to_send)} messages successfully          ")
+    print(f"  Sent {messages_sent}/{len(messages)} messages successfully          ")
     print()
 
+    return messages_sent, failed_messages
+
+
+def _report_onboarding_results(agents: list, messages_sent: int, failed_messages: int, total_messages: int) -> None:
+    """Report onboarding results.
+
+    Args:
+        agents: List of agents that were onboarded
+        messages_sent: Number of messages successfully sent
+        failed_messages: Number of messages that failed to send
+        total_messages: Total number of messages attempted
+
+    Exit Codes:
+        1: Too many messages failed to deliver
+    """
     # Check if too many messages failed
-    if failed_messages > len(messages_to_send) * 0.5:
+    if failed_messages > total_messages * 0.5:
         print("WARNING: Most messages failed to deliver!", file=sys.stderr)
         print("Agents may not have received onboarding information.", file=sys.stderr)
         sys.exit(1)
@@ -1100,7 +1122,47 @@ COORDINATION READY! 🎉""",
 
     print()
     print("Agents are now ready to coordinate!")
+
+
+
+
+def cmd_onboard(args: argparse.Namespace) -> None:
+    """Onboard all discovered agents to the coordination system.
+
+    This command:
+    1. Discovers all active Claude Code agents via tmux
+    2. Broadcasts onboarding messages to all discovered agents
+    3. Provides coordination protocol documentation
+
+    Args:
+        args: Parsed command-line arguments
+
+    Side Effects:
+        - Refreshes agent registry (ACTIVE_AGENTS.json)
+        - Sends multiple broadcast messages to all agents
+        - May trigger rate limiting in messaging system
+
+    Exit Codes:
+        0: Success - all agents onboarded
+        1: Error - discovery failed or no agents found
+    """
+    print("=== Claude Swarm Agent Onboarding ===")
+    print()
+
+    # Step 1: Discover agents
+    agents = _discover_agents_for_onboarding(args)
+
+    # Step 2: Prepare onboarding content
+    messages = _prepare_onboarding_content(agents)
+
+    # Step 3: Send onboarding messages
+    messages_sent, failed_messages = _send_onboarding_messages(agents, messages, args)
+
+    # Step 4: Report results
+    _report_onboarding_results(agents, messages_sent, failed_messages, len(messages))
+
     sys.exit(0)
+
 
 
 def cmd_check_messages(args: argparse.Namespace) -> None:
@@ -1528,25 +1590,12 @@ def cmd_reload(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
-def cmd_init(args: argparse.Namespace) -> None:
-    """Initialize Claude Swarm in current project with guided setup.
+def _init_detect_project_root() -> Path:
+    """Detect and display project root directory.
 
-    This command helps users set up Claude Swarm by:
-    1. Detecting the project root
-    2. Creating config file if needed
-    3. Showing next steps
-
-    Args:
-        args: Parsed command-line arguments
-
-    Exit Codes:
-        0: Success
-        1: Error during setup
+    Returns:
+        Path to project root directory
     """
-    print("=== Claude Swarm Project Setup ===")
-    print()
-
-    # Step 1: Detect project root
     print("Step 1: Detecting project root...")
     detected_root = find_project_root()
     current_dir = Path.cwd()
@@ -1560,10 +1609,17 @@ def cmd_init(args: argparse.Namespace) -> None:
         print(f"  Using current directory: {current_dir}")
         detected_root = current_dir
 
-    project_root = detected_root
     print()
+    return detected_root
 
-    # Step 2: Check for existing config
+
+def _init_check_and_create_config(project_root: Path, auto_yes: bool) -> None:
+    """Check for existing configuration and create if needed.
+
+    Args:
+        project_root: Path to project root directory
+        auto_yes: Whether to auto-accept prompts
+    """
     print("Step 2: Checking configuration...")
     config_path = project_root / ".claudeswarm.yaml"
 
@@ -1573,22 +1629,13 @@ def cmd_init(args: argparse.Namespace) -> None:
         print(f"⚠ No configuration file found")
 
         # Ask user if they want to create config
-        if not args.yes:
+        should_create = auto_yes
+        if not auto_yes:
             response = input("  Create default configuration? [Y/n]: ").strip().lower()
-            if response and response not in ['y', 'yes']:
-                print("  Skipping config creation")
-            else:
-                # Create config using existing cmd_config_init
-                init_args = argparse.Namespace(
-                    output=str(config_path),
-                    force=False
-                )
-                try:
-                    cmd_config_init(init_args)
-                except SystemExit:
-                    pass  # cmd_config_init calls sys.exit, catch it
-        else:
-            # Auto-create with --yes flag
+            should_create = not response or response in ['y', 'yes']
+
+        if should_create:
+            # Create config using existing cmd_config_init
             init_args = argparse.Namespace(
                 output=str(config_path),
                 force=False
@@ -1596,11 +1643,15 @@ def cmd_init(args: argparse.Namespace) -> None:
             try:
                 cmd_config_init(init_args)
             except SystemExit:
-                pass
+                pass  # cmd_config_init calls sys.exit, catch it
+        else:
+            print("  Skipping config creation")
 
     print()
 
-    # Step 3: Check tmux
+
+def _init_check_tmux_status() -> None:
+    """Check tmux installation and running status."""
     print("Step 3: Checking tmux...")
     try:
         result = subprocess.run(
@@ -1625,7 +1676,13 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     print()
 
-    # Step 4: Show next steps
+
+def _init_display_next_steps(project_root: Path) -> None:
+    """Display next steps for user to complete setup.
+
+    Args:
+        project_root: Path to project root directory
+    """
     print("=== Next Steps ===")
     print()
     print("1. Set up tmux session (if not already):")
@@ -1649,6 +1706,37 @@ def cmd_init(args: argparse.Namespace) -> None:
     print()
     print("For more help: claudeswarm --help")
     print("Documentation: https://github.com/borisbanach/claude-swarm")
+
+
+def cmd_init(args: argparse.Namespace) -> None:
+    """Initialize Claude Swarm in current project with guided setup.
+
+    This command helps users set up Claude Swarm by:
+    1. Detecting the project root
+    2. Creating config file if needed
+    3. Showing next steps
+
+    Args:
+        args: Parsed command-line arguments
+
+    Exit Codes:
+        0: Success
+        1: Error during setup
+    """
+    print("=== Claude Swarm Project Setup ===")
+    print()
+
+    # Step 1: Detect project root
+    project_root = _init_detect_project_root()
+
+    # Step 2: Check and create configuration
+    _init_check_and_create_config(project_root, args.yes)
+
+    # Step 3: Check tmux status
+    _init_check_tmux_status()
+
+    # Step 4: Display next steps
+    _init_display_next_steps(project_root)
 
     sys.exit(0)
 
@@ -2307,6 +2395,21 @@ def main() -> NoReturn:
         help="Project root directory (default: current directory)",
     )
 
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="WARNING",
+        help="Set logging level (default: WARNING)",
+    )
+
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Write logs to specified file (in addition to stderr)",
+    )
+
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
     # init command
@@ -2738,6 +2841,10 @@ def main() -> NoReturn:
     version_parser.set_defaults(func=lambda args: print_version())
 
     args = parser.parse_args()
+
+    # Initialize logging with configured level
+    setup_logging(level=args.log_level, log_file=args.log_file)
+    logger.debug(f"Logging initialized at {args.log_level} level")
 
     if not args.command:
         print_help()

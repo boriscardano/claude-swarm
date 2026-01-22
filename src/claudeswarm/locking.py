@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import get_config
+from .logging_config import get_logger
 from .project import get_project_root
 from .validators import (
     ValidationError,
@@ -52,6 +53,9 @@ LOCK_DIR = ".agent_locks"
 # This constant will be removed in version 1.0.0
 # Migration: Replace `STALE_LOCK_TIMEOUT` with `get_config().locking.stale_timeout`
 STALE_LOCK_TIMEOUT = 300
+
+# Configure logging
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -453,13 +457,15 @@ class LockManager:
 
                             # Atomic rename (os.replace is atomic on POSIX and Windows)
                             os.replace(str(temp_lock_path), str(lock_path))
-                        except Exception:
+                            logger.debug(f"Lock refreshed on '{filepath}' by {agent_id}")
+                        except Exception as e:
                             # Clean up temp file on failure
                             if temp_lock_path.exists():
                                 try:
                                     temp_lock_path.unlink()
                                 except OSError:
                                     pass
+                            logger.error(f"Failed to refresh lock on '{filepath}' for {agent_id}: {e}")
                             raise
                         return True, None
                     else:
@@ -483,6 +489,10 @@ class LockManager:
             # Check if the lock is stale (only if it still exists)
             if existing_lock and existing_lock.is_stale(timeout):
                 # Auto-release stale lock
+                logger.info(
+                    f"Removing stale lock on '{filepath}' held by {existing_lock.agent_id} "
+                    f"(age: {existing_lock.age_seconds():.1f}s)"
+                )
                 try:
                     lock_path.unlink()
                 except FileNotFoundError:
@@ -514,7 +524,9 @@ class LockManager:
         )
 
         success = self._write_lock(lock_path, new_lock)
-        if not success:
+        if success:
+            logger.info(f"Lock acquired on '{filepath}' by {agent_id} (reason: {reason})")
+        else:
             # Race condition: another agent acquired the lock between our checks
             existing_lock = self._read_lock(lock_path)
             if existing_lock and existing_lock.agent_id != agent_id:
@@ -552,16 +564,23 @@ class LockManager:
         # Verify ownership
         if existing_lock.agent_id != agent_id:
             # Lock is owned by another agent
+            logger.warning(
+                f"Cannot release lock on '{filepath}': {agent_id} does not own it "
+                f"(held by {existing_lock.agent_id})"
+            )
             return False
 
         # Remove lock file
         try:
             lock_path.unlink()
+            logger.info(f"Lock released on '{filepath}' by {agent_id}")
             return True
         except FileNotFoundError:
             # Lock was already deleted - consider this successful
+            logger.debug(f"Lock on '{filepath}' already released (file not found)")
             return True
-        except OSError:
+        except OSError as e:
+            logger.error(f"Failed to release lock on '{filepath}' for {agent_id}: {e}")
             return False
 
     def who_has_lock(self, filepath: str) -> Optional[FileLock]:
@@ -639,11 +658,18 @@ class LockManager:
                 try:
                     lock_file.unlink()
                     count += 1
+                    logger.debug(
+                        f"Cleaned up stale lock on '{lock.filepath}' held by {lock.agent_id} "
+                        f"(age: {lock.age_seconds():.1f}s)"
+                    )
                 except FileNotFoundError:
                     # Lock was already deleted by another process
                     pass
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.warning(f"Failed to cleanup stale lock {lock_file}: {e}")
+
+        if count > 0:
+            logger.info(f"Cleaned up {count} stale lock(s)")
 
         return count
 
@@ -666,10 +692,14 @@ class LockManager:
                 try:
                     lock_file.unlink()
                     count += 1
+                    logger.debug(f"Cleaned up lock on '{lock.filepath}' held by {agent_id}")
                 except FileNotFoundError:
                     # Lock was already deleted by another process
                     pass
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.warning(f"Failed to cleanup lock {lock_file} for {agent_id}: {e}")
+
+        if count > 0:
+            logger.info(f"Cleaned up {count} lock(s) for agent {agent_id}")
 
         return count

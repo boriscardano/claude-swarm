@@ -29,7 +29,6 @@ Limitations:
 """
 
 import json
-import logging
 import os
 import platform
 import subprocess
@@ -39,6 +38,7 @@ from pathlib import Path
 from typing import List, Optional, Dict
 
 from .config import get_config
+from .logging_config import get_logger
 from .utils import atomic_write
 from .project import get_active_agents_path
 from .file_lock import FileLock, FileLockTimeout, FileLockError
@@ -83,7 +83,7 @@ REGISTRY_LOCK_TIMEOUT_SECONDS = 5.0
 _cwd_cache: Dict[int, Optional[str]] = {}
 
 # Set up logging for this module
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Custom exceptions
