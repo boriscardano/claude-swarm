@@ -90,7 +90,8 @@ addopts = "-ra -q --strict-markers --cov=claudeswarm --cov-report=term-missing"
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
-    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')"
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "asyncio: marks tests as async tests"
 ]
 
 [tool.coverage.run]
