@@ -55,6 +55,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
+        # NOTE: CSP allows 'unsafe-inline' for scripts and styles.
+        # This is intentional for the current dashboard implementation which uses
+        # inline event handlers (onclick, etc.) in the HTML. This is a known
+        # security trade-off that will be addressed in a future refactor by:
+        # 1. Moving all JavaScript to external files with event listeners
+        # 2. Using nonces or hashes for inline scripts if needed
+        # 3. Removing 'unsafe-inline' from the CSP policy
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline'; "
@@ -192,7 +199,12 @@ def safe_load_json(file_path: Path) -> dict[str, Any] | None:
 
 
 def tail_log_file(file_path: Path, limit: int = 50) -> list[dict[str, Any]]:
-    """Read last N lines from log file and parse as JSON.
+    """Read last N lines from log file efficiently using seek.
+
+    This implementation avoids loading the entire file into memory by:
+    1. Seeking to the end of the file
+    2. Reading backwards in chunks to find line boundaries
+    3. Stopping once we have enough lines
 
     Args:
         file_path: Path to log file
@@ -206,10 +218,45 @@ def tail_log_file(file_path: Path, limit: int = 50) -> list[dict[str, Any]]:
         if not file_path.exists():
             return messages
 
-        with open(file_path, encoding="utf-8") as f:
-            lines = f.readlines()
-            # Get last 'limit' lines
-            for line in lines[-limit:]:
+        with open(file_path, "rb") as f:
+            # Get file size
+            f.seek(0, os.SEEK_END)
+            file_size = f.tell()
+
+            if file_size == 0:
+                return messages
+
+            # Read file backwards in chunks to find last N lines
+            buffer_size = 8192  # 8KB chunks
+            lines_found = []
+            position = file_size
+
+            while position > 0 and len(lines_found) < limit:
+                # Calculate chunk size (don't read beyond start of file)
+                chunk_size = min(buffer_size, position)
+                position -= chunk_size
+
+                # Read chunk
+                f.seek(position)
+                chunk = f.read(chunk_size).decode("utf-8", errors="ignore")
+
+                # Split into lines and prepend to our list
+                chunk_lines = chunk.split("\n")
+
+                # If this isn't the first chunk, combine with previous partial line
+                if lines_found and position > 0:
+                    chunk_lines[-1] += lines_found[0]
+                    lines_found[0] = chunk_lines[-1]
+                    chunk_lines = chunk_lines[:-1]
+
+                # Add new lines to beginning
+                lines_found = chunk_lines + lines_found
+
+            # Take the last 'limit' lines
+            selected_lines = lines_found[-limit:] if len(lines_found) > limit else lines_found
+
+            # Parse JSON from lines
+            for line in selected_lines:
                 line = line.strip()
                 if line:
                     try:
@@ -218,6 +265,7 @@ def tail_log_file(file_path: Path, limit: int = 50) -> list[dict[str, Any]]:
                     except json.JSONDecodeError:
                         # Skip malformed lines
                         continue
+
     except OSError:
         pass
 
@@ -252,7 +300,7 @@ def get_lock_files() -> list[dict[str, Any]]:
 
 # State tracking for SSE
 class StateTracker:
-    """Track file modification times for change detection."""
+    """Track file modification times and stats for change detection."""
 
     def __init__(self) -> None:
         """Initialize state tracker."""
@@ -260,6 +308,8 @@ class StateTracker:
         self.messages_mtime: float = 0.0
         self.locks_mtime: float = 0.0
         self.message_count: int = 0
+        self.last_stats: dict[str, Any] | None = None
+        self.last_stats_time: float = 0.0
 
     def check_changes(self) -> dict[str, bool]:
         """Check which files have changed since last check.
@@ -302,6 +352,39 @@ class StateTracker:
                 pass
 
         return changes
+
+    def should_send_stats(self, current_stats: dict[str, Any], current_time: float) -> bool:
+        """Determine if stats should be sent based on changes or heartbeat interval.
+
+        Stats are sent if:
+        1. Stats have changed since last send, OR
+        2. 5 seconds have elapsed since last send (heartbeat)
+
+        Args:
+            current_stats: Current stats data
+            current_time: Current timestamp
+
+        Returns:
+            True if stats should be sent
+        """
+        # Always send if this is the first time
+        if self.last_stats is None:
+            self.last_stats = current_stats
+            self.last_stats_time = current_time
+            return True
+
+        # Send if stats have changed
+        if current_stats != self.last_stats:
+            self.last_stats = current_stats
+            self.last_stats_time = current_time
+            return True
+
+        # Send as heartbeat every 5 seconds even if no changes
+        if current_time - self.last_stats_time >= 5.0:
+            self.last_stats_time = current_time
+            return True
+
+        return False
 
 
 # Root and health endpoints (not versioned)
@@ -521,6 +604,8 @@ async def event_stream(user: str | None = Depends(get_current_user)) -> Streamin
         Yields:
             SSE formatted event strings
         """
+        import time
+
         tracker = StateTracker()
 
         # Send initial connection event
@@ -528,6 +613,8 @@ async def event_stream(user: str | None = Depends(get_current_user)) -> Streamin
 
         while True:
             try:
+                current_time = time.time()
+
                 # Check for changes
                 changes = tracker.check_changes()
 
@@ -546,9 +633,10 @@ async def event_stream(user: str | None = Depends(get_current_user)) -> Streamin
                     messages_data = await get_messages(limit=10)  # Send last 10 new messages
                     yield f"event: messages\ndata: {json.dumps(messages_data)}\n\n"
 
-                # Send stats update periodically (every iteration)
+                # Send stats only if changed or as periodic heartbeat (every 5s)
                 stats_data = await get_stats()
-                yield f"event: stats\ndata: {json.dumps(stats_data)}\n\n"
+                if tracker.should_send_stats(stats_data, current_time):
+                    yield f"event: stats\ndata: {json.dumps(stats_data)}\n\n"
 
                 # Send heartbeat
                 yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.now(UTC).isoformat()})}\n\n"
