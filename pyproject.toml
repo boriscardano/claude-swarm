@@ -32,6 +32,11 @@ dev = [
     "bandit>=1.7.5",
     "safety>=3.0.0",
 ]
+cloud = [
+    "e2b-code-interpreter>=0.1.0",
+    "docker>=6.0.0",
+    "httpx>=0.24.0",
+]
 
 [project.scripts]
 claudeswarm = "claudeswarm.cli:main"

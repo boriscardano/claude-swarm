@@ -1,0 +1,14 @@
+Traceback (most recent call last):
+  File "/Users/boris/.local/bin/claudeswarm", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/boris/work/aspire11/claude-swarm/src/claudeswarm/cli.py", line 2747, in main
+    args.func(args)
+  File "/Users/boris/work/aspire11/claude-swarm/src/claudeswarm/cli.py", line 1659, in cmd_cloud_deploy
+    from claudeswarm.cloud.e2b_launcher import CloudSandbox
+  File "/Users/boris/work/aspire11/claude-swarm/src/claudeswarm/cloud/__init__.py", line 8, in <module>
+    from claudeswarm.cloud.e2b_launcher import CloudSandbox
+  File "/Users/boris/work/aspire11/claude-swarm/src/claudeswarm/cloud/e2b_launcher.py", line 357
+    commands.extend([
+                   ^
+SyntaxError: '(' was never closed

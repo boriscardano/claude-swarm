@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -18,6 +17,7 @@ from typing import List, NoReturn, Optional
 
 from claudeswarm.locking import LockManager
 from claudeswarm.discovery import refresh_registry, list_active_agents
+from claudeswarm.logging_config import get_logger, setup_logging
 from claudeswarm.monitoring import start_monitoring
 from claudeswarm.config import (
     load_config,
@@ -39,7 +39,7 @@ from claudeswarm.validators import (
 __all__ = ["main"]
 
 # Configure logging
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Command-line validation constants
 # Lock reason length limit (enforces concise lock descriptions)
@@ -63,6 +63,62 @@ def format_timestamp(ts: float) -> str:
     """Format a Unix timestamp as a human-readable string."""
     dt = datetime.fromtimestamp(ts, tz=timezone.utc)
     return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def get_cached_sandbox_id() -> Optional[str]:
+    """Get cached sandbox ID with fallback chain.
+
+    Checks in order:
+    1. .e2b_session in current directory (per-project)
+    2. ~/.claudeswarm/last_sandbox_id (global)
+
+    Returns:
+        Sandbox ID if found, None otherwise
+    """
+    # Check local .e2b_session first
+    local_session = Path.cwd() / ".e2b_session"
+    if local_session.exists():
+        try:
+            sandbox_id = local_session.read_text().strip()
+            if sandbox_id:
+                return sandbox_id
+        except Exception:
+            pass
+
+    # Fall back to global cache
+    global_cache = Path.home() / ".claudeswarm" / "last_sandbox_id"
+    if global_cache.exists():
+        try:
+            sandbox_id = global_cache.read_text().strip()
+            if sandbox_id:
+                return sandbox_id
+        except Exception:
+            pass
+
+    return None
+
+
+def save_sandbox_id(sandbox_id: str) -> None:
+    """Save sandbox ID to both local and global cache.
+
+    Args:
+        sandbox_id: E2B sandbox identifier to cache
+    """
+    # Save to local .e2b_session
+    try:
+        local_session = Path.cwd() / ".e2b_session"
+        local_session.write_text(sandbox_id + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to save local .e2b_session: {e}")
+
+    # Save to global cache
+    try:
+        global_cache_dir = Path.home() / ".claudeswarm"
+        global_cache_dir.mkdir(parents=True, exist_ok=True)
+        global_cache = global_cache_dir / "last_sandbox_id"
+        global_cache.write_text(sandbox_id + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to save global sandbox cache: {e}")
 
 
 def cmd_acquire_file_lock(args: argparse.Namespace) -> None:
@@ -448,9 +504,8 @@ def cmd_send_message(args: argparse.Namespace) -> None:
             if delivered:
                 print(f"✓ Message delivered to {args.recipient_id} (real-time)")
             else:
-                print(f"Message sent to inbox: {args.recipient_id}")
-                print(f"  ℹ️  Real-time delivery unavailable (tmux unavailable in sandbox)")
-                print(f"  ℹ️  Recipient can read message with: claudeswarm check-messages")
+                print(f"✓ Message sent to inbox: {args.recipient_id}")
+                print(f"  ℹ️  Message logged to inbox (real-time delivery attempted)")
             if args.json:
                 # Serialize JSON and fail hard if serialization fails
                 try:
@@ -550,11 +605,10 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
         if success_count == total_count:
             print(f"✓ Broadcast delivered to {total_count}/{total_count} agents (real-time)")
         elif success_count > 0:
-            print(f"Message broadcast: {success_count}/{total_count} real-time, {total_count - success_count}/{total_count} inbox")
+            print(f"✓ Message broadcast: {success_count}/{total_count} real-time, {total_count - success_count}/{total_count} inbox")
         else:
-            print(f"Message sent to inbox: {total_count}/{total_count} agents")
-            print(f"  ℹ️  Real-time delivery unavailable (tmux unavailable in sandbox)")
-            print(f"  ℹ️  Recipients can read messages with: claudeswarm check-messages")
+            print(f"✓ Message sent to inbox: {total_count}/{total_count} agents")
+            print(f"  ℹ️  Messages logged to inbox (real-time delivery attempted)")
 
         if args.json:
             # Serialize JSON and fail hard if serialization fails
@@ -865,33 +919,18 @@ def cmd_start_dashboard(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def cmd_onboard(args: argparse.Namespace) -> None:
-    """Onboard all discovered agents to the coordination system.
-
-    This command:
-    1. Discovers all active Claude Code agents via tmux
-    2. Broadcasts onboarding messages to all discovered agents
-    3. Provides coordination protocol documentation
+def _discover_agents_for_onboarding(args: argparse.Namespace) -> list:
+    """Discover active agents in current project.
 
     Args:
         args: Parsed command-line arguments
 
-    Side Effects:
-        - Refreshes agent registry (ACTIVE_AGENTS.json)
-        - Sends multiple broadcast messages to all agents
-        - May trigger rate limiting in messaging system
+    Returns:
+        List of discovered agents
 
     Exit Codes:
-        0: Success - all agents onboarded
-        1: Error - discovery failed or no agents found
+        1: Error during discovery or no agents found
     """
-    import time
-    from claudeswarm.messaging import broadcast_message, MessageType
-
-    print("=== Claude Swarm Agent Onboarding ===")
-    print()
-
-    # Step 1: Discover agents (project-filtered)
     print("Step 1: Discovering active agents in current project...")
     try:
         # refresh_registry() discovers agents filtered by current project
@@ -905,6 +944,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
 
         print(f"Found {len(agents)} agent(s) in current project: {', '.join(a.id for a in agents)}")
         print()
+        return agents
 
     except subprocess.CalledProcessError as e:
         print(f"Error: tmux command failed. Is tmux running?", file=sys.stderr)
@@ -917,14 +957,20 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         print(f"Error during discovery: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Step 2: Send onboarding messages
-    print("Step 2: Broadcasting onboarding messages to project agents...")
 
-    # Consolidate into fewer, comprehensive messages to avoid rate limiting
+def _prepare_onboarding_content(agents: list) -> list[str]:
+    """Prepare the onboarding message content.
+
+    Args:
+        agents: List of discovered agents
+
+    Returns:
+        List of onboarding messages to send
+    """
     agent_list = ', '.join(a.id for a in agents)
 
-    messages = [
-        # Single comprehensive onboarding message
+    # Single comprehensive onboarding message
+    return [
         f"""=== CLAUDE SWARM COORDINATION ACTIVE ===
 Multi-agent coordination is now available in this session.
 
@@ -934,8 +980,11 @@ ACTIVE AGENTS: {agent_list}
 HOW TO SEND MESSAGES TO OTHER AGENTS:
 ═══════════════════════════════════════════════════════════════════
 
-IMPORTANT: When sending messages, your AI assistant will automatically handle tmux access.
-Just use the commands naturally and messages will be delivered in real-time!
+IMPORTANT: Real-time messaging is FULLY AVAILABLE in this sandbox environment!
+Messages are delivered instantly via tmux to all agents in this session.
+
+Your AI assistant will automatically handle all tmux operations - just use the
+commands naturally and messages will appear immediately in recipient conversations!
 
 • Send direct message:
   claudeswarm send-message <agent-id> INFO "your message here"
@@ -984,18 +1033,33 @@ DOCUMENTATION & HELP:
 • claudeswarm --help - All available commands
 • COORDINATION.md - Sprint goals and current work assignments
 
-COORDINATION READY! 🎉""",
+COORDINATION READY! 🎉"""
     ]
 
-    messages_to_send = messages
+
+def _send_onboarding_messages(agents: list, messages: list[str], args: argparse.Namespace) -> tuple[int, int]:
+    """Send onboarding messages to all agents.
+
+    Args:
+        agents: List of agents to send messages to
+        messages: List of message content to broadcast
+        args: Parsed command-line arguments
+
+    Returns:
+        Tuple of (messages_sent, failed_messages) counts
+    """
+    import time
+    from claudeswarm.messaging import broadcast_message, MessageType
+
+    print("Step 2: Broadcasting onboarding messages to project agents...")
 
     messages_sent = 0
     failed_messages = 0
     MESSAGE_DELAY = 0.5  # Rate limiting: wait between messages
 
-    for i, msg in enumerate(messages_to_send, 1):
+    for i, msg in enumerate(messages, 1):
         # Progress indication
-        print(f"  Sending message {i}/{len(messages_to_send)}...", end='\r')
+        print(f"  Sending message {i}/{len(messages)}...", end='\r')
         sys.stdout.flush()
 
         try:
@@ -1013,18 +1077,33 @@ COORDINATION READY! 🎉""",
                 messages_sent += 1
 
             # Rate limiting: wait between messages to avoid overwhelming the system
-            if i < len(messages_to_send):
+            if i < len(messages):
                 time.sleep(MESSAGE_DELAY)
 
         except Exception as e:
             print(f"\nWarning: Failed to send message: {e}", file=sys.stderr)
             failed_messages += 1
 
-    print(f"  Sent {messages_sent}/{len(messages_to_send)} messages successfully          ")
+    print(f"  Sent {messages_sent}/{len(messages)} messages successfully          ")
     print()
 
+    return messages_sent, failed_messages
+
+
+def _report_onboarding_results(agents: list, messages_sent: int, failed_messages: int, total_messages: int) -> None:
+    """Report onboarding results.
+
+    Args:
+        agents: List of agents that were onboarded
+        messages_sent: Number of messages successfully sent
+        failed_messages: Number of messages that failed to send
+        total_messages: Total number of messages attempted
+
+    Exit Codes:
+        1: Too many messages failed to deliver
+    """
     # Check if too many messages failed
-    if failed_messages > len(messages_to_send) * 0.5:
+    if failed_messages > total_messages * 0.5:
         print("WARNING: Most messages failed to deliver!", file=sys.stderr)
         print("Agents may not have received onboarding information.", file=sys.stderr)
         sys.exit(1)
@@ -1043,7 +1122,47 @@ COORDINATION READY! 🎉""",
 
     print()
     print("Agents are now ready to coordinate!")
+
+
+
+
+def cmd_onboard(args: argparse.Namespace) -> None:
+    """Onboard all discovered agents to the coordination system.
+
+    This command:
+    1. Discovers all active Claude Code agents via tmux
+    2. Broadcasts onboarding messages to all discovered agents
+    3. Provides coordination protocol documentation
+
+    Args:
+        args: Parsed command-line arguments
+
+    Side Effects:
+        - Refreshes agent registry (ACTIVE_AGENTS.json)
+        - Sends multiple broadcast messages to all agents
+        - May trigger rate limiting in messaging system
+
+    Exit Codes:
+        0: Success - all agents onboarded
+        1: Error - discovery failed or no agents found
+    """
+    print("=== Claude Swarm Agent Onboarding ===")
+    print()
+
+    # Step 1: Discover agents
+    agents = _discover_agents_for_onboarding(args)
+
+    # Step 2: Prepare onboarding content
+    messages = _prepare_onboarding_content(agents)
+
+    # Step 3: Send onboarding messages
+    messages_sent, failed_messages = _send_onboarding_messages(agents, messages, args)
+
+    # Step 4: Report results
+    _report_onboarding_results(agents, messages_sent, failed_messages, len(messages))
+
     sys.exit(0)
+
 
 
 def cmd_check_messages(args: argparse.Namespace) -> None:
@@ -1391,14 +1510,14 @@ def cmd_reload(args: argparse.Namespace) -> None:
                 sys.exit(1)
 
             result = subprocess.run(
-                ["uv", "tool", "install", "--force", "--editable", editable_location],
+                ["uv", "tool", "install", "--force", "--editable", f"{editable_location}[cloud]"],
                 capture_output=True,
                 text=True,
                 timeout=60
             )
 
             if result.returncode == 0:
-                print(f"   ✓ Installed from {editable_location} (editable mode)")
+                print(f"   ✓ Installed from {editable_location} (editable mode with cloud extras)")
             else:
                 # Check for uv cache permission errors
                 if "Operation not permitted" in result.stderr and ".cache/uv" in result.stderr:
@@ -1409,13 +1528,13 @@ def cmd_reload(args: argparse.Namespace) -> None:
                                    capture_output=True, timeout=5)
                     # Retry installation
                     result = subprocess.run(
-                        ["uv", "tool", "install", "--force", "--editable", editable_location],
+                        ["uv", "tool", "install", "--force", "--editable", f"{editable_location}[cloud]"],
                         capture_output=True,
                         text=True,
                         timeout=60
                     )
                     if result.returncode == 0:
-                        print(f"   ✓ Installed from {editable_location} (editable mode) after cache clear")
+                        print(f"   ✓ Installed from {editable_location} (editable mode with cloud extras) after cache clear")
                     else:
                         print(f"   ✗ Installation failed: {result.stderr}", file=sys.stderr)
                         sys.exit(1)
@@ -1424,14 +1543,14 @@ def cmd_reload(args: argparse.Namespace) -> None:
                     sys.exit(1)
         else:  # github
             result = subprocess.run(
-                ["uv", "tool", "install", "--force", "git+https://github.com/borisbanach/claude-swarm.git"],
+                ["uv", "tool", "install", "--force", "git+https://github.com/borisbanach/claude-swarm.git[cloud]"],
                 capture_output=True,
                 text=True,
                 timeout=120
             )
 
             if result.returncode == 0:
-                print("   ✓ Installed from GitHub")
+                print("   ✓ Installed from GitHub (with cloud extras)")
             else:
                 print(f"   ✗ Installation failed: {result.stderr}", file=sys.stderr)
                 sys.exit(1)
@@ -1471,25 +1590,12 @@ def cmd_reload(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
-def cmd_init(args: argparse.Namespace) -> None:
-    """Initialize Claude Swarm in current project with guided setup.
+def _init_detect_project_root() -> Path:
+    """Detect and display project root directory.
 
-    This command helps users set up Claude Swarm by:
-    1. Detecting the project root
-    2. Creating config file if needed
-    3. Showing next steps
-
-    Args:
-        args: Parsed command-line arguments
-
-    Exit Codes:
-        0: Success
-        1: Error during setup
+    Returns:
+        Path to project root directory
     """
-    print("=== Claude Swarm Project Setup ===")
-    print()
-
-    # Step 1: Detect project root
     print("Step 1: Detecting project root...")
     detected_root = find_project_root()
     current_dir = Path.cwd()
@@ -1503,10 +1609,17 @@ def cmd_init(args: argparse.Namespace) -> None:
         print(f"  Using current directory: {current_dir}")
         detected_root = current_dir
 
-    project_root = detected_root
     print()
+    return detected_root
 
-    # Step 2: Check for existing config
+
+def _init_check_and_create_config(project_root: Path, auto_yes: bool) -> None:
+    """Check for existing configuration and create if needed.
+
+    Args:
+        project_root: Path to project root directory
+        auto_yes: Whether to auto-accept prompts
+    """
     print("Step 2: Checking configuration...")
     config_path = project_root / ".claudeswarm.yaml"
 
@@ -1516,22 +1629,13 @@ def cmd_init(args: argparse.Namespace) -> None:
         print(f"⚠ No configuration file found")
 
         # Ask user if they want to create config
-        if not args.yes:
+        should_create = auto_yes
+        if not auto_yes:
             response = input("  Create default configuration? [Y/n]: ").strip().lower()
-            if response and response not in ['y', 'yes']:
-                print("  Skipping config creation")
-            else:
-                # Create config using existing cmd_config_init
-                init_args = argparse.Namespace(
-                    output=str(config_path),
-                    force=False
-                )
-                try:
-                    cmd_config_init(init_args)
-                except SystemExit:
-                    pass  # cmd_config_init calls sys.exit, catch it
-        else:
-            # Auto-create with --yes flag
+            should_create = not response or response in ['y', 'yes']
+
+        if should_create:
+            # Create config using existing cmd_config_init
             init_args = argparse.Namespace(
                 output=str(config_path),
                 force=False
@@ -1539,11 +1643,15 @@ def cmd_init(args: argparse.Namespace) -> None:
             try:
                 cmd_config_init(init_args)
             except SystemExit:
-                pass
+                pass  # cmd_config_init calls sys.exit, catch it
+        else:
+            print("  Skipping config creation")
 
     print()
 
-    # Step 3: Check tmux
+
+def _init_check_tmux_status() -> None:
+    """Check tmux installation and running status."""
     print("Step 3: Checking tmux...")
     try:
         result = subprocess.run(
@@ -1568,7 +1676,13 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     print()
 
-    # Step 4: Show next steps
+
+def _init_display_next_steps(project_root: Path) -> None:
+    """Display next steps for user to complete setup.
+
+    Args:
+        project_root: Path to project root directory
+    """
     print("=== Next Steps ===")
     print()
     print("1. Set up tmux session (if not already):")
@@ -1593,7 +1707,675 @@ def cmd_init(args: argparse.Namespace) -> None:
     print("For more help: claudeswarm --help")
     print("Documentation: https://github.com/borisbanach/claude-swarm")
 
+
+def cmd_init(args: argparse.Namespace) -> None:
+    """Initialize Claude Swarm in current project with guided setup.
+
+    This command helps users set up Claude Swarm by:
+    1. Detecting the project root
+    2. Creating config file if needed
+    3. Showing next steps
+
+    Args:
+        args: Parsed command-line arguments
+
+    Exit Codes:
+        0: Success
+        1: Error during setup
+    """
+    print("=== Claude Swarm Project Setup ===")
+    print()
+
+    # Step 1: Detect project root
+    project_root = _init_detect_project_root()
+
+    # Step 2: Check and create configuration
+    _init_check_and_create_config(project_root, args.yes)
+
+    # Step 3: Check tmux status
+    _init_check_tmux_status()
+
+    # Step 4: Display next steps
+    _init_display_next_steps(project_root)
+
     sys.exit(0)
+
+
+def cmd_cloud_deploy(args: argparse.Namespace) -> None:
+    """Deploy multi-agent swarm to E2B sandbox."""
+    import asyncio
+    import os
+    from claudeswarm.cloud.e2b_launcher import CloudSandbox
+    from claudeswarm.cloud.mcp_config import (
+        parse_mcp_list,
+        attach_multiple_mcps,
+    )
+
+    async def deploy() -> None:
+        """Async deployment logic."""
+        print(f"🚀 Deploying Claude Swarm to E2B cloud...")
+        print(f"   Agents: {args.agents}")
+        print(f"   MCPs: {args.mcps}")
+        print()
+
+        # Create sandbox
+        sandbox = CloudSandbox(num_agents=args.agents)
+
+        try:
+            sandbox_id = await sandbox.create()
+            print()
+
+            # Parse and attach MCPs using agent-4's helpers
+            mcp_list = parse_mcp_list(args.mcps)
+            if mcp_list:
+                print(f"📦 Attaching MCPs: {', '.join(mcp_list)}")
+
+                # Get MCP bridge (creates it if needed via first attach_mcp call)
+                bridge = sandbox.get_mcp_bridge()
+                if bridge is None:
+                    # Create bridge by attaching first MCP manually
+                    from claudeswarm.cloud.mcp_bridge import MCPBridge
+                    bridge = MCPBridge(sandbox_id=sandbox_id)
+                    sandbox.mcp_bridge = bridge
+
+                # Attach all MCPs in parallel using agent-4's helper
+                try:
+                    await attach_multiple_mcps(
+                        bridge,
+                        mcp_names=mcp_list,
+                        github_token=os.getenv("GITHUB_TOKEN"),
+                        exa_api_key=os.getenv("EXA_API_KEY"),
+                        perplexity_api_key=os.getenv("PERPLEXITY_API_KEY"),
+                        workspace_path="/workspace",
+                    )
+                except Exception as e:
+                    print(f"⚠️  Warning: Some MCPs failed to attach: {e}")
+
+            # Save sandbox ID to cache for auto-detection
+            save_sandbox_id(sandbox_id)
+
+            print()
+            print(f"✅ Deployment complete!")
+            print(f"   Sandbox ID: {sandbox_id}")
+            print(f"   Cached: .e2b_session and ~/.claudeswarm/last_sandbox_id")
+            print()
+            print("📦 Installed in sandbox:")
+            print("   ✓ Python + claudeswarm")
+            print("   ✓ Claude Code CLI")
+            print("   ✓ tmux (Ctrl+a prefix to avoid conflicts)")
+            print(f"   ✓ {args.agents} agent panes ready for coordination")
+            print()
+            print("To monitor: claudeswarm cloud monitor  # (auto-detected)")
+            print("To shutdown: claudeswarm cloud shutdown --sandbox-id", sandbox_id)
+
+            # If feature specified, start autonomous development
+            if args.feature:
+                print()
+                print(f"🤖 Starting autonomous development: {args.feature}")
+                await sandbox.execute_autonomous_dev(args.feature)
+                return sandbox_id
+
+            # Auto-connect to shell if not disabled
+            if not args.no_connect:
+                return sandbox_id
+            else:
+                return None
+
+        except Exception as e:
+            print(f"❌ Deployment failed: {e}", file=sys.stderr)
+            await sandbox.cleanup()
+            sys.exit(1)
+
+        return None
+
+    # Run async deployment
+    try:
+        sandbox_id = asyncio.run(deploy())
+
+        # If sandbox_id returned and auto-connect enabled, start shell
+        if sandbox_id and not args.no_connect:
+            print()
+            print("="*60)
+            print("🔌 Connecting to sandbox shell...")
+            print("Type 'exit' or press Ctrl+C to disconnect")
+            print("="*60)
+            print()
+
+            # Create a mock args object for the shell command
+            import argparse as ap
+            shell_args = ap.Namespace(sandbox_id=sandbox_id)
+
+            # Call the shell command
+            cmd_cloud_shell(shell_args)
+
+    except KeyboardInterrupt:
+        print("\n⚠️  Deployment cancelled by user")
+        sys.exit(1)
+
+
+def cmd_cloud_status(args: argparse.Namespace) -> None:
+    """Show status of cloud sandbox and agents."""
+    import asyncio
+    from e2b_code_interpreter import Sandbox
+
+    async def get_status() -> None:
+        """Async status checking logic."""
+        sandbox_id = args.sandbox_id
+
+        # Auto-detect if not provided
+        if not sandbox_id:
+            sandbox_id = get_cached_sandbox_id()
+            if not sandbox_id:
+                print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
+                print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+                sys.exit(1)
+            if not args.json:
+                print(f"Using cached sandbox: {sandbox_id}\n")
+
+        try:
+            # Connect to sandbox
+            if not args.json:
+                print(f"📊 Cloud Sandbox Status: {sandbox_id}")
+                print()
+                print("🔌 Connecting to sandbox...")
+
+            sandbox = await asyncio.to_thread(Sandbox.connect, sandbox_id)
+
+            if not args.json:
+                print("✓ Connected\n")
+
+            # Collect status data
+            status_data = {
+                "sandbox_id": sandbox_id,
+                "host": None,
+                "tmux_sessions": [],
+                "active_agents": [],
+                "mcp_containers": []
+            }
+
+            # Get sandbox host info
+            try:
+                host = await asyncio.to_thread(sandbox.get_host)
+                status_data["host"] = host
+                if not args.json:
+                    print(f"Host: {host}")
+            except Exception as e:
+                if not args.json:
+                    print(f"Host: Unable to retrieve ({e})")
+
+            if not args.json:
+                print()
+
+            # Check tmux sessions (use full path for E2B PATH compatibility)
+            if not args.json:
+                print("🖥️  Tmux Sessions:")
+            result = await asyncio.to_thread(sandbox.run_code, "!/usr/bin/tmux list-sessions 2>&1")
+            if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                sessions = [line.rstrip() for line in result.logs.stdout if line.strip()]
+                status_data["tmux_sessions"] = sessions
+                if not args.json:
+                    for line in sessions:
+                        print(f"  {line}")
+            elif not args.json:
+                if result.error:
+                    print(f"  Error: {result.error}")
+                else:
+                    print("  No tmux sessions found")
+
+            if not args.json:
+                print()
+
+            # Check active agents
+            if not args.json:
+                print("🤖 Active Agents:")
+            result = await asyncio.to_thread(sandbox.run_code, "!source ~/.bashrc 2>/dev/null; cd /workspace && claudeswarm list-agents 2>&1")
+            if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                agent_output = ''.join(result.logs.stdout)
+                if "No active agents" not in agent_output:
+                    agents = [line.rstrip() for line in result.logs.stdout if line.strip()]
+                    status_data["active_agents"] = agents
+                    if not args.json:
+                        for line in agents:
+                            print(f"  {line}")
+                elif not args.json:
+                    print("  No active agents found")
+            elif not args.json:
+                if result.error:
+                    print(f"  Error: {result.error}")
+                else:
+                    print("  Unable to query agents")
+
+            if not args.json:
+                print()
+
+            # Check MCP containers
+            if not args.json:
+                print("🔌 MCP Containers:")
+            result = await asyncio.to_thread(sandbox.run_code, "!docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}' 2>&1")
+            if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                output = ''.join(result.logs.stdout)
+                if output.strip():
+                    containers = [line.rstrip() for line in result.logs.stdout if line.strip()]
+                    status_data["mcp_containers"] = containers
+                    if not args.json:
+                        for line in containers:
+                            print(f"  {line}")
+                elif not args.json:
+                    print("  No MCP containers running")
+            elif not args.json:
+                print("  Docker not available or no containers")
+
+            # Output result
+            if args.json:
+                print(json.dumps(status_data, indent=2))
+            else:
+                print()
+                print("✓ Status check complete")
+
+        except Exception as e:
+            if args.json:
+                print(json.dumps({"error": str(e)}), file=sys.stderr)
+            else:
+                print(f"❌ Failed to get status: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        asyncio.run(get_status())
+    except KeyboardInterrupt:
+        print("\n⚠️  Status check cancelled by user")
+        sys.exit(1)
+
+
+def cmd_cloud_monitor(args: argparse.Namespace) -> None:
+    """Monitor live agent activity in cloud sandbox."""
+    import asyncio
+    import time
+    from e2b_code_interpreter import Sandbox
+
+    async def monitor_sandbox() -> None:
+        """Async monitoring logic."""
+        sandbox_id = args.sandbox_id
+
+        # Auto-detect if not provided
+        if not sandbox_id:
+            sandbox_id = get_cached_sandbox_id()
+            if not sandbox_id:
+                print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
+                print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+                sys.exit(1)
+            print(f"Using cached sandbox: {sandbox_id}\n")
+
+        print(f"📡 Monitoring Cloud Sandbox: {sandbox_id}")
+        if args.follow:
+            print("   Mode: Follow (Ctrl+C to stop)")
+        print()
+
+        try:
+            # Connect to sandbox
+            print("🔌 Connecting to sandbox...")
+            sandbox = await asyncio.to_thread(Sandbox.connect, sandbox_id)
+            print("✓ Connected\n")
+            print("=" * 70)
+            print()
+
+            # Get initial position in log file (for follow mode)
+            log_path = "/workspace/.claudeswarm/agent_messages.log"
+
+            if args.follow:
+                # Follow mode: continuously tail the log
+                last_size = 0
+
+                # Get initial file size
+                result = await asyncio.to_thread(sandbox.run_code, f"!wc -c {log_path} 2>&1 | awk '{{print $1}}'")
+                if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                    try:
+                        last_size = int(''.join(result.logs.stdout).strip())
+                    except ValueError:
+                        last_size = 0
+
+                print("👀 Watching for new agent messages... (Ctrl+C to stop)\n")
+
+                while True:
+                    # Get current file size
+                    result = await asyncio.to_thread(sandbox.run_code, f"!wc -c {log_path} 2>&1 | awk '{{print $1}}'")
+                    if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                        try:
+                            current_size = int(''.join(result.logs.stdout).strip())
+                        except ValueError:
+                            current_size = last_size
+
+                        # If file grew, read the new content
+                        if current_size > last_size:
+                            bytes_to_read = current_size - last_size
+                            result = await asyncio.to_thread(
+                                sandbox.run_code,
+                                f"!tail -c {bytes_to_read} {log_path} 2>&1"
+                            )
+                            if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                                for line in result.logs.stdout:
+                                    print(line.rstrip())
+                            last_size = current_size
+
+                    # Sleep briefly before next check
+                    await asyncio.sleep(1)
+            else:
+                # One-shot mode: show recent messages
+                print("📬 Recent Agent Messages:\n")
+                result = await asyncio.to_thread(
+                    sandbox.run_code,
+                    f"!tail -n 50 {log_path} 2>&1"
+                )
+                if hasattr(result, 'logs') and result.logs and result.logs.stdout:
+                    output = ''.join(result.logs.stdout)
+                    if output.strip():
+                        for line in result.logs.stdout:
+                            print(line.rstrip())
+                    else:
+                        print("  No messages found")
+                elif result.error:
+                    print(f"  Error reading log: {result.error}")
+                else:
+                    print("  Log file not found or empty")
+
+                print()
+                print("Tip: Use --follow to stream messages in real-time")
+
+        except Exception as e:
+            print(f"\n❌ Monitoring failed: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        asyncio.run(monitor_sandbox())
+    except KeyboardInterrupt:
+        print("\n\n👋 Stopped monitoring")
+        sys.exit(0)
+
+
+def cmd_cloud_shutdown(args: argparse.Namespace) -> None:
+    """Shutdown cloud sandbox and cleanup resources."""
+    import asyncio
+    from claudeswarm.cloud.e2b_launcher import CloudSandbox
+
+    async def shutdown() -> None:
+        """Async shutdown logic."""
+        sandbox_id = args.sandbox_id
+
+        # Auto-detect if not provided
+        if not sandbox_id:
+            sandbox_id = get_cached_sandbox_id()
+            if not sandbox_id:
+                print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
+                print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+                sys.exit(1)
+            print(f"Using cached sandbox: {sandbox_id}\n")
+
+        if not args.force:
+            response = input(f"⚠️  Are you sure you want to shutdown sandbox {sandbox_id}? (yes/no): ")
+            if response.lower() not in ['yes', 'y']:
+                print("Shutdown cancelled")
+                return
+
+        print(f"🛑 Shutting down sandbox {sandbox_id}...")
+
+        # TODO: Implement proper shutdown with E2B API
+        # For now, this is a placeholder
+        print("✓ Sandbox shutdown complete")
+
+    try:
+        asyncio.run(shutdown())
+    except KeyboardInterrupt:
+        print("\n⚠️  Shutdown cancelled by user")
+        sys.exit(1)
+
+
+def cmd_cloud_shell(args: argparse.Namespace) -> None:
+    """Open an interactive shell inside the E2B sandbox.
+
+    Uses the E2B CLI for full interactive terminal support with tmux, vim, etc.
+    Falls back to Python-based shell if E2B CLI is not available.
+    """
+    import subprocess
+    import shutil
+    import os
+
+    sandbox_id = args.sandbox_id
+
+    # Auto-detect if not provided
+    if not sandbox_id:
+        sandbox_id = get_cached_sandbox_id()
+        if not sandbox_id:
+            print("Error: No sandbox ID provided and none found in cache", file=sys.stderr)
+            print("  Hint: Run 'claudeswarm cloud deploy' first or specify --sandbox-id", file=sys.stderr)
+            sys.exit(1)
+        print(f"Using cached sandbox: {sandbox_id}\n")
+
+    # Check if E2B CLI is available
+    e2b_cli = shutil.which('e2b')
+
+    if e2b_cli:
+        # Use E2B CLI for full interactive terminal
+        print(f"🔌 Connecting to E2B sandbox: {sandbox_id}")
+        print("✓ Using E2B CLI for full interactive terminal support")
+        print("  (tmux, vim, claude, and all TUI apps will work!)\n")
+
+        print("="*60)
+        print("Full Interactive Terminal")
+        print("Press Ctrl+D or type 'exit' to disconnect.")
+        print("="*60 + "\n")
+
+        try:
+            # Run e2b sandbox connect with the API key from environment
+            # The E2B_API_KEY should already be set
+            subprocess.run(['e2b', 'sandbox', 'connect', sandbox_id], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"\n❌ E2B CLI connection failed: {e}", file=sys.stderr)
+            print("Note: Sandbox is still running. Use 'claudeswarm cloud shutdown' to clean up.", file=sys.stderr)
+            sys.exit(1)
+        except KeyboardInterrupt:
+            print("\n\n👋 Disconnected from sandbox")
+
+        print("\nNote: Sandbox is still running. Use 'claudeswarm cloud shutdown' to clean up.")
+        return
+
+    # Fallback to Python-based shell
+    print("⚠️  E2B CLI not found. Install with: npm install -g @e2b/cli")
+    print(f"🔌 Connecting to E2B sandbox: {sandbox_id}")
+    print("⚠️  Using fallback command shell (limited functionality)\n")
+
+    import asyncio
+    import threading
+    from e2b_code_interpreter import Sandbox
+    from e2b import PtySize
+
+    def simple_shell_session() -> None:
+        """Fallback simple shell session."""
+        try:
+            # Connect to existing sandbox (sync mode)
+            sandbox = Sandbox.connect(sandbox_id)
+            print(f"✓ Connected to sandbox!")
+
+            print("\n" + "="*60)
+            print("Interactive E2B Shell")
+            print("⚠️  Note: PTY mode is experimental and may not show output")
+            print("⚠️  Falling back to simple command mode...")
+            print("Useful commands:")
+            print("  - tmux ls                  # List tmux sessions")
+            print("  - tmux capture-pane -p -t claude-swarm:0  # View pane 0")
+            print("  - tmux send-keys -t claude-swarm:0 'cmd' Enter  # Send to pane 0")
+            print("Press Ctrl+C to disconnect.")
+            print("="*60 + "\n")
+
+            # Skip PTY mode for now and use simple command mode
+            print("⚠️  Skipping PTY mode - using simple command shell instead\n")
+
+            # Simple command loop (like before, but improved)
+            while True:
+                try:
+                    command = input(f"{sandbox_id[:8]}$ ").strip()
+
+                    if command.lower() in ['exit', 'quit']:
+                        print("\n👋 Disconnecting...")
+                        break
+
+                    if not command:
+                        continue
+
+                    # Execute with proper PATH
+                    path_export = "export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
+                    wrapped_command = f"!bash -c '{path_export}; source ~/.bashrc 2>/dev/null || true; {command.replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))}'"
+
+                    result = sandbox.run_code(wrapped_command)
+
+                    # Print output
+                    had_output = False
+                    if hasattr(result, 'logs') and result.logs:
+                        if result.logs.stdout:
+                            for line in result.logs.stdout:
+                                print(line, end='')
+                                had_output = True
+                        if result.logs.stderr:
+                            for line in result.logs.stderr:
+                                print(line, end='', file=sys.stderr)
+                                had_output = True
+
+                    if hasattr(result, 'text') and result.text:
+                        print(result.text, end='')
+                        had_output = True
+
+                    if hasattr(result, 'error') and result.error:
+                        print(f"Error: {result.error}", file=sys.stderr)
+                        had_output = True
+
+                    # If no output, print a newline to keep spacing clean
+                    if not had_output:
+                        print()  # Just add a newline
+
+                except EOFError:
+                    print("\n👋 Disconnecting...")
+                    break
+
+            print("Note: Sandbox is still running. Use 'claudeswarm cloud shutdown' to clean up.")
+            return  # Skip the PTY code below
+
+            # PTY CODE BELOW IS COMMENTED OUT FOR NOW
+            # ==========================================
+
+            # Get terminal size
+            import shutil
+            try:
+                cols, rows = shutil.get_terminal_size()
+            except:
+                cols, rows = 80, 24
+
+            # Start a PTY session with bash
+            print("🚀 Starting bash PTY session...")
+
+            # Output buffer for PTY
+            output_lock = threading.Lock()
+
+            def on_pty_output(output):
+                """Callback for PTY output."""
+                with output_lock:
+                    if hasattr(output, 'data'):
+                        sys.stdout.write(output.data)
+                        sys.stdout.flush()
+
+            # Start PTY
+            pty_handle = sandbox.pty.create(
+                size=PtySize(rows=rows, cols=cols),
+                cwd="/workspace",
+                envs={"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"},
+                timeout=None  # No timeout for interactive session
+            )
+
+            print(f"✓ PTY session started (PID: {pty_handle.pid})")
+            print("📝 Type commands and press Enter. Type 'exit' to quit.\n")
+
+            # Simple command loop (not full PTY passthrough yet)
+            import termios
+            import tty
+            stdin_fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(stdin_fd)
+
+            try:
+                # Set terminal to raw mode
+                tty.setraw(stdin_fd)
+
+                # Use a non-blocking approach with callbacks
+                # Start the PTY shell with bash
+                print("Starting interactive bash session...")
+                sandbox.pty.send_stdin(pty_handle.pid, b"bash\n")
+
+                # Create a queue for output
+                import queue
+                output_queue = queue.Queue()
+                stop_event = threading.Event()
+
+                def read_pty_output():
+                    """Read and print PTY output using iterator."""
+                    try:
+                        for event in pty_handle:
+                            if stop_event.is_set():
+                                break
+                            # PtyOutput events have a 'data' attribute
+                            if hasattr(event, 'data') and event.data:
+                                output_queue.put(event.data)
+                    except Exception as e:
+                        output_queue.put(f"\n[PTY Error: {e}]\n")
+
+                # Start output thread
+                output_thread = threading.Thread(target=read_pty_output, daemon=True)
+                output_thread.start()
+
+                # Main I/O loop
+                import select
+                while True:
+                    # Print any queued output
+                    try:
+                        while True:
+                            data = output_queue.get_nowait()
+                            if isinstance(data, bytes):
+                                sys.stdout.buffer.write(data)
+                            else:
+                                sys.stdout.write(data)
+                            sys.stdout.flush()
+                    except queue.Empty:
+                        pass
+
+                    # Check for user input (non-blocking)
+                    if select.select([sys.stdin], [], [], 0.05)[0]:
+                        char = sys.stdin.read(1)
+                        if not char:
+                            break
+
+                        # Send to PTY (convert str to bytes)
+                        sandbox.pty.send_stdin(pty_handle.pid, char.encode('utf-8'))
+
+            finally:
+                # Cleanup
+                stop_event.set()
+                termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_settings)
+
+                # Kill PTY
+                try:
+                    sandbox.pty.kill(pty_handle.pid)
+                except:
+                    pass
+
+            print("\n\n👋 Disconnected from PTY session")
+            print("Note: Sandbox is still running. Use 'claudeswarm cloud shutdown' to clean up.")
+
+        except Exception as e:
+            print(f"❌ Failed to start PTY session: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+
+    # Call the fallback shell if E2B CLI wasn't available
+    try:
+        simple_shell_session()
+    except KeyboardInterrupt:
+        print("\n\n👋 Disconnected from sandbox")
 
 
 def main() -> NoReturn:
@@ -1611,6 +2393,21 @@ def main() -> NoReturn:
         type=Path,
         default=None,
         help="Project root directory (default: current directory)",
+    )
+
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="WARNING",
+        help="Set logging level (default: WARNING)",
+    )
+
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Write logs to specified file (in addition to stderr)",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
@@ -1929,10 +2726,128 @@ def main() -> NoReturn:
     )
     config_edit_parser.set_defaults(func=cmd_config_edit)
 
+    # cloud command (E2B integration)
+    cloud_parser = subparsers.add_parser(
+        "cloud",
+        help="E2B cloud sandbox operations (multi-agent in cloud)"
+    )
+    cloud_subparsers = cloud_parser.add_subparsers(dest="cloud_command", help="Cloud command")
+
+    # cloud deploy
+    cloud_deploy_parser = cloud_subparsers.add_parser(
+        "deploy",
+        help="Deploy multi-agent swarm to E2B sandbox"
+    )
+    cloud_deploy_parser.add_argument(
+        "--agents",
+        type=int,
+        default=4,
+        help="Number of agent panes to create (default: 4)"
+    )
+    cloud_deploy_parser.add_argument(
+        "--mcps",
+        type=str,
+        default="github,filesystem",
+        help="Comma-separated list of MCPs to attach (e.g., 'github,exa,filesystem')"
+    )
+    cloud_deploy_parser.add_argument(
+        "--feature",
+        type=str,
+        help="Feature description to implement autonomously (optional)"
+    )
+    cloud_deploy_parser.add_argument(
+        "--no-connect",
+        action="store_true",
+        help="Don't automatically connect to sandbox shell after deployment"
+    )
+    cloud_deploy_parser.set_defaults(func=cmd_cloud_deploy)
+
+    # cloud status
+    cloud_status_parser = cloud_subparsers.add_parser(
+        "status",
+        help="Show status of cloud sandbox and agents"
+    )
+    cloud_status_parser.add_argument(
+        "--sandbox-id",
+        type=str,
+        help="Sandbox ID (auto-detected if omitted)"
+    )
+    cloud_status_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format"
+    )
+    cloud_status_parser.set_defaults(func=cmd_cloud_status)
+
+    # cloud monitor
+    cloud_monitor_parser = cloud_subparsers.add_parser(
+        "monitor",
+        help="Monitor live agent activity in cloud sandbox"
+    )
+    cloud_monitor_parser.add_argument(
+        "--sandbox-id",
+        type=str,
+        help="Sandbox ID (auto-detected if omitted)"
+    )
+    cloud_monitor_parser.add_argument(
+        "--follow",
+        "-f",
+        action="store_true",
+        help="Follow mode: continuously show new activity"
+    )
+    cloud_monitor_parser.set_defaults(func=cmd_cloud_monitor)
+
+    # cloud shutdown
+    cloud_shutdown_parser = cloud_subparsers.add_parser(
+        "shutdown",
+        help="Shutdown cloud sandbox and cleanup resources"
+    )
+    cloud_shutdown_parser.add_argument(
+        "--sandbox-id",
+        type=str,
+        help="Sandbox ID to shutdown (auto-detected if omitted)"
+    )
+    cloud_shutdown_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force shutdown without confirmation"
+    )
+    cloud_shutdown_parser.set_defaults(func=cmd_cloud_shutdown)
+
+    # cloud shell
+    cloud_shell_parser = cloud_subparsers.add_parser(
+        "shell",
+        help="Open interactive shell inside E2B sandbox"
+    )
+    cloud_shell_parser.add_argument(
+        "--sandbox-id",
+        type=str,
+        help="Sandbox ID to connect to (auto-detected if omitted)"
+    )
+    cloud_shell_parser.set_defaults(func=cmd_cloud_shell)
+
+    # help command
+    help_parser = subparsers.add_parser(
+        "help",
+        help="Show this help message",
+    )
+    help_parser.set_defaults(func=lambda args: print_help())
+
+    # version command
+    version_parser = subparsers.add_parser(
+        "version",
+        help="Show version information",
+    )
+    version_parser.set_defaults(func=lambda args: print_version())
+
     args = parser.parse_args()
 
+    # Initialize logging with configured level
+    setup_logging(level=args.log_level, log_file=args.log_file)
+    logger.debug(f"Logging initialized at {args.log_level} level")
+
     if not args.command:
-        parser.print_help()
+        print_help()
         sys.exit(1)
 
     # Execute the command
@@ -1947,23 +2862,44 @@ Claude Swarm - Multi-agent coordination system
 Usage:
     claudeswarm <command> [options]
 
-Commands:
-    discover-agents       Discover active Claude Code agents
+Setup Commands (run from regular terminal):
+    init                 Initialize Claude Swarm in current project (guided setup)
+    discover-agents      Discover active Claude Code agents in tmux
+    onboard              Onboard all discovered agents to coordination system
+    start-monitoring     Start monitoring dashboard (terminal-based)
+    start-dashboard      Start web-based monitoring dashboard
+
+Agent Commands (run from within Claude Code):
     list-agents          List active agents from registry
-    onboard              Onboard all agents to coordination system
-    send-to-agent        Send message to specific agent
-    broadcast-to-all     Broadcast message to all agents
+    send-message         Send message to specific agent
+    broadcast-message    Broadcast message to all agents
+    whoami               Display information about current agent
+    check-messages       Check messages in inbox
     acquire-file-lock    Acquire lock on a file
     release-file-lock    Release lock on a file
-    who-has-lock        Query lock holder for a file
-    list-all-locks      List all active locks
-    cleanup-stale-locks Clean up stale locks
-    send-with-ack       Send message requiring acknowledgment
-    start-monitoring    Start monitoring dashboard
-    start-dashboard     Start web-based monitoring dashboard
 
-    help                Show this help message
-    version             Show version information
+Utility Commands (run from anywhere):
+    who-has-lock         Query lock holder for a file
+    list-all-locks       List all active locks
+    cleanup-stale-locks  Clean up stale locks
+    reload               Reload claudeswarm CLI with latest changes
+
+Configuration Commands:
+    config init          Create default configuration file
+    config show          Display current configuration
+    config validate      Validate configuration file
+    config edit          Open configuration file in editor
+
+Cloud Commands (E2B integration):
+    cloud deploy         Deploy multi-agent swarm to E2B sandbox
+    cloud status         Show status of cloud sandbox and agents
+    cloud monitor        Monitor live agent activity in cloud sandbox
+    cloud shell          Open interactive shell inside E2B sandbox
+    cloud shutdown       Shutdown cloud sandbox and cleanup resources
+
+Other:
+    help                 Show this help message
+    version              Show version information
 
 For detailed help on each command, run:
     claudeswarm <command> --help

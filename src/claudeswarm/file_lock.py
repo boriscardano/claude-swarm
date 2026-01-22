@@ -14,7 +14,6 @@ Example:
 Author: Python Expert
 """
 
-import logging
 import os
 import platform
 import stat
@@ -23,7 +22,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+from .logging_config import get_logger
+
+logger = get_logger(__name__)
 
 # Lock retry interval for consistent behavior across platforms
 LOCK_RETRY_INTERVAL = 0.05  # 50ms between lock attempts

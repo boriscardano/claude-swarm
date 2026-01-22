@@ -20,7 +20,6 @@ from __future__ import annotations
 import hmac
 import hashlib
 import json
-import logging
 import shlex
 import subprocess
 import threading
@@ -34,6 +33,7 @@ from typing import Dict, List, Optional
 
 from .config import get_config
 from .discovery import AgentRegistry, get_registry_path
+from .logging_config import get_logger
 from .utils import get_or_create_secret
 from .project import get_messages_log_path
 from .file_lock import FileLock, FileLockTimeout, FileLockError
@@ -101,7 +101,7 @@ MAX_BROADCAST_RECIPIENTS = 100
 RATE_LIMITER_CLEANUP_SECONDS = 3600
 
 # Configure logging
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Custom exceptions

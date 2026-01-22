@@ -24,4 +24,5 @@ __all__ = [
     "cli",
     "utils",
     "config",
+    "logging_config",
 ]

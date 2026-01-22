@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import socket
 import subprocess
+import sys
 import time
 import webbrowser
 from typing import NoReturn
@@ -69,8 +70,11 @@ def start_dashboard_server(
             f"Try a different port with --port or stop the other service."
         )
 
-    # Build uvicorn command
+    # Build uvicorn command using the current Python interpreter
+    # This ensures we use the same environment where claudeswarm is installed
     cmd = [
+        sys.executable,
+        "-m",
         "uvicorn",
         "claudeswarm.web.server:app",
         "--host", host,
@@ -112,5 +116,6 @@ def start_dashboard_server(
         raise RuntimeError(f"Failed to start dashboard: {e}") from e
     except FileNotFoundError:
         raise RuntimeError(
-            "uvicorn not found. Install it with: pip install uvicorn[standard]"
+            f"Python interpreter not found at {sys.executable}. "
+            "This may indicate a corrupted installation. Try reinstalling claudeswarm."
         ) from None
