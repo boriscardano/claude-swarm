@@ -63,24 +63,26 @@ def test_module_hierarchy():
 
 def test_file_logging():
     """Test logging to file."""
+    import tempfile
+
     print("=" * 60)
     print("TEST 4: File logging")
     print("=" * 60)
 
-    log_file = "/tmp/claudeswarm_test.log"
-    setup_logging(level="INFO", log_file=log_file)
-    logger = get_logger("test.file")
+    # Use temporary directory instead of /tmp
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_file = Path(tmpdir) / "claudeswarm_test.log"
+        setup_logging(level="INFO", log_file=str(log_file))
+        logger = get_logger("test.file")
 
-    logger.info("This message should go to both stderr and file")
-    logger.warning("This warning should also go to both")
+        logger.info("This message should go to both stderr and file")
+        logger.warning("This warning should also go to both")
 
-    print(f"\nLog file created at: {log_file}")
-    print("Contents:")
-    with open(log_file, 'r') as f:
-        print(f.read())
+        print(f"\nLog file created at: {log_file}")
+        print("Contents:")
+        with open(log_file, 'r') as f:
+            print(f.read())
 
-    # Cleanup
-    Path(log_file).unlink(missing_ok=True)
     print("\n")
 
 

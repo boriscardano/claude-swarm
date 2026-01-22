@@ -19,8 +19,8 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 
-# Test configuration
-TEST_FILE = Path("/tmp/test_pending_acks.json")
+# Test configuration - will be set dynamically
+TEST_FILE = None
 
 
 @dataclass
@@ -32,8 +32,12 @@ class TestResult:
     message_b_lost: bool = False
 
 
-def setup_test_file():
-    """Create test file with 3 pending ACKs."""
+def setup_test_file(test_file_path):
+    """Create test file with 3 pending ACKs.
+
+    Args:
+        test_file_path: Path object to write test file to
+    """
     now = datetime.now()
     next_retry = now - timedelta(seconds=1)  # Past time to trigger retry
 
@@ -70,18 +74,23 @@ def setup_test_file():
         ]
     }
 
-    with open(TEST_FILE, "w") as f:
+    with open(test_file_path, "w") as f:
         json.dump(test_data, f, indent=2)
 
     print(f"✓ Created test file with 3 pending ACKs: A, B, C")
 
 
-def simulate_process_retries_old(result: TestResult):
-    """Simulate OLD behavior (WITHOUT version checking) - this has the race condition."""
+def simulate_process_retries_old(result: TestResult, test_file_path):
+    """Simulate OLD behavior (WITHOUT version checking) - this has the race condition.
+
+    Args:
+        result: TestResult object to track results
+        test_file_path: Path object for test file
+    """
     print("\n[process_retries] Loading ACKs...")
 
     # Load ACKs
-    with open(TEST_FILE) as f:
+    with open(test_file_path) as f:
         data = json.load(f)
     acks = data["pending_acks"]
     print(f"[process_retries] Loaded {len(acks)} ACKs: {[a['msg_id'] for a in acks]}")
@@ -99,15 +108,20 @@ def simulate_process_retries_old(result: TestResult):
     # Save (OLD WAY - no version check)
     print("[process_retries] Saving updated ACKs...")
     data["pending_acks"] = acks
-    with open(TEST_FILE, "w") as f:
+    with open(test_file_path, "w") as f:
         json.dump(data, f, indent=2)
 
     print(f"[process_retries] Saved ACKs: {[a['msg_id'] for a in acks]}")
     result.process_retries_attempts = 1
 
 
-def simulate_process_retries_new(result: TestResult):
-    """Simulate NEW behavior (WITH version checking) - race condition fixed."""
+def simulate_process_retries_new(result: TestResult, test_file_path):
+    """Simulate NEW behavior (WITH version checking) - race condition fixed.
+
+    Args:
+        result: TestResult object to track results
+        test_file_path: Path object for test file
+    """
     max_attempts = 5
 
     for attempt in range(max_attempts):
@@ -115,7 +129,7 @@ def simulate_process_retries_new(result: TestResult):
         print("[process_retries] Loading ACKs with version...")
 
         # Load ACKs with version
-        with open(TEST_FILE) as f:
+        with open(test_file_path) as f:
             data = json.load(f)
         acks = data["pending_acks"]
         version = data.get("version", 0)
@@ -134,7 +148,7 @@ def simulate_process_retries_new(result: TestResult):
 
         # Try to save with version check (NEW WAY)
         print("[process_retries] Attempting to save with version check...")
-        with open(TEST_FILE) as f:
+        with open(test_file_path) as f:
             current_data = json.load(f)
         current_version = current_data.get("version", 0)
 
@@ -146,7 +160,7 @@ def simulate_process_retries_new(result: TestResult):
         # Version matches, safe to save
         data["version"] = version + 1
         data["pending_acks"] = acks
-        with open(TEST_FILE, "w") as f:
+        with open(test_file_path, "w") as f:
             json.dump(data, f, indent=2)
 
         print(f"[process_retries] ✓ Saved ACKs: {[a['msg_id'] for a in acks]}, new version={version + 1}")
@@ -156,15 +170,20 @@ def simulate_process_retries_new(result: TestResult):
     print(f"[process_retries] ✗ Failed after {max_attempts} attempts!")
 
 
-def simulate_receive_ack(result: TestResult):
-    """Simulate receiving ACK for message B (runs concurrently)."""
+def simulate_receive_ack(result: TestResult, test_file_path):
+    """Simulate receiving ACK for message B (runs concurrently).
+
+    Args:
+        result: TestResult object to track results
+        test_file_path: Path object for test file
+    """
     # Wait a bit for process_retries to start
     time.sleep(0.5)
 
     print("\n[receive_ack] Received ACK for msg-B, removing from pending...")
 
     # Load current ACKs with version
-    with open(TEST_FILE) as f:
+    with open(test_file_path) as f:
         data = json.load(f)
     acks = data["pending_acks"]
     version = data.get("version", 0)
@@ -176,21 +195,27 @@ def simulate_receive_ack(result: TestResult):
     # Save with incremented version
     data["version"] = version + 1
     data["pending_acks"] = acks
-    with open(TEST_FILE, "w") as f:
+    with open(test_file_path, "w") as f:
         json.dump(data, f, indent=2)
 
     print(f"[receive_ack] ✓ Removed msg-B, saved ACKs: {[a['msg_id'] for a in acks]}, new version={version + 1}")
     result.receive_ack_success = True
 
 
-def verify_result(result: TestResult, test_name: str):
-    """Verify test results."""
+def verify_result(result: TestResult, test_name: str, test_file_path):
+    """Verify test results.
+
+    Args:
+        result: TestResult object with test execution data
+        test_name: Name of the test for display
+        test_file_path: Path object for test file
+    """
     print(f"\n{'='*60}")
     print(f"Test: {test_name}")
     print(f"{'='*60}")
 
     # Load final state
-    with open(TEST_FILE) as f:
+    with open(test_file_path) as f:
         data = json.load(f)
     final_acks = [ack["msg_id"] for ack in data["pending_acks"]]
     final_version = data.get("version", 0)
@@ -225,14 +250,18 @@ def verify_result(result: TestResult, test_name: str):
     return not message_b_lost
 
 
-def run_test_old_behavior():
-    """Run test simulating OLD behavior (demonstrates the bug)."""
-    setup_test_file()
+def run_test_old_behavior(test_file_path):
+    """Run test simulating OLD behavior (demonstrates the bug).
+
+    Args:
+        test_file_path: Path object for test file
+    """
+    setup_test_file(test_file_path)
     result = TestResult()
 
     # Start threads
-    t1 = threading.Thread(target=simulate_process_retries_old, args=(result,))
-    t2 = threading.Thread(target=simulate_receive_ack, args=(result,))
+    t1 = threading.Thread(target=simulate_process_retries_old, args=(result, test_file_path))
+    t2 = threading.Thread(target=simulate_receive_ack, args=(result, test_file_path))
 
     t1.start()
     t2.start()
@@ -240,17 +269,21 @@ def run_test_old_behavior():
     t1.join()
     t2.join()
 
-    return verify_result(result, "OLD BEHAVIOR (Without Version Locking)")
+    return verify_result(result, "OLD BEHAVIOR (Without Version Locking)", test_file_path)
 
 
-def run_test_new_behavior():
-    """Run test simulating NEW behavior (demonstrates the fix)."""
-    setup_test_file()
+def run_test_new_behavior(test_file_path):
+    """Run test simulating NEW behavior (demonstrates the fix).
+
+    Args:
+        test_file_path: Path object for test file
+    """
+    setup_test_file(test_file_path)
     result = TestResult()
 
     # Start threads
-    t1 = threading.Thread(target=simulate_process_retries_new, args=(result,))
-    t2 = threading.Thread(target=simulate_receive_ack, args=(result,))
+    t1 = threading.Thread(target=simulate_process_retries_new, args=(result, test_file_path))
+    t2 = threading.Thread(target=simulate_receive_ack, args=(result, test_file_path))
 
     t1.start()
     t2.start()
@@ -258,11 +291,13 @@ def run_test_new_behavior():
     t1.join()
     t2.join()
 
-    return verify_result(result, "NEW BEHAVIOR (With Version Locking)")
+    return verify_result(result, "NEW BEHAVIOR (With Version Locking)", test_file_path)
 
 
 def main():
     """Run both tests to demonstrate the fix."""
+    import tempfile
+
     print("="*60)
     print("ACK RACE CONDITION TEST")
     print("="*60)
@@ -274,38 +309,38 @@ def main():
     print("With version locking: ACK for message B is preserved")
     print()
 
-    # Test 1: Old behavior (demonstrates bug)
-    print("\n" + "="*60)
-    print("TEST 1: Demonstrating the bug (old behavior)")
-    print("="*60)
-    old_passed = run_test_old_behavior()
+    # Create temporary directory for test files
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_file_path = Path(tmpdir) / "test_pending_acks.json"
 
-    time.sleep(1)
+        # Test 1: Old behavior (demonstrates bug)
+        print("\n" + "="*60)
+        print("TEST 1: Demonstrating the bug (old behavior)")
+        print("="*60)
+        old_passed = run_test_old_behavior(test_file_path)
 
-    # Test 2: New behavior (demonstrates fix)
-    print("\n" + "="*60)
-    print("TEST 2: Demonstrating the fix (new behavior)")
-    print("="*60)
-    new_passed = run_test_new_behavior()
+        time.sleep(1)
 
-    # Summary
-    print("\n" + "="*60)
-    print("SUMMARY")
-    print("="*60)
-    print(f"Old behavior (no version locking): {'FAILED ✗' if not old_passed else 'PASSED ✓'}")
-    print(f"New behavior (version locking):    {'PASSED ✓' if new_passed else 'FAILED ✗'}")
-    print()
+        # Test 2: New behavior (demonstrates fix)
+        print("\n" + "="*60)
+        print("TEST 2: Demonstrating the fix (new behavior)")
+        print("="*60)
+        new_passed = run_test_new_behavior(test_file_path)
 
-    if not old_passed and new_passed:
-        print("✓ SUCCESS: Race condition fix is working correctly!")
-        print("  - Old behavior shows the bug (message B lost)")
-        print("  - New behavior prevents the bug (message B preserved)")
-    else:
-        print("⚠️  Unexpected results - review test output")
+        # Summary
+        print("\n" + "="*60)
+        print("SUMMARY")
+        print("="*60)
+        print(f"Old behavior (no version locking): {'FAILED ✗' if not old_passed else 'PASSED ✓'}")
+        print(f"New behavior (version locking):    {'PASSED ✓' if new_passed else 'FAILED ✗'}")
+        print()
 
-    # Cleanup
-    if TEST_FILE.exists():
-        TEST_FILE.unlink()
+        if not old_passed and new_passed:
+            print("✓ SUCCESS: Race condition fix is working correctly!")
+            print("  - Old behavior shows the bug (message B lost)")
+            print("  - New behavior prevents the bug (message B preserved)")
+        else:
+            print("⚠️  Unexpected results - review test output")
 
 
 if __name__ == "__main__":

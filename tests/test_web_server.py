@@ -17,9 +17,13 @@ from datetime import datetime
 
 
 # Mock the project paths before importing
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def mock_paths(tmp_path, monkeypatch):
-    """Mock all file paths to use temp directory."""
+    """Mock all file paths to use temp directory.
+
+    This fixture must be requested explicitly in tests that need mocked paths,
+    or included as a dependency of the client fixture for integration tests.
+    """
     monkeypatch.setattr("claudeswarm.web.server.PROJECT_ROOT", tmp_path)
     monkeypatch.setattr("claudeswarm.web.server.ACTIVE_AGENTS_FILE", tmp_path / "ACTIVE_AGENTS.json")
     monkeypatch.setattr("claudeswarm.web.server.AGENT_MESSAGES_LOG", tmp_path / "agent_messages.log")
@@ -35,7 +39,11 @@ def mock_paths(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client(mock_paths):
-    """Create test client with mocked paths."""
+    """Create test client with mocked paths.
+
+    This fixture depends on mock_paths to ensure paths are properly mocked
+    before creating the FastAPI app instance.
+    """
     from claudeswarm.web.server import app
     return TestClient(app)
 
