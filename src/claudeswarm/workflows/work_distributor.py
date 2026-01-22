@@ -429,24 +429,30 @@ class WorkDistributor:
             True if successfully marked complete
         """
 
-        if task_id not in self.tasks:
-            return False
+        # Use lock to prevent race conditions when accessing shared state
+        with self._task_lock:
+            if task_id not in self.tasks:
+                return False
 
-        task = self.tasks[task_id]
-        task.status = "completed"
-        task.completed_at = datetime.now()
+            task = self.tasks[task_id]
+            task.status = "completed"
+            task.completed_at = datetime.now()
 
-        print(f"✓ Task {task_id} completed by {task.agent_id}")
+            print(f"✓ Task {task_id} completed by {task.agent_id}")
 
-        # Check if this unblocks other tasks
-        unblocked = self._check_unblocked_tasks(task_id)
-        if unblocked:
-            print(f"  → Unblocked tasks: {', '.join(unblocked)}")
+            # Check if this unblocks other tasks
+            unblocked = self._check_unblocked_tasks(task_id)
+            if unblocked:
+                print(f"  → Unblocked tasks: {', '.join(unblocked)}")
 
-        return True
+            return True
 
     def _check_unblocked_tasks(self, completed_task_id: str) -> list[str]:
-        """Check which tasks are now available after a completion"""
+        """
+        Check which tasks are now available after a completion.
+
+        Note: Must be called with self._task_lock held.
+        """
 
         unblocked = []
 

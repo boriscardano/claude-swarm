@@ -32,6 +32,7 @@ import json
 import os
 import platform
 import subprocess
+import threading
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -80,6 +81,10 @@ REGISTRY_LOCK_TIMEOUT_SECONDS = 5.0
 # Cache for process CWD lookups within a single discovery run
 # Cleared at start of each discovery run to ensure freshness
 _cwd_cache: dict[int, str | None] = {}
+
+# Thread lock for protecting CWD cache access
+# Ensures thread-safe reads and writes to _cwd_cache
+_cwd_cache_lock = threading.Lock()
 
 # Set up logging for this module
 logger = get_logger(__name__)
@@ -184,9 +189,14 @@ def get_registry_path(project_root: Path | None = None) -> Path:
 
 
 def _clear_cwd_cache() -> None:
-    """Clear the CWD cache. Called at the start of each discovery run."""
-    global _cwd_cache
-    _cwd_cache = {}
+    """Clear the CWD cache. Called at the start of each discovery run.
+
+    Thread-safe implementation using lock to protect cache access.
+    Uses .clear() to modify dict in-place rather than reassigning,
+    ensuring all threads see the cleared state.
+    """
+    with _cwd_cache_lock:
+        _cwd_cache.clear()
 
 
 def _parse_tmux_panes() -> list[dict]:
@@ -581,9 +591,10 @@ def _get_process_cwd(pid: int) -> str | None:
     # - Cache cleared each discovery run to ensure freshness
     # ============================================================================
 
-    # Check cache first to avoid redundant system calls
-    if pid in _cwd_cache:
-        return _cwd_cache[pid]
+    # Check cache first to avoid redundant system calls (thread-safe)
+    with _cwd_cache_lock:
+        if pid in _cwd_cache:
+            return _cwd_cache[pid]
 
     # Input validation
     if not isinstance(pid, int) or pid <= 0:
@@ -592,7 +603,8 @@ def _get_process_cwd(pid: int) -> str | None:
     # Conservative PID upper bound validation
     if pid > MAX_PID_VALUE:
         logger.warning(f"PID {pid} exceeds reasonable maximum ({MAX_PID_VALUE})")
-        _cwd_cache[pid] = None
+        with _cwd_cache_lock:
+            _cwd_cache[pid] = None
         return None
 
     system = platform.system()
@@ -613,8 +625,9 @@ def _get_process_cwd(pid: int) -> str | None:
         logger.warning(f"Unsupported platform '{system}' for CWD detection")
         cwd = None
 
-    # Cache the result (even if None) to avoid repeated failed lookups
-    _cwd_cache[pid] = cwd
+    # Cache the result (even if None) to avoid repeated failed lookups (thread-safe)
+    with _cwd_cache_lock:
+        _cwd_cache[pid] = cwd
     return cwd
 
 
