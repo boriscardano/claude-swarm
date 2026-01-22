@@ -113,33 +113,61 @@ class AckSystem:
         self._ensure_pending_file()
 
     def _ensure_pending_file(self) -> None:
-        """Ensure PENDING_ACKS.json exists."""
+        """Ensure PENDING_ACKS.json exists with version tracking."""
         if not self.pending_file.exists():
-            save_json(self.pending_file, {"pending_acks": []})
+            save_json(self.pending_file, {"version": 0, "pending_acks": []})
             logger.info(f"Created pending ACKs file at {self.pending_file}")
 
-    def _load_pending_acks(self) -> list[PendingAck]:
-        """Load pending ACKs from file.
+    def _load_pending_acks(self) -> tuple[list[PendingAck], int]:
+        """Load pending ACKs from file with version number.
 
         Returns:
-            List of PendingAck objects
+            Tuple of (list of PendingAck objects, version number)
         """
         try:
             data = load_json(self.pending_file)
+            # Support legacy files without version field
+            version = data.get("version", 0)
             acks_data = data.get("pending_acks", [])
-            return [PendingAck.from_dict(ack) for ack in acks_data]
+            return [PendingAck.from_dict(ack) for ack in acks_data], version
         except (FileNotFoundError, json.JSONDecodeError) as e:
             logger.error(f"Error loading pending ACKs: {e}")
-            return []
+            return [], 0
 
-    def _save_pending_acks(self, acks: list[PendingAck]) -> None:
-        """Save pending ACKs to file atomically.
+    def _save_pending_acks(
+        self, acks: list[PendingAck], expected_version: Optional[int] = None
+    ) -> bool:
+        """Save pending ACKs to file with optimistic locking.
+
+        Uses version-based optimistic locking to prevent race conditions.
+        If expected_version is provided, only saves if current version matches.
 
         Args:
             acks: List of PendingAck objects to save
+            expected_version: Expected version number (for optimistic locking)
+
+        Returns:
+            True if save succeeded, False if version mismatch occurred
         """
-        data = {"pending_acks": [ack.to_dict() for ack in acks]}
+        # If version checking is enabled, verify version matches
+        if expected_version is not None:
+            current_acks, current_version = self._load_pending_acks()
+            if current_version != expected_version:
+                logger.debug(
+                    f"Version mismatch: expected {expected_version}, "
+                    f"found {current_version}. Aborting save."
+                )
+                return False
+            new_version = current_version + 1
+        else:
+            # No version check requested, just increment from current
+            _, current_version = self._load_pending_acks()
+            new_version = current_version + 1
+
+        data = {"version": new_version, "pending_acks": [ack.to_dict() for ack in acks]}
         save_json(self.pending_file, data)
+        logger.debug(f"Saved pending ACKs with version {new_version}")
+        return True
 
     def send_with_ack(
         self,
@@ -197,9 +225,9 @@ class AckSystem:
 
         # Add to tracking BEFORE sending
         with self._lock:
-            acks = self._load_pending_acks()
+            acks, version = self._load_pending_acks()
             acks.append(pending_ack)
-            self._save_pending_acks(acks)
+            self._save_pending_acks(acks, expected_version=version)
 
         # Send the message
         try:
@@ -209,20 +237,20 @@ class AckSystem:
                 logger.error(f"Failed to send message from {sender_id} to {recipient_id}")
                 # Clean up the pending ACK since send failed
                 with self._lock:
-                    acks = self._load_pending_acks()
+                    acks, version = self._load_pending_acks()
                     acks = [ack for ack in acks if ack.msg_id != temp_msg_id]
-                    self._save_pending_acks(acks)
+                    self._save_pending_acks(acks, expected_version=version)
                 return None
 
             # Update the pending ACK with actual message info
             with self._lock:
-                acks = self._load_pending_acks()
+                acks, version = self._load_pending_acks()
                 for ack in acks:
                     if ack.msg_id == temp_msg_id:
                         ack.msg_id = message.msg_id
                         ack.message = message.to_dict()
                         break
-                self._save_pending_acks(acks)
+                self._save_pending_acks(acks, expected_version=version)
 
             logger.info(
                 f"Message {message.msg_id} sent with ACK requirement: "
@@ -235,9 +263,9 @@ class AckSystem:
             logger.error(f"Exception while sending message: {e}")
             # Clean up the pending ACK
             with self._lock:
-                acks = self._load_pending_acks()
+                acks, version = self._load_pending_acks()
                 acks = [ack for ack in acks if ack.msg_id != temp_msg_id]
-                self._save_pending_acks(acks)
+                self._save_pending_acks(acks, expected_version=version)
             raise
 
     def receive_ack(self, msg_id: str, agent_id: str) -> bool:
@@ -253,7 +281,7 @@ class AckSystem:
             True if ACK was matched and removed, False if not found
         """
         with self._lock:
-            acks = self._load_pending_acks()
+            acks, version = self._load_pending_acks()
 
             # Find matching pending ACK
             for i, ack in enumerate(acks):
@@ -268,7 +296,7 @@ class AckSystem:
 
                     # Remove from pending
                     acks.pop(i)
-                    self._save_pending_acks(acks)
+                    self._save_pending_acks(acks, expected_version=version)
 
                     logger.info(
                         f"ACK received for message {msg_id} from {agent_id}, "
@@ -288,7 +316,7 @@ class AckSystem:
         Returns:
             List of pending acknowledgments
         """
-        acks = self._load_pending_acks()
+        acks, _ = self._load_pending_acks()
 
         if agent_id:
             acks = [ack for ack in acks if ack.sender_id == agent_id]
@@ -301,14 +329,23 @@ class AckSystem:
         This should be called periodically (e.g., every 10 seconds)
         to check for timed-out messages and trigger retries or escalation.
 
+        Uses optimistic locking to prevent race conditions with receive_ack().
+        If version conflict detected, retries the entire operation.
+
         Returns:
             Number of messages retried or escalated
         """
-        now = datetime.now()
-        processed_count = 0
+        max_attempts = 5  # Maximum retry attempts for version conflicts
 
-        with self._lock:
-            acks = self._load_pending_acks()
+        for attempt in range(max_attempts):
+            now = datetime.now()
+            processed_count = 0
+
+            # Load ACKs with version - hold lock only during load
+            with self._lock:
+                acks, version = self._load_pending_acks()
+
+            # Process ACKs outside the lock (this can take seconds)
             updated_acks = []
 
             for ack in acks:
@@ -317,7 +354,7 @@ class AckSystem:
                 # Check if retry is needed
                 if now >= next_retry_dt:
                     if ack.retry_count < self.MAX_RETRIES:
-                        # Retry the message
+                        # Retry the message (this can take time)
                         self._retry_message(ack)
                         ack.retry_count += 1
 
@@ -342,10 +379,26 @@ class AckSystem:
                     # Not yet time to retry
                     updated_acks.append(ack)
 
-            # Save updated list
-            self._save_pending_acks(updated_acks)
+            # Try to save - hold lock only during save
+            with self._lock:
+                if self._save_pending_acks(updated_acks, expected_version=version):
+                    # Save succeeded
+                    logger.debug(f"process_retries: saved on attempt {attempt + 1}")
+                    return processed_count
+                else:
+                    # Version conflict - another process modified the file
+                    logger.info(
+                        f"process_retries: version conflict on attempt {attempt + 1}, "
+                        f"retrying..."
+                    )
+                    # Loop will retry with fresh data
 
-        return processed_count
+        # If we get here, all retry attempts failed
+        logger.error(
+            f"process_retries: failed to save after {max_attempts} attempts "
+            f"due to version conflicts"
+        )
+        return 0
 
     def _retry_message(self, ack: PendingAck) -> None:
         """Retry sending a message.
@@ -419,15 +472,15 @@ class AckSystem:
             Number of ACKs cleared
         """
         with self._lock:
-            acks = self._load_pending_acks()
+            acks, version = self._load_pending_acks()
 
             if agent_id:
                 filtered = [ack for ack in acks if ack.sender_id != agent_id]
                 cleared = len(acks) - len(filtered)
-                self._save_pending_acks(filtered)
+                self._save_pending_acks(filtered, expected_version=version)
             else:
                 cleared = len(acks)
-                self._save_pending_acks([])
+                self._save_pending_acks([], expected_version=version)
 
             logger.info(f"Cleared {cleared} pending ACKs")
             return cleared
