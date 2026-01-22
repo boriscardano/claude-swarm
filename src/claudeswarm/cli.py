@@ -48,6 +48,30 @@ logger = get_logger(__name__)
 # Lock reason length limit (enforces concise lock descriptions)
 MAX_LOCK_REASON_LENGTH = 512
 
+
+# Custom type validators for argparse
+def positive_int(value: str) -> int:
+    """Validate that a string represents a positive integer.
+
+    Args:
+        value: String to validate
+
+    Returns:
+        Integer value if valid
+
+    Raises:
+        argparse.ArgumentTypeError: If value is not a positive integer
+    """
+    try:
+        ivalue = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{value}' is not a valid integer")
+
+    if ivalue <= 0:
+        raise argparse.ArgumentTypeError(f"'{value}' must be a positive integer (greater than 0)")
+
+    return ivalue
+
 # Stale threshold validation bounds (in seconds)
 # These align with DiscoveryConfig validation in config.py
 MIN_STALE_THRESHOLD = 1
@@ -68,25 +92,106 @@ def format_timestamp(ts: float) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def _require_agent_id(args: argparse.Namespace, arg_name: str = "agent_id") -> str:
+    """Extract and validate agent ID from args, with auto-detection fallback.
+
+    Args:
+        args: Parsed command-line arguments
+        arg_name: Name of the argument to extract (default: "agent_id")
+
+    Returns:
+        Validated agent ID string
+
+    Raises:
+        SystemExit: If agent ID cannot be determined or validated
+    """
+    agent_id = getattr(args, arg_name, None)
+    if not agent_id:
+        detected_id, _ = _detect_current_agent()
+        if detected_id:
+            agent_id = detected_id
+        else:
+            print("Error: Could not auto-detect agent identity", file=sys.stderr)
+            print(
+                "Please provide agent_id or run 'claudeswarm whoami' to verify registration",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    try:
+        return validate_agent_id(agent_id)
+    except ValidationError as e:
+        print(f"Validation error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _get_safe_editor() -> str | None:
+    """Get and validate EDITOR environment variable, with safe fallbacks.
+
+    Returns:
+        Path to safe editor executable, or None if no safe editor found
+
+    Security Notes:
+        - Validates that EDITOR path exists and is executable
+        - Rejects values containing shell metacharacters to prevent injection
+        - Falls back to common safe editors if EDITOR is invalid
+    """
+    import re
+
+    # Shell metacharacters that could indicate command injection attempts
+    SHELL_METACHARACTERS = re.compile(r"[;&|`$<>(){}[\]\\'\"\n]")
+
+    # Safe fallback editors in order of preference
+    SAFE_FALLBACKS = ["vim", "vi", "nano", "emacs"]
+
+    # Get EDITOR from environment
+    editor = os.environ.get("EDITOR")
+
+    if editor:
+        # Check for suspicious shell metacharacters
+        if SHELL_METACHARACTERS.search(editor):
+            logger.warning(f"EDITOR contains shell metacharacters: {editor}")
+            print(
+                "Warning: EDITOR environment variable contains suspicious characters, ignoring",
+                file=sys.stderr,
+            )
+            editor = None
+        else:
+            # Validate that the editor path exists and is executable
+            editor_path = shutil.which(editor)
+            if not editor_path:
+                logger.warning(f"EDITOR not found in PATH: {editor}")
+                print(
+                    f"Warning: EDITOR '{editor}' not found in PATH, trying fallbacks",
+                    file=sys.stderr,
+                )
+                editor = None
+            elif not os.access(editor_path, os.X_OK):
+                logger.warning(f"EDITOR not executable: {editor_path}")
+                print(
+                    f"Warning: EDITOR '{editor}' is not executable, trying fallbacks",
+                    file=sys.stderr,
+                )
+                editor = None
+            else:
+                # Valid editor found
+                return editor_path
+
+    # Fallback to safe default editors
+    if not editor:
+        for fallback in SAFE_FALLBACKS:
+            editor_path = shutil.which(fallback)
+            if editor_path and os.access(editor_path, os.X_OK):
+                return fallback
+
+    return None
+
+
 def cmd_acquire_file_lock(args: argparse.Namespace) -> None:
     """Acquire a lock on a file."""
     try:
-        # Auto-detect agent_id if not provided
-        agent_id = args.agent_id
-        if not agent_id:
-            detected_id, _ = _detect_current_agent()
-            if detected_id:
-                agent_id = detected_id
-            else:
-                print("Error: Could not auto-detect agent identity", file=sys.stderr)
-                print(
-                    "Please provide agent_id or run 'claudeswarm whoami' to verify registration",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-
-        # Validate inputs
-        validated_agent_id = validate_agent_id(agent_id)
+        # Auto-detect and validate agent_id if not provided
+        validated_agent_id = _require_agent_id(args)
         validated_filepath = validate_file_path(
             args.filepath, must_be_relative=False, check_traversal=True
         )
@@ -134,22 +239,8 @@ def cmd_acquire_file_lock(args: argparse.Namespace) -> None:
 def cmd_release_file_lock(args: argparse.Namespace) -> None:
     """Release a lock on a file."""
     try:
-        # Auto-detect agent_id if not provided
-        agent_id = args.agent_id
-        if not agent_id:
-            detected_id, _ = _detect_current_agent()
-            if detected_id:
-                agent_id = detected_id
-            else:
-                print("Error: Could not auto-detect agent identity", file=sys.stderr)
-                print(
-                    "Please provide agent_id or run 'claudeswarm whoami' to verify registration",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-
-        # Validate inputs
-        validated_agent_id = validate_agent_id(agent_id)
+        # Auto-detect and validate agent_id if not provided
+        validated_agent_id = _require_agent_id(args)
         validated_filepath = validate_file_path(
             args.filepath, must_be_relative=False, check_traversal=True
         )
@@ -432,22 +523,8 @@ def cmd_send_message(args: argparse.Namespace) -> None:
     from claudeswarm.validators import sanitize_message_content
 
     try:
-        # Auto-detect sender if not provided
-        sender_id = args.sender_id
-        if not sender_id:
-            detected_id, _ = _detect_current_agent()
-            if detected_id:
-                sender_id = detected_id
-            else:
-                print("Error: Could not auto-detect agent identity", file=sys.stderr)
-                print(
-                    "Please provide sender_id or run 'claudeswarm whoami' to verify registration",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-
-        # Validate agent IDs (validators handle all validation including length)
-        validated_sender = validate_agent_id(sender_id)
+        # Auto-detect and validate sender if not provided
+        validated_sender = _require_agent_id(args, arg_name="sender_id")
         validated_recipient = validate_agent_id(args.recipient_id)
 
         # Validate and sanitize message content
@@ -531,22 +608,8 @@ def cmd_broadcast_message(args: argparse.Namespace) -> None:
     from claudeswarm.validators import sanitize_message_content
 
     try:
-        # Auto-detect sender if not provided
-        sender_id = args.sender_id
-        if not sender_id:
-            detected_id, _ = _detect_current_agent()
-            if detected_id:
-                sender_id = detected_id
-            else:
-                print("Error: Could not auto-detect agent identity", file=sys.stderr)
-                print(
-                    "Please provide sender_id or run 'claudeswarm whoami' to verify registration",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-
-        # Validate sender ID (validators handle all validation including length)
-        validated_sender = validate_agent_id(sender_id)
+        # Auto-detect and validate sender if not provided
+        validated_sender = _require_agent_id(args, arg_name="sender_id")
 
         # Validate and sanitize message content
         validated_content = validate_message_content(args.content)
@@ -818,8 +881,6 @@ def cmd_config_validate(args: argparse.Namespace) -> None:
 
 def cmd_config_edit(args: argparse.Namespace) -> None:
     """Open configuration file in editor."""
-    import os
-
     # Find or create config file
     if args.file:
         config_path = Path(args.file)
@@ -833,14 +894,8 @@ def cmd_config_edit(args: argparse.Namespace) -> None:
                 # Create default config by calling config init
                 cmd_config_init(argparse.Namespace(output=str(config_path), force=False))
 
-    # Get editor
-    editor = os.environ.get("EDITOR")
-    if not editor:
-        # Try common editors
-        for e in ["vim", "vi", "nano", "emacs"]:
-            if shutil.which(e):
-                editor = e
-                break
+    # Get validated editor
+    editor = _get_safe_editor()
 
     if not editor:
         print("Error: No editor found", file=sys.stderr)
@@ -849,7 +904,7 @@ def cmd_config_edit(args: argparse.Namespace) -> None:
 
     # Open in editor
     try:
-        result = subprocess.run([editor, str(config_path)])
+        result = subprocess.run([editor, str(config_path)])  # nosec B603
         if result.returncode == 0:
             print(f"Saved: {config_path}")
             print()
@@ -1867,7 +1922,7 @@ def main() -> NoReturn:
     )
     discover_parser.add_argument(
         "--interval",
-        type=int,
+        type=positive_int,
         default=30,
         help="Refresh interval in seconds for watch mode (default: 30)",
     )
@@ -1958,7 +2013,7 @@ def main() -> NoReturn:
     )
     check_messages_parser.add_argument(
         "--limit",
-        type=int,
+        type=positive_int,
         default=10,
         help="Number of recent messages to show (default: 10)",
     )
