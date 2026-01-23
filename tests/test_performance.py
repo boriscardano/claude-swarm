@@ -8,15 +8,13 @@ Tests cover:
 """
 
 import json
-import tempfile
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import pytest
 
 from claudeswarm.messaging import Message, MessageType, RateLimiter
-from claudeswarm.monitoring import LogTailer, Monitor, MessageFilter
+from claudeswarm.monitoring import LogTailer, MessageFilter, Monitor
 
 
 class TestRateLimiterPerformance:
@@ -88,7 +86,7 @@ class TestRateLimiterPerformance:
         limiter = RateLimiter(max_messages=5, window_seconds=1)
 
         # Simulate 10 cycles of activity
-        for cycle in range(10):
+        for _cycle in range(10):
             # Multiple agents send messages
             for agent_num in range(20):
                 agent_id = f"agent-{agent_num}"
@@ -148,14 +146,12 @@ class TestLogTailerRotation:
         lines = tailer.tail_new_lines()
         assert lines == ["line1"]
 
-        old_inode = tailer.last_inode
-
         # Simulate rotation by replacing file
         log_path.unlink()
         log_path.write_text("rotated line 1\n")
 
         # New file should have different inode
-        new_stat = log_path.stat()
+        log_path.stat()
         # Note: on some filesystems, inode might be reused immediately
 
         lines = tailer.tail_new_lines()
@@ -171,7 +167,7 @@ class TestLogTailerRotation:
         # Simulate 5 rotation cycles
         for cycle in range(5):
             # Write some data
-            with open(log_path, 'a') as f:
+            with open(log_path, "a") as f:
                 for i in range(10):
                     f.write(f"cycle {cycle} line {i}\n")
 
@@ -234,7 +230,7 @@ class TestMonitorResourceManagement:
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content=f"message {i}",
-                recipients=["agent-0"]
+                recipients=["agent-0"],
             )
             monitor.recent_messages.append(msg)
 
@@ -258,7 +254,7 @@ class TestMonitorResourceManagement:
                     timestamp=datetime.now(),
                     msg_type=MessageType.INFO,
                     content=f"message {i}",
-                    recipients=["agent-1"]
+                    recipients=["agent-1"],
                 )
                 monitor.recent_messages.append(msg)
 
@@ -279,19 +275,24 @@ class TestMessageFilterPerformance:
         # Create 10000 messages
         messages = []
         for i in range(10000):
-            msg_type = [MessageType.BLOCKED, MessageType.QUESTION,
-                       MessageType.INFO, MessageType.COMPLETED][i % 4]
+            msg_type = [
+                MessageType.BLOCKED,
+                MessageType.QUESTION,
+                MessageType.INFO,
+                MessageType.COMPLETED,
+            ][i % 4]
             msg = Message(
                 sender_id=f"agent-{i % 100}",
                 timestamp=datetime.now(),
                 msg_type=msg_type,
                 content=f"message {i}",
-                recipients=[f"agent-{(i + 1) % 100}"]
+                recipients=[f"agent-{(i + 1) % 100}"],
             )
             messages.append(msg)
 
         # Filter all messages - should be fast
         import time
+
         start = time.time()
         filtered = [msg for msg in messages if msg_filter.matches(msg)]
         elapsed = time.time() - start
@@ -317,13 +318,13 @@ class TestMessageFilterPerformance:
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content=f"message {i}",
-                recipients=recipients
+                recipients=recipients,
             )
             messages.append(msg)
 
         # Filter should use set intersection (fast)
         start = time.time()
-        filtered = [msg for msg in messages if msg_filter.matches(msg)]
+        _ = [msg for msg in messages if msg_filter.matches(msg)]
         elapsed = time.time() - start
 
         # Should be very fast (< 50ms for 1000 messages)
@@ -353,7 +354,7 @@ class TestMemoryLeakPrevention:
                 limiter.cleanup_inactive_agents(cutoff_seconds=1)
 
         # Do a final cleanup of old agents
-        removed = limiter.cleanup_inactive_agents(cutoff_seconds=0)
+        _ = limiter.cleanup_inactive_agents(cutoff_seconds=0)
 
         # After cleanup, should have only recent agents (last cycle batch = 10)
         assert len(limiter._message_times) <= 10
@@ -364,7 +365,7 @@ class TestMemoryLeakPrevention:
         monitor = Monitor(log_path=log_path)
 
         # Write many log entries
-        with open(log_path, 'w') as f:
+        with open(log_path, "w") as f:
             for i in range(500):
                 entry = {
                     "timestamp": datetime.now().isoformat(),
@@ -372,9 +373,9 @@ class TestMemoryLeakPrevention:
                     "msg_type": "INFO",
                     "content": f"message {i}",
                     "recipients": ["agent-0"],
-                    "msg_id": str(i)
+                    "msg_id": str(i),
                 }
-                f.write(json.dumps(entry) + '\n')
+                f.write(json.dumps(entry) + "\n")
 
         # Process logs
         monitor.process_new_logs()

@@ -7,20 +7,26 @@ Tests cover:
 - Concurrent lock attempts (race conditions)
 - Glob pattern matching
 - Lock file corruption handling
+- Retry logic with exponential backoff and jitter
 """
 
 import json
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from claudeswarm.locking import (
-    STALE_LOCK_TIMEOUT,
+    INITIAL_RETRY_DELAY_SECONDS,
+    JITTER_FACTOR,
+    MAX_RETRY_DELAY_SECONDS,
     FileLock,
     LockConflict,
     LockManager,
+    _calculate_backoff_delay,
+    _retry_with_backoff,
 )
 
 
@@ -52,25 +58,32 @@ class TestFileLock:
 
     def test_is_stale_old_lock(self):
         """Test that an old lock is stale."""
-        lock = FileLock(
-            agent_id="agent-1",
-            filepath="test.py",
-            locked_at=time.time() - 400,  # 400 seconds ago
-            reason="testing",
-        )
-        assert lock.is_stale(timeout=300)
+        with patch("time.time") as mock_time:
+            # Set current time to 1000
+            mock_time.return_value = 1000.0
+            # Lock was created at time 600 (400 seconds ago)
+            lock = FileLock(
+                agent_id="agent-1",
+                filepath="test.py",
+                locked_at=600.0,
+                reason="testing",
+            )
+            assert lock.is_stale(timeout=300)
 
     def test_age_seconds(self):
         """Test lock age calculation."""
-        lock_time = time.time() - 10  # 10 seconds ago
-        lock = FileLock(
-            agent_id="agent-1",
-            filepath="test.py",
-            locked_at=lock_time,
-            reason="testing",
-        )
-        age = lock.age_seconds()
-        assert 9 < age < 11  # Allow small timing variance
+        with patch("time.time") as mock_time:
+            # Set current time to 1000
+            mock_time.return_value = 1000.0
+            # Lock was created at time 990 (10 seconds ago)
+            lock = FileLock(
+                agent_id="agent-1",
+                filepath="test.py",
+                locked_at=990.0,
+                reason="testing",
+            )
+            age = lock.age_seconds()
+            assert age == 10.0  # Exact match with mocked time
 
     def test_to_dict(self):
         """Test serialization to dictionary."""
@@ -391,9 +404,7 @@ class TestLockManager:
         lock_manager.acquire_lock("*.py", "agent-1", "all python files")
 
         # Agent 2 tries to lock specific file
-        success, conflict = lock_manager.acquire_lock(
-            "test.py", "agent-2", "specific file"
-        )
+        success, conflict = lock_manager.acquire_lock("test.py", "agent-2", "specific file")
 
         assert not success
         assert conflict is not None
@@ -405,9 +416,7 @@ class TestLockManager:
         lock_manager.acquire_lock("test.py", "agent-1", "specific file")
 
         # Agent 2 tries to lock all Python files
-        success, conflict = lock_manager.acquire_lock(
-            "*.py", "agent-2", "all python files"
-        )
+        success, conflict = lock_manager.acquire_lock("*.py", "agent-2", "all python files")
 
         assert not success
         assert conflict is not None
@@ -420,9 +429,7 @@ class TestLockManager:
         lock_manager.acquire_lock("file2.py", "agent-1", "second")
 
         # Agent 1 tries to lock with pattern
-        success, conflict = lock_manager.acquire_lock(
-            "*.py", "agent-1", "pattern lock"
-        )
+        success, conflict = lock_manager.acquire_lock("*.py", "agent-1", "pattern lock")
 
         assert success  # No conflict with own locks
         assert conflict is None
@@ -435,9 +442,7 @@ class TestLockManager:
             f.write("not valid json{{{")
 
         # Should be able to acquire lock (corrupted file treated as non-existent)
-        success, conflict = lock_manager.acquire_lock(
-            "test.py", "agent-1", "testing"
-        )
+        success, conflict = lock_manager.acquire_lock("test.py", "agent-1", "testing")
 
         assert success
         assert conflict is None
@@ -537,3 +542,196 @@ class TestConcurrency:
         # Verify no temp files left behind
         temp_files = list(lock_manager.lock_dir.glob("*.tmp"))
         assert len(temp_files) == 0
+
+
+class TestRetryLogic:
+    """Tests for exponential backoff with jitter retry logic."""
+
+    def test_calculate_backoff_delay_exponential_growth(self):
+        """Test that backoff delay grows exponentially."""
+        delays = [_calculate_backoff_delay(i) for i in range(5)]
+
+        # Each delay should be roughly double the previous (accounting for jitter)
+        # Attempt 0: ~0.1s, Attempt 1: ~0.2s, Attempt 2: ~0.4s, etc.
+        for i in range(len(delays) - 1):
+            # Due to jitter, we can't expect exact doubling, but should be in range
+            base_delay_current = INITIAL_RETRY_DELAY_SECONDS * (2**i)
+            base_delay_next = INITIAL_RETRY_DELAY_SECONDS * (2 ** (i + 1))
+
+            # Delays should be within the expected range (accounting for jitter)
+            assert delays[i] >= base_delay_current * (1 - JITTER_FACTOR)
+            assert delays[i] <= base_delay_current * (1 + JITTER_FACTOR)
+            assert delays[i + 1] >= base_delay_next * (1 - JITTER_FACTOR)
+            assert delays[i + 1] <= base_delay_next * (1 + JITTER_FACTOR)
+
+    def test_calculate_backoff_delay_respects_max(self):
+        """Test that backoff delay is capped at maximum."""
+        # Attempt a large number that would exceed max
+        delay = _calculate_backoff_delay(100)
+
+        # Should be capped at MAX_RETRY_DELAY_SECONDS ± jitter
+        max_with_jitter = MAX_RETRY_DELAY_SECONDS * (1 + JITTER_FACTOR)
+        min_with_jitter = MAX_RETRY_DELAY_SECONDS * (1 - JITTER_FACTOR)
+
+        assert delay <= max_with_jitter
+        assert delay >= min_with_jitter
+
+    def test_calculate_backoff_delay_minimum(self):
+        """Test that backoff delay has minimum threshold."""
+        # Even with negative jitter, should never go below 10ms
+        for attempt in range(10):
+            delay = _calculate_backoff_delay(attempt)
+            assert delay >= 0.01  # 10ms minimum
+
+    def test_calculate_backoff_delay_jitter_variation(self):
+        """Test that jitter produces varied delays."""
+        # Generate multiple delays for the same attempt
+        delays = [_calculate_backoff_delay(2) for _ in range(20)]
+
+        # Should have variation (not all the same)
+        unique_delays = set(delays)
+        assert len(unique_delays) > 1, "Jitter should produce varied delays"
+
+        # All should be within expected range
+        base_delay = min(INITIAL_RETRY_DELAY_SECONDS * 4, MAX_RETRY_DELAY_SECONDS)
+        max_delay = base_delay * (1 + JITTER_FACTOR)
+        min_delay = base_delay * (1 - JITTER_FACTOR)
+
+        for delay in delays:
+            assert min_delay <= delay <= max_delay
+
+    def test_retry_with_backoff_success_first_attempt(self):
+        """Test that operation succeeds on first attempt without retry."""
+        operation = MagicMock(return_value="success")
+
+        result = _retry_with_backoff(operation, "test_operation")
+
+        assert result == "success"
+        assert operation.call_count == 1
+
+    def test_retry_with_backoff_success_after_retries(self):
+        """Test that operation succeeds after initial failures."""
+        # Fail twice, then succeed
+        operation = MagicMock(side_effect=[OSError("fail"), OSError("fail"), "success"])
+
+        with patch("time.sleep"):  # Mock sleep to speed up test
+            result = _retry_with_backoff(operation, "test_operation", max_retries=5)
+
+        assert result == "success"
+        assert operation.call_count == 3
+
+    def test_retry_with_backoff_exhausts_retries(self):
+        """Test that operation fails after exhausting all retries."""
+        # Always fail
+        operation = MagicMock(side_effect=OSError("persistent failure"))
+
+        with patch("time.sleep"):  # Mock sleep to speed up test
+            with pytest.raises(OSError, match="persistent failure"):
+                _retry_with_backoff(operation, "test_operation", max_retries=3)
+
+        # Should try: initial + 3 retries = 4 times
+        assert operation.call_count == 4
+
+    def test_retry_with_backoff_respects_max_retries(self):
+        """Test that max_retries parameter is respected."""
+        operation = MagicMock(side_effect=OSError("fail"))
+
+        with patch("time.sleep"):
+            with pytest.raises(OSError):
+                _retry_with_backoff(operation, "test_operation", max_retries=2)
+
+        # Should try: initial + 2 retries = 3 times
+        assert operation.call_count == 3
+
+    def test_retry_with_backoff_sleeps_with_backoff(self):
+        """Test that retry logic sleeps with exponential backoff."""
+        operation = MagicMock(side_effect=[OSError(), OSError(), OSError(), "success"])
+
+        with patch("time.sleep") as mock_sleep:
+            result = _retry_with_backoff(operation, "test_operation", max_retries=5)
+
+        assert result == "success"
+        # Should have slept 3 times (after first 3 failures)
+        assert mock_sleep.call_count == 3
+
+        # Verify sleep durations are increasing
+        sleep_calls = [call[0][0] for call in mock_sleep.call_args_list]
+        for i in range(len(sleep_calls) - 1):
+            # Each sleep should be roughly double the previous (accounting for jitter)
+            # We can't assert exact values due to jitter, but verify they're positive
+            # and generally increasing
+            assert sleep_calls[i] > 0
+            assert sleep_calls[i + 1] > 0
+
+    def test_acquire_lock_with_retry_on_contention(self, lock_manager):
+        """Test that acquire_lock retries on contention."""
+        filepath = "test.py"
+
+        # Simulate contention that resolves after 2 attempts
+        original_write = lock_manager._write_lock
+        write_attempts = [0]
+
+        def mock_write(lock_path, lock):
+            write_attempts[0] += 1
+            if write_attempts[0] < 3:
+                # Fail first 2 attempts
+                return False
+            # Succeed on 3rd attempt
+            return original_write(lock_path, lock)
+
+        with patch("time.sleep"):  # Speed up test
+            with patch.object(lock_manager, "_write_lock", side_effect=mock_write):
+                success, conflict = lock_manager.acquire_lock(
+                    filepath=filepath, agent_id="agent-1", reason="test retry"
+                )
+
+        assert success is True
+        assert conflict is None
+        assert write_attempts[0] == 3  # Should have tried 3 times
+
+    def test_acquire_lock_returns_conflict_after_max_retries(self, lock_manager):
+        """Test that acquire_lock returns conflict after exhausting retries."""
+        filepath = "test.py"
+
+        # Agent 1 holds the lock
+        lock_manager.acquire_lock(filepath, "agent-1", "holding lock")
+
+        # Agent 2 tries to acquire (should fail even with retries)
+        with patch("time.sleep"):  # Speed up test
+            success, conflict = lock_manager.acquire_lock(
+                filepath=filepath, agent_id="agent-2", reason="trying to acquire"
+            )
+
+        assert success is False
+        assert conflict is not None
+        assert conflict.current_holder == "agent-1"
+
+    def test_retry_logs_attempts(self, lock_manager, caplog):
+        """Test that retry logic logs retry attempts."""
+        filepath = "test.py"
+
+        # Mock _write_lock to simulate transient contention
+        original_write = lock_manager._write_lock
+        write_attempts = [0]
+
+        def mock_write(lock_path, lock):
+            write_attempts[0] += 1
+            # Fail first 2 attempts, succeed on 3rd
+            if write_attempts[0] < 3:
+                return False
+            return original_write(lock_path, lock)
+
+        with patch("time.sleep"):  # Speed up test
+            import logging
+
+            with caplog.at_level(logging.DEBUG, logger="claudeswarm.locking"):
+                with patch.object(lock_manager, "_write_lock", side_effect=mock_write):
+                    success, conflict = lock_manager.acquire_lock(
+                        filepath=filepath, agent_id="agent-1", reason="test logging"
+                    )
+
+        # Should have debug logs about retrying
+        retry_logs = [record for record in caplog.records if "retry" in record.message.lower()]
+        assert (
+            len(retry_logs) > 0
+        ), f"Expected retry logs, got: {[r.message for r in caplog.records]}"

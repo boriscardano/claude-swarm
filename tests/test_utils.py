@@ -13,13 +13,10 @@ Author: Agent-TestCoverage
 """
 
 import json
-import os
-import tempfile
 import threading
 import time
-from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import Mock, patch, mock_open
+from datetime import UTC, datetime
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -162,7 +159,7 @@ class TestAtomicWrite:
         """Test that temp files are cleaned up on error."""
         filepath = tmp_path / "test.txt"
 
-        with patch("os.fdopen", side_effect=IOError("Mock error")):
+        with patch("os.fdopen", side_effect=OSError("Mock error")):
             with pytest.raises(IOError):
                 atomic_write(filepath, "content")
 
@@ -206,7 +203,7 @@ class TestAtomicWrite:
     def test_atomic_write_preserves_atomicity(self, tmp_path):
         """Test that writes are truly atomic (no partial writes visible)."""
         filepath = tmp_path / "test.txt"
-        large_content = "x" * 100000
+        _ = "x" * 100000
         observed_states = []
 
         def writer():
@@ -281,7 +278,7 @@ class TestAtomicWrite:
             mock_tmp_path = str(tmp_path / "tmpfile")
             mock_mkstemp.return_value = (mock_fd, mock_tmp_path)
 
-            with patch("os.fdopen", side_effect=IOError("Mock IO error")):
+            with patch("os.fdopen", side_effect=OSError("Mock IO error")):
                 with patch("os.unlink") as mock_unlink:
                     mock_unlink.side_effect = OSError("Unlink failed")
 
@@ -457,7 +454,7 @@ class TestFormatTimestamp:
 
     def test_format_timestamp_basic(self):
         """Test basic timestamp formatting."""
-        dt = datetime(2021, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2021, 1, 1, 12, 0, 0, tzinfo=UTC)
         result = format_timestamp(dt)
 
         assert "2021-01-01" in result
@@ -465,7 +462,7 @@ class TestFormatTimestamp:
 
     def test_format_timestamp_with_microseconds(self):
         """Test formatting timestamp with microseconds."""
-        dt = datetime(2021, 1, 1, 12, 0, 0, 123456, tzinfo=timezone.utc)
+        dt = datetime(2021, 1, 1, 12, 0, 0, 123456, tzinfo=UTC)
         result = format_timestamp(dt)
 
         assert isinstance(result, str)
@@ -473,7 +470,7 @@ class TestFormatTimestamp:
 
     def test_format_timestamp_timezone_aware(self):
         """Test formatting timezone-aware datetime."""
-        dt = datetime(2021, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2021, 1, 1, 12, 0, 0, tzinfo=UTC)
         result = format_timestamp(dt)
 
         assert isinstance(result, str)
@@ -482,7 +479,7 @@ class TestFormatTimestamp:
 
     def test_format_timestamp_iso_format(self):
         """Test that format uses ISO 8601 format."""
-        dt = datetime(2021, 6, 15, 14, 30, 45, tzinfo=timezone.utc)
+        dt = datetime(2021, 6, 15, 14, 30, 45, tzinfo=UTC)
         result = format_timestamp(dt)
 
         # Should be parseable back
@@ -523,7 +520,7 @@ class TestParseTimestamp:
 
     def test_parse_timestamp_roundtrip(self):
         """Test format/parse roundtrip."""
-        original = datetime(2021, 6, 15, 14, 30, 45, 123456, tzinfo=timezone.utc)
+        original = datetime(2021, 6, 15, 14, 30, 45, 123456, tzinfo=UTC)
         formatted = format_timestamp(original)
         parsed = parse_timestamp(formatted)
 
@@ -711,7 +708,7 @@ class TestIntegration:
     def test_atomic_write_with_timestamp(self, tmp_path):
         """Test atomic write with formatted timestamp."""
         filepath = tmp_path / "log.txt"
-        dt = datetime(2021, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2021, 1, 1, 12, 0, 0, tzinfo=UTC)
         content = f"Log entry at {format_timestamp(dt)}"
 
         atomic_write(filepath, content)

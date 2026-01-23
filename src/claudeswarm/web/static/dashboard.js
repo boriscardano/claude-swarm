@@ -5,13 +5,16 @@
 
 class Dashboard {
     constructor() {
-        this.apiBase = '/api';
+        this.apiBase = '/api/v1';
         this.eventSource = null;
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
         this.reconnectDelay = 2000;
         this.autoScroll = true;
         this.startTime = Date.now();
+
+        // Track seen message IDs for efficient deduplication
+        this.seenMessageIds = new Set();
 
         // DOM element references
         this.elements = {
@@ -190,11 +193,9 @@ class Dashboard {
             try {
                 const data = JSON.parse(event.data);
                 if (data.messages && data.messages.length > 0) {
-                    // Add new messages to cache
+                    // Add new messages to cache - addMessage now handles deduplication
                     data.messages.forEach(msg => {
-                        if (!this.cache.messages.find(m => m.timestamp === msg.timestamp && m.sender === msg.sender)) {
-                            this.addMessage(msg);
-                        }
+                        this.addMessage(msg);
                     });
                 }
                 this.updateLastUpdated();
@@ -387,6 +388,23 @@ class Dashboard {
     }
 
     addMessage(message) {
+        // Create unique message ID
+        const messageId = `${message.timestamp}-${message.sender}-${message.msg_type}-${message.recipient || ''}`;
+
+        // Skip if already seen (O(1) lookup)
+        if (this.seenMessageIds.has(messageId)) {
+            return;
+        }
+
+        this.seenMessageIds.add(messageId);
+
+        // Limit Set size to prevent unbounded growth
+        if (this.seenMessageIds.size > 1000) {
+            // Remove oldest entries (convert to array, slice, convert back)
+            const entries = Array.from(this.seenMessageIds);
+            this.seenMessageIds = new Set(entries.slice(-500));
+        }
+
         // Add to cache
         this.cache.messages.unshift(message);
 
@@ -547,7 +565,7 @@ class Dashboard {
     }
 
     updateTimestampsInDOM() {
-        // Update message timestamps
+        // Update message timestamps in-place instead of full re-render
         document.querySelectorAll('.message-timestamp').forEach((el, index) => {
             const messageItem = el.closest('.message-item');
             if (messageItem) {
@@ -558,15 +576,23 @@ class Dashboard {
             }
         });
 
-        // Update agent timestamps
-        if (this.cache.agents.length > 0) {
-            this.renderAgents();
-        }
+        // Update agent timestamps in-place
+        document.querySelectorAll('.agent-timestamp').forEach((el, index) => {
+            if (this.cache.agents[index] && this.cache.agents[index].last_heartbeat) {
+                el.textContent = this.formatTimeAgo(this.cache.agents[index].last_heartbeat);
+            }
+        });
 
-        // Update lock timestamps
-        if (this.cache.locks.length > 0) {
-            this.renderLocks();
-        }
+        // Update lock timestamps in-place
+        document.querySelectorAll('.lock-timestamp').forEach((el, index) => {
+            const lock = this.cache.locks[index];
+            if (lock) {
+                const acquiredAt = lock.acquired_at || lock.timestamp;
+                if (acquiredAt) {
+                    el.textContent = 'Acquired ' + this.formatTimeAgo(acquiredAt);
+                }
+            }
+        });
     }
 
     // Utility methods

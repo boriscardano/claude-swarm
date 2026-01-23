@@ -9,12 +9,8 @@ Tests cover:
 """
 
 import json
-import tempfile
 from collections import deque
 from datetime import datetime, timedelta
-from pathlib import Path
-
-import pytest
 
 from claudeswarm.discovery import Agent
 from claudeswarm.locking import FileLock
@@ -40,7 +36,7 @@ class TestMessageFilter:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="test",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         assert msg_filter.matches(message)
@@ -54,7 +50,7 @@ class TestMessageFilter:
             timestamp=datetime.now(),
             msg_type=MessageType.BLOCKED,
             content="blocked",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         info_msg = Message(
@@ -62,7 +58,7 @@ class TestMessageFilter:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="info",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         assert msg_filter.matches(blocked_msg)
@@ -77,7 +73,7 @@ class TestMessageFilter:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="test",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         non_matching_msg = Message(
@@ -85,7 +81,7 @@ class TestMessageFilter:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="test",
-            recipients=["agent-2"]
+            recipients=["agent-2"],
         )
 
         assert msg_filter.matches(matching_msg)
@@ -100,7 +96,7 @@ class TestMessageFilter:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="test",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         non_matching_msg = Message(
@@ -108,7 +104,7 @@ class TestMessageFilter:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="test",
-            recipients=["agent-2"]
+            recipients=["agent-2"],
         )
 
         assert msg_filter.matches(matching_msg)
@@ -127,7 +123,7 @@ class TestMessageFilter:
             timestamp=now,
             msg_type=MessageType.INFO,
             content="test",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         old_msg = Message(
@@ -135,7 +131,7 @@ class TestMessageFilter:
             timestamp=now - timedelta(hours=2),
             msg_type=MessageType.INFO,
             content="test",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         assert msg_filter.matches(matching_msg)
@@ -147,7 +143,7 @@ class TestMessageFilter:
         msg_filter = MessageFilter(
             msg_types={MessageType.BLOCKED},
             agent_ids={"agent-0"},
-            time_range=(now - timedelta(hours=1), now + timedelta(hours=1))
+            time_range=(now - timedelta(hours=1), now + timedelta(hours=1)),
         )
 
         # All criteria match
@@ -156,7 +152,7 @@ class TestMessageFilter:
             timestamp=now,
             msg_type=MessageType.BLOCKED,
             content="blocked",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         # Wrong type
@@ -165,7 +161,7 @@ class TestMessageFilter:
             timestamp=now,
             msg_type=MessageType.INFO,
             content="info",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         # Wrong agent
@@ -174,7 +170,7 @@ class TestMessageFilter:
             timestamp=now,
             msg_type=MessageType.BLOCKED,
             content="blocked",
-            recipients=["agent-2"]
+            recipients=["agent-2"],
         )
 
         # Wrong time
@@ -183,7 +179,7 @@ class TestMessageFilter:
             timestamp=now - timedelta(hours=2),
             msg_type=MessageType.BLOCKED,
             content="blocked",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         assert msg_filter.matches(matching_msg)
@@ -198,7 +194,7 @@ class TestLogTailer:
     def test_creates_log_if_not_exists(self, tmp_path):
         """Test that log file is created if it doesn't exist."""
         log_path = tmp_path / "test.log"
-        tailer = LogTailer(log_path)
+        LogTailer(log_path)
 
         assert log_path.exists()
 
@@ -218,7 +214,7 @@ class TestLogTailer:
         assert lines == []
 
         # Add new lines
-        with open(log_path, 'a') as f:
+        with open(log_path, "a") as f:
             f.write("line3\nline4\n")
 
         # Should get only new lines
@@ -236,7 +232,7 @@ class TestLogTailer:
             "msg_type": "INFO",
             "content": "test message",
             "recipients": ["agent-1"],
-            "msg_id": "123"
+            "msg_id": "123",
         }
 
         line = json.dumps(log_entry)
@@ -261,13 +257,15 @@ class TestLogTailer:
         assert tailer.parse_log_entry("{}") is None
 
         # Invalid message type
-        invalid_entry = json.dumps({
-            "timestamp": "2025-11-07T10:00:00",
-            "sender": "agent-0",
-            "msg_type": "INVALID_TYPE",
-            "content": "test",
-            "recipients": []
-        })
+        invalid_entry = json.dumps(
+            {
+                "timestamp": "2025-11-07T10:00:00",
+                "sender": "agent-0",
+                "msg_type": "INVALID_TYPE",
+                "content": "test",
+                "recipients": [],
+            }
+        )
         assert tailer.parse_log_entry(invalid_entry) is None
 
     def test_handle_log_rotation(self, tmp_path):
@@ -303,7 +301,7 @@ class TestMonitor:
             timestamp=datetime(2025, 11, 7, 10, 0, 0),
             msg_type=MessageType.BLOCKED,
             content="blocked on lock",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         formatted = monitor.format_with_colors(message)
@@ -323,7 +321,7 @@ class TestMonitor:
             timestamp=datetime(2025, 11, 7, 10, 0, 0),
             msg_type=MessageType.QUESTION,
             content="what database?",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         formatted = monitor.format_with_colors(message)
@@ -340,7 +338,7 @@ class TestMonitor:
             timestamp=datetime(2025, 11, 7, 10, 0, 0),
             msg_type=MessageType.COMPLETED,
             content="task done",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         formatted = monitor.format_with_colors(message)
@@ -357,7 +355,7 @@ class TestMonitor:
             timestamp=datetime(2025, 11, 7, 10, 0, 0),
             msg_type=MessageType.INFO,
             content="status update",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
 
         formatted = monitor.format_with_colors(message)
@@ -370,10 +368,7 @@ class TestMonitor:
         monitor = Monitor()
 
         state = MonitoringState(
-            active_agents=[],
-            active_locks=[],
-            pending_acks=[],
-            recent_messages=deque()
+            active_agents=[], active_locks=[], pending_acks=[], recent_messages=deque()
         )
 
         lines = monitor.render_sidebar(state)
@@ -396,7 +391,7 @@ class TestMonitor:
                 pid=1234,
                 status="active",
                 last_seen="2025-11-07T10:00:00",
-                session_name="test"
+                session_name="test",
             ),
             Agent(
                 id="agent-1",
@@ -404,15 +399,12 @@ class TestMonitor:
                 pid=1235,
                 status="active",
                 last_seen="2025-11-07T10:00:00",
-                session_name="test"
-            )
+                session_name="test",
+            ),
         ]
 
         state = MonitoringState(
-            active_agents=agents,
-            active_locks=[],
-            pending_acks=[],
-            recent_messages=deque()
+            active_agents=agents, active_locks=[], pending_acks=[], recent_messages=deque()
         )
 
         lines = monitor.render_sidebar(state)
@@ -426,20 +418,15 @@ class TestMonitor:
         monitor = Monitor()
 
         import time
+
         locks = [
             FileLock(
-                agent_id="agent-0",
-                filepath="src/test.py",
-                locked_at=time.time(),
-                reason="editing"
+                agent_id="agent-0", filepath="src/test.py", locked_at=time.time(), reason="editing"
             )
         ]
 
         state = MonitoringState(
-            active_agents=[],
-            active_locks=locks,
-            pending_acks=[],
-            recent_messages=deque()
+            active_agents=[], active_locks=locks, pending_acks=[], recent_messages=deque()
         )
 
         lines = monitor.render_sidebar(state)
@@ -453,22 +440,17 @@ class TestMonitor:
         monitor = Monitor()
 
         import time
+
         # Create 10 locks
         locks = [
             FileLock(
-                agent_id=f"agent-{i}",
-                filepath=f"file{i}.py",
-                locked_at=time.time(),
-                reason="test"
+                agent_id=f"agent-{i}", filepath=f"file{i}.py", locked_at=time.time(), reason="test"
             )
             for i in range(10)
         ]
 
         state = MonitoringState(
-            active_agents=[],
-            active_locks=locks,
-            pending_acks=[],
-            recent_messages=deque()
+            active_agents=[], active_locks=locks, pending_acks=[], recent_messages=deque()
         )
 
         lines = monitor.render_sidebar(state)
@@ -491,7 +473,7 @@ class TestMonitor:
                 "msg_type": "INFO",
                 "content": "message 1",
                 "recipients": ["agent-1"],
-                "msg_id": "1"
+                "msg_id": "1",
             },
             {
                 "timestamp": datetime.now().isoformat(),
@@ -499,13 +481,13 @@ class TestMonitor:
                 "msg_type": "QUESTION",
                 "content": "message 2",
                 "recipients": ["agent-0"],
-                "msg_id": "2"
-            }
+                "msg_id": "2",
+            },
         ]
 
-        with open(log_path, 'w') as f:
+        with open(log_path, "w") as f:
             for entry in log_entries:
-                f.write(json.dumps(entry) + '\n')
+                f.write(json.dumps(entry) + "\n")
 
         # Process logs
         monitor.process_new_logs()
@@ -528,7 +510,7 @@ class TestMonitor:
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content=f"message {i}",
-                recipients=["agent-0"]
+                recipients=["agent-0"],
             )
             monitor.recent_messages.append(message)
 
@@ -565,9 +547,9 @@ class TestColorScheme:
 
     def test_color_codes_are_ansi_escape_sequences(self):
         """Test that color codes start with ANSI escape sequence."""
-        assert ColorScheme.RED.startswith('\033[')
-        assert ColorScheme.GREEN.startswith('\033[')
-        assert ColorScheme.RESET.startswith('\033[')
+        assert ColorScheme.RED.startswith("\033[")
+        assert ColorScheme.GREEN.startswith("\033[")
+        assert ColorScheme.RESET.startswith("\033[")
 
 
 class TestMonitoringIntegration:
@@ -588,7 +570,7 @@ class TestMonitoringIntegration:
                 "msg_type": "BLOCKED",
                 "content": "blocked",
                 "recipients": ["agent-1"],
-                "msg_id": "1"
+                "msg_id": "1",
             },
             {
                 "timestamp": datetime.now().isoformat(),
@@ -596,13 +578,13 @@ class TestMonitoringIntegration:
                 "msg_type": "INFO",
                 "content": "info",
                 "recipients": ["agent-1"],
-                "msg_id": "2"
-            }
+                "msg_id": "2",
+            },
         ]
 
-        with open(log_path, 'w') as f:
+        with open(log_path, "w") as f:
             for entry in log_entries:
-                f.write(json.dumps(entry) + '\n')
+                f.write(json.dumps(entry) + "\n")
 
         # Process logs
         monitor.process_new_logs()
@@ -614,3 +596,61 @@ class TestMonitoringIntegration:
         filtered = [msg for msg in monitor.recent_messages if monitor.message_filter.matches(msg)]
         assert len(filtered) == 1
         assert filtered[0].msg_type == MessageType.BLOCKED
+
+
+class TestTmuxPaneCreation:
+    """Tests for tmux pane creation error logging."""
+
+    def test_create_tmux_pane_logs_error_on_failure(self, caplog):
+        """Test that create_tmux_monitoring_pane logs errors when pane creation fails."""
+        import subprocess
+        from unittest.mock import patch
+
+        from claudeswarm.monitoring import create_tmux_monitoring_pane
+
+        with patch("subprocess.run") as mock_run:
+            # Simulate command returning non-zero
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stderr = "tmux: no current client\n"
+
+            result = create_tmux_monitoring_pane()
+
+            assert result is None
+            # Check that warning was logged
+            assert any("Failed to create tmux pane" in record.message for record in caplog.records)
+            assert any("command returned" in record.message for record in caplog.records)
+
+    def test_create_tmux_pane_logs_timeout(self, caplog):
+        """Test that create_tmux_monitoring_pane logs timeout errors."""
+        import subprocess
+        from unittest.mock import patch
+
+        from claudeswarm.monitoring import create_tmux_monitoring_pane
+
+        with patch("subprocess.run") as mock_run:
+            # Simulate timeout
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd="tmux", timeout=5)
+
+            result = create_tmux_monitoring_pane()
+
+            assert result is None
+            # Check that warning was logged
+            assert any("Failed to create tmux pane" in record.message for record in caplog.records)
+            assert any("timeout" in record.message for record in caplog.records)
+
+    def test_create_tmux_pane_logs_not_found(self, caplog):
+        """Test that create_tmux_monitoring_pane logs when tmux is not found."""
+        from unittest.mock import patch
+
+        from claudeswarm.monitoring import create_tmux_monitoring_pane
+
+        with patch("subprocess.run") as mock_run:
+            # Simulate tmux command not found
+            mock_run.side_effect = FileNotFoundError()
+
+            result = create_tmux_monitoring_pane()
+
+            assert result is None
+            # Check that warning was logged
+            assert any("Failed to create tmux pane" in record.message for record in caplog.records)
+            assert any("not found" in record.message for record in caplog.records)

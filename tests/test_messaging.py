@@ -15,22 +15,27 @@ Modified: Agent-ThreadSafety (added concurrent rate limiting tests)
 """
 
 import json
-import pytest
 import tempfile
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from unittest.mock import Mock, patch, call
-from claudeswarm.messaging import (
-    MessageType,
-    Message,
-    RateLimiter,
-    TmuxMessageDelivery,
-    MessageLogger,
-    MessagingSystem
-)
+from unittest.mock import Mock, patch
+
+import pytest
+
 from claudeswarm.discovery import Agent as MockAgent
+from claudeswarm.messaging import (
+    Message,
+    MessageLogger,
+    MessageType,
+    MessagingSystem,
+    RateLimiter,
+    RateLimitExceeded,
+    TmuxError,
+    TmuxMessageDelivery,
+    TmuxTimeoutError,
+)
 
 
 class TestMessageType:
@@ -63,7 +68,7 @@ class TestMessage:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content="Test message",
-            recipients=["agent-2"]
+            recipients=["agent-2"],
         )
         assert msg.sender_id == "agent-1"
         assert msg.msg_type == MessageType.INFO
@@ -79,7 +84,7 @@ class TestMessage:
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content="Test",
-                recipients=["agent-2"]
+                recipients=["agent-2"],
             )
 
     def test_message_validation_empty_content(self):
@@ -90,7 +95,7 @@ class TestMessage:
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content="",
-                recipients=["agent-2"]
+                recipients=["agent-2"],
             )
 
     def test_message_validation_empty_recipients(self):
@@ -101,7 +106,7 @@ class TestMessage:
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content="Test",
-                recipients=[]
+                recipients=[],
             )
 
     def test_message_format_for_display(self):
@@ -111,7 +116,7 @@ class TestMessage:
             timestamp=datetime(2025, 11, 7, 14, 30, 15),
             msg_type=MessageType.QUESTION,
             content="What database schema?",
-            recipients=["agent-1"]
+            recipients=["agent-1"],
         )
         formatted = msg.format_for_display()
         assert formatted == "[agent-0][2025-11-07 14:30:15][QUESTION]: What database schema?"
@@ -124,25 +129,25 @@ class TestMessage:
             msg_type=MessageType.INFO,
             content="Test",
             recipients=["agent-2"],
-            msg_id="test-uuid"
+            msg_id="test-uuid",
         )
         msg_dict = msg.to_dict()
-        assert msg_dict['sender_id'] == "agent-1"
-        assert msg_dict['msg_type'] == "INFO"
-        assert msg_dict['content'] == "Test"
-        assert msg_dict['recipients'] == ["agent-2"]
-        assert msg_dict['msg_id'] == "test-uuid"
-        assert 'timestamp' in msg_dict
+        assert msg_dict["sender_id"] == "agent-1"
+        assert msg_dict["msg_type"] == "INFO"
+        assert msg_dict["content"] == "Test"
+        assert msg_dict["recipients"] == ["agent-2"]
+        assert msg_dict["msg_id"] == "test-uuid"
+        assert "timestamp" in msg_dict
 
     def test_message_from_dict(self):
         """Test message deserialization from dict."""
         msg_dict = {
-            'sender_id': 'agent-1',
-            'timestamp': '2025-11-07T14:30:15',
-            'msg_type': 'INFO',
-            'content': 'Test',
-            'recipients': ['agent-2'],
-            'msg_id': 'test-uuid'
+            "sender_id": "agent-1",
+            "timestamp": "2025-11-07T14:30:15",
+            "msg_type": "INFO",
+            "content": "Test",
+            "recipients": ["agent-2"],
+            "msg_id": "test-uuid",
         }
         msg = Message.from_dict(msg_dict)
         assert msg.sender_id == "agent-1"
@@ -159,7 +164,7 @@ class TestMessage:
             timestamp=datetime.now(),
             msg_type=MessageType.QUESTION,
             content="Test question?",
-            recipients=["agent-2", "agent-3"]
+            recipients=["agent-2", "agent-3"],
         )
         msg_dict = original.to_dict()
         restored = Message.from_dict(msg_dict)
@@ -225,15 +230,27 @@ class TestRateLimiter:
 
     def test_rate_limiter_window_expiry(self):
         """Test rate limiter respects time window."""
+        from datetime import datetime, timedelta
+        from unittest.mock import patch
+
         # Use very short window for testing
         limiter = RateLimiter(max_messages=1, window_seconds=1)
 
-        limiter.record_message("agent-1")
-        assert limiter.check_rate_limit("agent-1") is False
+        # Mock datetime.now() to control time progression
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
 
-        # Wait for window to expire
-        time.sleep(1.1)
-        assert limiter.check_rate_limit("agent-1") is True
+        with patch("claudeswarm.messaging.datetime") as mock_datetime:
+            # First call: record message at base_time
+            mock_datetime.now.return_value = base_time
+            limiter.record_message("agent-1")
+
+            # Second call: check immediately (should be rate limited)
+            mock_datetime.now.return_value = base_time
+            assert limiter.check_rate_limit("agent-1") is False
+
+            # Third call: check after window expires (1.1 seconds later)
+            mock_datetime.now.return_value = base_time + timedelta(seconds=1.1)
+            assert limiter.check_rate_limit("agent-1") is True
 
 
 class TestTmuxMessageDelivery:
@@ -272,70 +289,80 @@ class TestTmuxMessageDelivery:
         # The result should be a safely quoted string
         assert escaped.startswith("'")
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_send_to_pane_success(self, mock_run):
         """Test successful message delivery to pane."""
-        mock_run.return_value = Mock(returncode=0, stderr="")
+        # Mock for both verify_pane_exists and send_keys calls
+        mock_run.return_value = Mock(
+            returncode=0, stderr="", stdout="session:0.1\n"  # For verify_pane_exists
+        )
 
         result = TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
 
         assert result is True
-        # Should be called twice: once for command, once for Enter key
-        assert mock_run.call_count == 2
+        # Should be called three times: verify, send command, send Enter key
+        assert mock_run.call_count == 3
 
-        # First call: send the command
-        first_call_args = mock_run.call_args_list[0][0][0]
-        assert first_call_args[0] == 'tmux'
-        assert first_call_args[1] == 'send-keys'
-        assert first_call_args[2] == '-t'
-        assert first_call_args[3] == 'session:0.1'
-        assert first_call_args[4].startswith('# [MESSAGE]')
+        # First call: verify pane exists (list-panes)
+        verify_call_args = mock_run.call_args_list[0][0][0]
+        assert verify_call_args[0] == "tmux"
+        assert verify_call_args[1] == "list-panes"
 
-        # Second call: send Enter key
-        second_call_args = mock_run.call_args_list[1][0][0]
-        assert second_call_args[0] == 'tmux'
-        assert second_call_args[1] == 'send-keys'
-        assert second_call_args[2] == '-t'
-        assert second_call_args[3] == 'session:0.1'
-        assert second_call_args[4] == 'Enter'
+        # Second call: send the command with -l flag
+        first_call_args = mock_run.call_args_list[1][0][0]
+        assert first_call_args[0] == "tmux"
+        assert first_call_args[1] == "send-keys"
+        assert first_call_args[2] == "-l"  # Literal interpretation flag
+        assert first_call_args[3] == "-t"
+        assert first_call_args[4] == "session:0.1"
+        assert first_call_args[5].startswith("# [MESSAGE]")
 
-    @patch('subprocess.run')
+        # Third call: send Enter key
+        second_call_args = mock_run.call_args_list[2][0][0]
+        assert second_call_args[0] == "tmux"
+        assert second_call_args[1] == "send-keys"
+        assert second_call_args[2] == "-t"
+        assert second_call_args[3] == "session:0.1"
+        assert second_call_args[4] == "Enter"
+
+    @patch("subprocess.run")
     def test_send_to_pane_failure(self, mock_run):
         """Test failed message delivery to pane."""
-        mock_run.return_value = Mock(returncode=1, stderr="Pane not found")
+        # First call (verify) succeeds, second call (send-keys) fails
+        mock_run.side_effect = [
+            Mock(returncode=0, stderr="", stdout="session:0.1\n"),  # verify succeeds
+            Mock(returncode=1, stderr="Pane not found"),  # send-keys fails
+        ]
 
-        result = TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
+        with pytest.raises(TmuxError):
+            TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
 
-        assert result is False
-
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_send_to_pane_timeout(self, mock_run):
         """Test timeout handling in message delivery."""
         import subprocess
-        mock_run.side_effect = subprocess.TimeoutExpired('tmux', 5)
 
-        result = TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
+        # First call (verify) succeeds, second call (send-keys) times out
+        mock_run.side_effect = [
+            Mock(returncode=0, stderr="", stdout="session:0.1\n"),  # verify succeeds
+            subprocess.TimeoutExpired("tmux", 5),  # send-keys times out
+        ]
 
-        assert result is False
+        with pytest.raises(TmuxTimeoutError):
+            TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_verify_pane_exists(self, mock_run):
         """Test pane existence verification."""
-        mock_run.return_value = Mock(
-            returncode=0,
-            stdout="session:0.0\nsession:0.1\nsession:0.2\n"
-        )
+        mock_run.return_value = Mock(returncode=0, stdout="session:0.0\nsession:0.1\nsession:0.2\n")
 
         result = TmuxMessageDelivery.verify_pane_exists("session:0.1")
         assert result is True
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_verify_pane_not_exists(self, mock_run):
         """Test pane non-existence detection."""
-        mock_run.return_value = Mock(
-            returncode=0,
-            stdout="session:0.0\nsession:0.2\n"
-        )
+        mock_run.return_value = Mock(returncode=0, stdout="session:0.0\nsession:0.2\n")
 
         result = TmuxMessageDelivery.verify_pane_exists("session:0.1")
         assert result is False
@@ -348,7 +375,7 @@ class TestMessageLogger:
         """Test message logger creates log file."""
         with tempfile.TemporaryDirectory() as tmpdir:
             log_file = Path(tmpdir) / "test_messages.log"
-            logger = MessageLogger(log_file)
+            MessageLogger(log_file)
 
             assert log_file.exists()
 
@@ -363,7 +390,7 @@ class TestMessageLogger:
                 timestamp=datetime.now(),
                 msg_type=MessageType.INFO,
                 content="Test",
-                recipients=["agent-2"]
+                recipients=["agent-2"],
             )
             delivery_status = {"agent-2": True}
 
@@ -375,12 +402,12 @@ class TestMessageLogger:
 
             # Verify log entry
             log_entry = json.loads(log_content.strip())
-            assert log_entry['sender'] == "agent-1"
-            assert log_entry['msg_type'] == "INFO"
-            assert log_entry['content'] == "Test"
-            assert log_entry['delivery_status'] == {"agent-2": True}
-            assert log_entry['success_count'] == 1
-            assert log_entry['failure_count'] == 0
+            assert log_entry["sender"] == "agent-1"
+            assert log_entry["msg_type"] == "INFO"
+            assert log_entry["content"] == "Test"
+            assert log_entry["delivery_status"] == {"agent-2": True}
+            assert log_entry["success_count"] == 1
+            assert log_entry["failure_count"] == 0
 
     def test_message_logger_multiple_entries(self):
         """Test message logger handles multiple log entries."""
@@ -394,7 +421,7 @@ class TestMessageLogger:
                     timestamp=datetime.now(),
                     msg_type=MessageType.INFO,
                     content=f"Message {i}",
-                    recipients=["agent-x"]
+                    recipients=["agent-x"],
                 )
                 logger.log_message(msg, {"agent-x": True})
 
@@ -405,7 +432,7 @@ class TestMessageLogger:
             assert len(lines) == 3
             for i, line in enumerate(lines):
                 entry = json.loads(line)
-                assert entry['sender'] == f"agent-{i}"
+                assert entry["sender"] == f"agent-{i}"
 
 
 class TestMessagingSystem:
@@ -431,8 +458,8 @@ class TestMessagingSystem:
         # Registry may be None if file doesn't exist, which is fine
         assert registry is None or registry is not None
 
-    @patch('claudeswarm.messaging.MessagingSystem._get_agent_pane')
-    @patch.object(TmuxMessageDelivery, 'send_to_pane')
+    @patch("claudeswarm.messaging.MessagingSystem._get_agent_pane")
+    @patch.object(TmuxMessageDelivery, "send_to_pane")
     def test_send_message_success(self, mock_send, mock_get_pane):
         """Test successful direct message sending."""
         mock_send.return_value = True
@@ -443,12 +470,7 @@ class TestMessagingSystem:
             system = MessagingSystem(log_file=log_file)
 
             # Send message
-            result = system.send_message(
-                "agent-1",
-                "agent-2",
-                MessageType.INFO,
-                "Test message"
-            )
+            result = system.send_message("agent-1", "agent-2", MessageType.INFO, "Test message")
 
             assert result is not None
             assert result.sender_id == "agent-1"
@@ -456,8 +478,8 @@ class TestMessagingSystem:
             assert result.signature  # Should have a signature
             mock_send.assert_called_once()
 
-    @patch('claudeswarm.messaging.MessagingSystem._get_agent_pane')
-    @patch.object(TmuxMessageDelivery, 'send_to_pane')
+    @patch("claudeswarm.messaging.MessagingSystem._get_agent_pane")
+    @patch.object(TmuxMessageDelivery, "send_to_pane")
     def test_send_message_rate_limit(self, mock_send, mock_get_pane):
         """Test rate limiting in message sending."""
         mock_send.return_value = True
@@ -466,11 +488,7 @@ class TestMessagingSystem:
         with tempfile.TemporaryDirectory() as tmpdir:
             log_file = Path(tmpdir) / "test_messages.log"
             # Set very low rate limit
-            system = MessagingSystem(
-                log_file=log_file,
-                rate_limit_messages=2,
-                rate_limit_window=60
-            )
+            system = MessagingSystem(log_file=log_file, rate_limit_messages=2, rate_limit_window=60)
 
             # Send 2 messages (should succeed)
             result1 = system.send_message("agent-1", "agent-2", MessageType.INFO, "Msg 1")
@@ -480,12 +498,12 @@ class TestMessagingSystem:
             assert result2 is not None
 
             # Third message should fail due to rate limit
-            result3 = system.send_message("agent-1", "agent-2", MessageType.INFO, "Msg 3")
-            assert result3 is None
+            with pytest.raises(RateLimitExceeded):
+                system.send_message("agent-1", "agent-2", MessageType.INFO, "Msg 3")
 
-    @patch('claudeswarm.messaging.MessagingSystem._get_agent_pane')
-    @patch('claudeswarm.messaging.MessagingSystem._load_agent_registry')
-    @patch.object(TmuxMessageDelivery, 'send_to_pane')
+    @patch("claudeswarm.messaging.MessagingSystem._get_agent_pane")
+    @patch("claudeswarm.messaging.MessagingSystem._load_agent_registry")
+    @patch.object(TmuxMessageDelivery, "send_to_pane")
     def test_broadcast_message(self, mock_send, mock_load_registry, mock_get_pane):
         """Test broadcast messaging to multiple agents."""
         mock_send.return_value = True
@@ -493,6 +511,7 @@ class TestMessagingSystem:
 
         # Create mock registry with 4 agents
         from claudeswarm.discovery import AgentRegistry
+
         mock_agents = [
             MockAgent(
                 id=f"agent-{i}",
@@ -500,14 +519,12 @@ class TestMessagingSystem:
                 pid=12345 + i,
                 status="active",
                 last_seen=datetime.now(),
-                session_name="test"
+                session_name="test",
             )
             for i in range(4)
         ]
         mock_registry = AgentRegistry(
-            session_name="test",
-            updated_at=datetime.now().isoformat(),
-            agents=mock_agents
+            session_name="test", updated_at=datetime.now().isoformat(), agents=mock_agents
         )
         mock_load_registry.return_value = mock_registry
 
@@ -517,10 +534,7 @@ class TestMessagingSystem:
 
             # Broadcast from agent-0
             results = system.broadcast_message(
-                "agent-0",
-                MessageType.INFO,
-                "Broadcast message",
-                exclude_self=True
+                "agent-0", MessageType.INFO, "Broadcast message", exclude_self=True
             )
 
             # Should send to 3 agents (excluding self)
@@ -529,9 +543,9 @@ class TestMessagingSystem:
             assert all(results.values())  # All should succeed
             assert mock_send.call_count == 3
 
-    @patch('claudeswarm.messaging.MessagingSystem._get_agent_pane')
-    @patch('claudeswarm.messaging.MessagingSystem._load_agent_registry')
-    @patch.object(TmuxMessageDelivery, 'send_to_pane')
+    @patch("claudeswarm.messaging.MessagingSystem._get_agent_pane")
+    @patch("claudeswarm.messaging.MessagingSystem._load_agent_registry")
+    @patch.object(TmuxMessageDelivery, "send_to_pane")
     def test_broadcast_include_self(self, mock_send, mock_load_registry, mock_get_pane):
         """Test broadcast messaging including sender."""
         mock_send.return_value = True
@@ -539,6 +553,7 @@ class TestMessagingSystem:
 
         # Create mock registry with 3 agents
         from claudeswarm.discovery import AgentRegistry
+
         mock_agents = [
             MockAgent(
                 id=f"agent-{i}",
@@ -546,14 +561,12 @@ class TestMessagingSystem:
                 pid=12345 + i,
                 status="active",
                 last_seen=datetime.now(),
-                session_name="test"
+                session_name="test",
             )
             for i in range(3)
         ]
         mock_registry = AgentRegistry(
-            session_name="test",
-            updated_at=datetime.now().isoformat(),
-            agents=mock_agents
+            session_name="test", updated_at=datetime.now().isoformat(), agents=mock_agents
         )
         mock_load_registry.return_value = mock_registry
 
@@ -563,10 +576,7 @@ class TestMessagingSystem:
 
             # Broadcast from agent-0, including self
             results = system.broadcast_message(
-                "agent-0",
-                MessageType.INFO,
-                "Broadcast message",
-                exclude_self=False
+                "agent-0", MessageType.INFO, "Broadcast message", exclude_self=False
             )
 
             # Should send to all 3 agents
@@ -585,7 +595,7 @@ class TestSpecialCharacterHandling:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content=special_content,
-            recipients=["agent-2"]
+            recipients=["agent-2"],
         )
         assert msg.content == special_content
 
@@ -597,7 +607,7 @@ class TestSpecialCharacterHandling:
             timestamp=datetime.now(),
             msg_type=MessageType.INFO,
             content=unicode_content,
-            recipients=["agent-2"]
+            recipients=["agent-2"],
         )
         assert msg.content == unicode_content
 
@@ -789,7 +799,9 @@ class TestRateLimiterThreadSafety:
 
         # Each agent should have successfully sent exactly 5 messages
         for agent_id in agent_ids:
-            assert results[agent_id] == 5, f"{agent_id} sent {results[agent_id]} messages, expected 5"
+            assert (
+                results[agent_id] == 5
+            ), f"{agent_id} sent {results[agent_id]} messages, expected 5"
             assert len(limiter._message_times[agent_id]) == 5
 
     def test_concurrent_cleanup_inactive_agents(self):

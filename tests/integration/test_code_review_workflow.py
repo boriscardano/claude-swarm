@@ -10,15 +10,12 @@ Tests a complete code review workflow:
 7. Verify: proper ACKs, lock transitions, coordination updated
 """
 
-import pytest
-
 from claudeswarm.messaging import MessageType, send_message
 
 from .helpers import (
     IntegrationTestContext,
     mock_tmux_environment,
     verify_message_delivered,
-    wait_for_lock_release,
 )
 
 
@@ -47,15 +44,12 @@ class TestCodeReviewWorkflow:
                 # Step 1: Agent 3 creates changes
                 feature_file = "src/features/new_feature.py"
                 ctx.create_test_file(
-                    feature_file,
-                    content="def new_feature():\n    # TODO: implement\n    pass"
+                    feature_file, content="def new_feature():\n    # TODO: implement\n    pass"
                 )
 
                 # Agent 3 acquires lock to make changes
                 success, _ = ctx.lock_manager.acquire_lock(
-                    filepath=feature_file,
-                    agent_id="agent-3",
-                    reason="Implementing new feature"
+                    filepath=feature_file, agent_id="agent-3", reason="Implementing new feature"
                 )
                 assert success is True
 
@@ -63,7 +57,7 @@ class TestCodeReviewWorkflow:
                 file_path = ctx.temp_dir / feature_file
                 file_path.write_text(
                     "def new_feature():\n"
-                    "    \"\"\"New feature implementation.\"\"\"\n"
+                    '    """New feature implementation."""\n'
                     "    return 'feature complete'\n"
                 )
 
@@ -75,7 +69,7 @@ class TestCodeReviewWorkflow:
                     sender_id="agent-3",
                     recipient_id="agent-1",
                     message_type=MessageType.REVIEW_REQUEST,
-                    content=f"Please review {feature_file} - new feature implementation"
+                    content=f"Please review {feature_file} - new feature implementation",
                 )
                 assert review_request is not None
 
@@ -85,7 +79,7 @@ class TestCodeReviewWorkflow:
                     sender_id="agent-3",
                     recipient_pane=ctx.get_agent("agent-1").pane_index,
                     msg_type=MessageType.REVIEW_REQUEST,
-                    content_substring=feature_file
+                    content_substring=feature_file,
                 )
 
                 # Step 3: Agent 1 acknowledges review request
@@ -93,15 +87,13 @@ class TestCodeReviewWorkflow:
                     sender_id="agent-1",
                     recipient_id="agent-3",
                     message_type=MessageType.ACK,
-                    content="Starting review of new feature"
+                    content="Starting review of new feature",
                 )
                 assert ack_msg is not None
 
                 # Step 4: Agent 1 acquires lock for review
                 success, conflict = ctx.lock_manager.acquire_lock(
-                    filepath=feature_file,
-                    agent_id="agent-1",
-                    reason="Code review in progress"
+                    filepath=feature_file, agent_id="agent-1", reason="Code review in progress"
                 )
                 assert success is True
                 assert ctx.verify_lock_held(feature_file, "agent-1")
@@ -116,7 +108,7 @@ class TestCodeReviewWorkflow:
                         "- Add docstring parameter descriptions\n"
                         "- Add type hints\n"
                         "- Add unit tests"
-                    )
+                    ),
                 )
                 assert feedback_msg is not None
 
@@ -126,19 +118,17 @@ class TestCodeReviewWorkflow:
 
                 # Step 6: Agent 3 addresses feedback
                 success, _ = ctx.lock_manager.acquire_lock(
-                    filepath=feature_file,
-                    agent_id="agent-3",
-                    reason="Addressing review feedback"
+                    filepath=feature_file, agent_id="agent-3", reason="Addressing review feedback"
                 )
                 assert success is True
 
                 # Agent 3 updates code
                 file_path.write_text(
                     "def new_feature() -> str:\n"
-                    "    \"\"\"New feature implementation.\n\n"
+                    '    """New feature implementation.\n\n'
                     "    Returns:\n"
                     "        str: Feature completion message\n"
-                    "    \"\"\"\n"
+                    '    """\n'
                     "    return 'feature complete'\n"
                 )
 
@@ -149,15 +139,13 @@ class TestCodeReviewWorkflow:
                     sender_id="agent-3",
                     recipient_id="agent-1",
                     message_type=MessageType.INFO,
-                    content="Addressed all review feedback - ready for re-review"
+                    content="Addressed all review feedback - ready for re-review",
                 )
                 assert update_msg is not None
 
                 # Step 7: Agent 1 re-reviews and approves
                 success, _ = ctx.lock_manager.acquire_lock(
-                    filepath=feature_file,
-                    agent_id="agent-1",
-                    reason="Final review"
+                    filepath=feature_file, agent_id="agent-1", reason="Final review"
                 )
                 assert success is True
 
@@ -165,7 +153,7 @@ class TestCodeReviewWorkflow:
                     sender_id="agent-1",
                     recipient_id="agent-3",
                     message_type=MessageType.COMPLETED,
-                    content=f"APPROVED: {feature_file} looks great! Ready to merge."
+                    content=f"APPROVED: {feature_file} looks great! Ready to merge.",
                 )
                 assert approval_msg is not None
 
@@ -186,7 +174,7 @@ class TestCodeReviewWorkflow:
                 files = [
                     "src/feature/main.py",
                     "src/feature/helpers.py",
-                    "src/feature/constants.py"
+                    "src/feature/constants.py",
                 ]
 
                 for file in files:
@@ -199,24 +187,20 @@ class TestCodeReviewWorkflow:
                     sender_id="agent-2",
                     recipient_id="agent-1",
                     message_type=MessageType.REVIEW_REQUEST,
-                    content=f"Please review {pattern} - new feature module"
+                    content=f"Please review {pattern} - new feature module",
                 )
                 assert review_request is not None
 
                 # Agent 1 locks all files at once with glob
                 success, conflict = ctx.lock_manager.acquire_lock(
-                    filepath=pattern,
-                    agent_id="agent-1",
-                    reason="Reviewing feature module"
+                    filepath=pattern, agent_id="agent-1", reason="Reviewing feature module"
                 )
                 assert success is True
 
                 # Verify agent 2 cannot modify any file while review is in progress
                 for file in files:
                     success, conflict = ctx.lock_manager.acquire_lock(
-                        filepath=file,
-                        agent_id="agent-2",
-                        reason="Trying to modify during review"
+                        filepath=file, agent_id="agent-2", reason="Trying to modify during review"
                     )
                     assert success is False
                     assert conflict is not None
@@ -226,9 +210,7 @@ class TestCodeReviewWorkflow:
 
                 # Now agent 2 can modify
                 success, _ = ctx.lock_manager.acquire_lock(
-                    filepath=files[0],
-                    agent_id="agent-2",
-                    reason="Addressing feedback"
+                    filepath=files[0], agent_id="agent-2", reason="Addressing feedback"
                 )
                 assert success is True
 
@@ -247,7 +229,7 @@ class TestCodeReviewWorkflow:
                     sender_id="agent-0",
                     recipient_id="agent-1",
                     message_type=MessageType.REVIEW_REQUEST,
-                    content=f"Please review {test_file}"
+                    content=f"Please review {test_file}",
                 )
                 assert review_request is not None
 
@@ -259,7 +241,7 @@ class TestCodeReviewWorkflow:
                     sender_id="agent-0",
                     recipient_id="agent-2",
                     message_type=MessageType.REVIEW_REQUEST,
-                    content=f"Please review {test_file} (Agent 1 unavailable)"
+                    content=f"Please review {test_file} (Agent 1 unavailable)",
                 )
                 assert fallback_request is not None
 
@@ -268,7 +250,7 @@ class TestCodeReviewWorkflow:
                     tmux_state["messages_sent"],
                     sender_id="agent-0",
                     recipient_pane=ctx.get_agent("agent-2").pane_index,
-                    msg_type=MessageType.REVIEW_REQUEST
+                    msg_type=MessageType.REVIEW_REQUEST,
                 )
 
     def test_concurrent_review_requests(self) -> None:
@@ -290,7 +272,7 @@ class TestCodeReviewWorkflow:
                     sender_id="agent-1",
                     recipient_id="agent-3",
                     message_type=MessageType.REVIEW_REQUEST,
-                    content=f"Please review {file1}"
+                    content=f"Please review {file1}",
                 )
                 assert request1 is not None
 
@@ -299,7 +281,7 @@ class TestCodeReviewWorkflow:
                     sender_id="agent-2",
                     recipient_id="agent-3",
                     message_type=MessageType.REVIEW_REQUEST,
-                    content=f"Please review {file2}"
+                    content=f"Please review {file2}",
                 )
                 assert request2 is not None
 
@@ -311,7 +293,7 @@ class TestCodeReviewWorkflow:
                     sender_id="agent-3",
                     recipient_id="agent-1",
                     message_type=MessageType.COMPLETED,
-                    content=f"Reviewed {file1} - LGTM"
+                    content=f"Reviewed {file1} - LGTM",
                 )
                 ctx.lock_manager.release_lock(file1, "agent-3")
 
@@ -321,7 +303,7 @@ class TestCodeReviewWorkflow:
                     sender_id="agent-3",
                     recipient_id="agent-2",
                     message_type=MessageType.COMPLETED,
-                    content=f"Reviewed {file2} - LGTM"
+                    content=f"Reviewed {file2} - LGTM",
                 )
                 ctx.lock_manager.release_lock(file2, "agent-3")
 
@@ -342,7 +324,7 @@ class TestCodeReviewWorkflow:
                 max_iterations = 3
 
                 # Simulate multiple review iterations
-                for i in range(max_iterations):
+                for _i in range(max_iterations):
                     iteration_count += 1
 
                     # Agent 0 requests review
@@ -350,7 +332,7 @@ class TestCodeReviewWorkflow:
                         sender_id="agent-0",
                         recipient_id="agent-1",
                         message_type=MessageType.REVIEW_REQUEST,
-                        content=f"Review iteration {iteration_count}"
+                        content=f"Review iteration {iteration_count}",
                     )
 
                     # Agent 1 reviews
@@ -362,7 +344,7 @@ class TestCodeReviewWorkflow:
                             sender_id="agent-1",
                             recipient_id="agent-0",
                             message_type=MessageType.REVIEW_REQUEST,
-                            content=f"Needs more work - iteration {iteration_count}"
+                            content=f"Needs more work - iteration {iteration_count}",
                         )
                         ctx.lock_manager.release_lock(test_file, "agent-1")
 
@@ -377,7 +359,7 @@ class TestCodeReviewWorkflow:
                             sender_id="agent-1",
                             recipient_id="agent-0",
                             message_type=MessageType.COMPLETED,
-                            content="APPROVED after multiple iterations"
+                            content="APPROVED after multiple iterations",
                         )
                         ctx.lock_manager.release_lock(test_file, "agent-1")
 

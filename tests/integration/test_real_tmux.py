@@ -16,16 +16,12 @@ Author: Agent-TestCoverage
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import time
-from pathlib import Path
-from typing import Optional
 
 import pytest
 
-from claudeswarm.discovery import refresh_registry, list_active_agents
-from claudeswarm.messaging import MessagingSystem, MessageType
+from claudeswarm.discovery import list_active_agents, refresh_registry
 from claudeswarm.locking import LockManager
 
 
@@ -42,7 +38,7 @@ def check_tmux_available() -> bool:
         return False
 
 
-def get_current_tmux_session() -> Optional[str]:
+def get_current_tmux_session() -> str | None:
     """Get the current tmux session name if in a tmux session."""
     try:
         result = subprocess.run(
@@ -83,14 +79,23 @@ def kill_test_session(session_name: str) -> None:
         pass
 
 
-def create_test_pane(session_name: str) -> Optional[str]:
+def create_test_pane(session_name: str) -> str | None:
     """Create a new pane in the test session and return its index."""
     try:
         # Split window horizontally
         result = subprocess.run(
-            ["tmux", "split-window", "-t", f"{session_name}:0", "-h", "-d", "-P", "-F", "#{pane_index}"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            [
+                "tmux",
+                "split-window",
+                "-t",
+                f"{session_name}:0",
+                "-h",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_index}",
+            ],
+            capture_output=True,
             text=True,
             timeout=10,
         )
@@ -290,8 +295,8 @@ class TestRealTmuxDiscovery:
     def test_list_agents_with_real_session(self, test_session):
         """Test listing agents from real session."""
         # Create panes
-        pane1 = create_test_pane(test_session)
-        pane2 = create_test_pane(test_session)
+        create_test_pane(test_session)
+        create_test_pane(test_session)
 
         time.sleep(0.5)
 

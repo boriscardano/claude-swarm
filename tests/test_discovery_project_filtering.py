@@ -8,10 +8,9 @@ This module tests:
 
 import os
 import subprocess
+from datetime import UTC
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from claudeswarm.discovery import (
     Agent,
@@ -32,9 +31,7 @@ class TestGetProcessCwd:
 
         # Simulate lsof output for current process
         mock_run.return_value = MagicMock(
-            stdout=f"p{os.getpid()}\nn{current_cwd}\n",
-            stderr="",
-            returncode=0
+            stdout=f"p{os.getpid()}\nn{current_cwd}\n", stderr="", returncode=0
         )
 
         result = _get_process_cwd(os.getpid())
@@ -54,9 +51,7 @@ class TestGetProcessCwd:
         """Test with invalid PID (should return None)."""
         # lsof returns non-zero exit code for invalid PID
         mock_run.return_value = MagicMock(
-            stdout="",
-            stderr="lsof: no process ID specified",
-            returncode=1
+            stdout="", stderr="lsof: no process ID specified", returncode=1
         )
 
         result = _get_process_cwd(99999)
@@ -67,9 +62,7 @@ class TestGetProcessCwd:
     def test_get_process_cwd_timeout(self, mock_run):
         """Test timeout handling."""
         # Simulate timeout
-        mock_run.side_effect = subprocess.TimeoutExpired(
-            cmd=["lsof"], timeout=2
-        )
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["lsof"], timeout=2)
 
         result = _get_process_cwd(1234)
 
@@ -92,9 +85,7 @@ class TestGetProcessCwd:
         """Test parsing of lsof output format."""
         # lsof with -Fn outputs lines starting with 'n' for name (path)
         mock_run.return_value = MagicMock(
-            stdout="p1234\nfcwd\nn/home/user/project\n",
-            stderr="",
-            returncode=0
+            stdout="p1234\nfcwd\nn/home/user/project\n", stderr="", returncode=0
         )
 
         result = _get_process_cwd(1234)
@@ -106,9 +97,7 @@ class TestGetProcessCwd:
         """Test parsing when lsof returns multiple lines."""
         # Should return the first line starting with 'n'
         mock_run.return_value = MagicMock(
-            stdout="p1234\nfcwd\nn/home/user/project\nn/other/path\n",
-            stderr="",
-            returncode=0
+            stdout="p1234\nfcwd\nn/home/user/project\nn/other/path\n", stderr="", returncode=0
         )
 
         result = _get_process_cwd(1234)
@@ -118,11 +107,7 @@ class TestGetProcessCwd:
     @patch("subprocess.run")
     def test_get_process_cwd_no_n_prefix(self, mock_run):
         """Test when lsof output has no 'n' prefixed lines."""
-        mock_run.return_value = MagicMock(
-            stdout="p1234\nfcwd\n",
-            stderr="",
-            returncode=0
-        )
+        mock_run.return_value = MagicMock(stdout="p1234\nfcwd\n", stderr="", returncode=0)
 
         result = _get_process_cwd(1234)
 
@@ -131,11 +116,7 @@ class TestGetProcessCwd:
     @patch("subprocess.run")
     def test_get_process_cwd_empty_output(self, mock_run):
         """Test when lsof returns empty output."""
-        mock_run.return_value = MagicMock(
-            stdout="",
-            stderr="",
-            returncode=0
-        )
+        mock_run.return_value = MagicMock(stdout="", stderr="", returncode=0)
 
         result = _get_process_cwd(1234)
 
@@ -154,9 +135,7 @@ class TestGetProcessCwd:
     def test_get_process_cwd_whitespace_in_path(self, mock_run):
         """Test parsing paths with whitespace."""
         mock_run.return_value = MagicMock(
-            stdout="p1234\nn/home/user/my project/subdir\n",
-            stderr="",
-            returncode=0
+            stdout="p1234\nn/home/user/my project/subdir\n", stderr="", returncode=0
         )
 
         result = _get_process_cwd(1234)
@@ -387,18 +366,8 @@ class TestDiscoverAgentsProjectFiltering:
 
         # Two panes running Claude, but only one is in project
         mock_parse.return_value = [
-            {
-                "session_name": "main",
-                "pane_index": "main:0.0",
-                "pid": 1234,
-                "command": "claude"
-            },
-            {
-                "session_name": "main",
-                "pane_index": "main:0.1",
-                "pid": 1235,
-                "command": "claude"
-            }
+            {"session_name": "main", "pane_index": "main:0.0", "pid": 1234, "command": "claude"},
+            {"session_name": "main", "pane_index": "main:0.1", "pid": 1235, "command": "claude"},
         ]
 
         # First process in project, second outside
@@ -438,24 +407,9 @@ class TestDiscoverAgentsProjectFiltering:
 
         # Three panes running Claude
         mock_parse.return_value = [
-            {
-                "session_name": "main",
-                "pane_index": "main:0.0",
-                "pid": 1234,
-                "command": "claude"
-            },
-            {
-                "session_name": "main",
-                "pane_index": "main:0.1",
-                "pid": 1235,
-                "command": "claude"
-            },
-            {
-                "session_name": "main",
-                "pane_index": "main:0.2",
-                "pid": 1236,
-                "command": "claude"
-            }
+            {"session_name": "main", "pane_index": "main:0.0", "pid": 1234, "command": "claude"},
+            {"session_name": "main", "pane_index": "main:0.1", "pid": 1235, "command": "claude"},
+            {"session_name": "main", "pane_index": "main:0.2", "pid": 1236, "command": "claude"},
         ]
 
         # All are in project
@@ -485,16 +439,42 @@ class TestDiscoverAgentsProjectFiltering:
 
         # Five panes
         mock_parse.return_value = [
-            {"session_name": "main", "pane_index": "main:0.0", "pid": 1234, "command": "claude"},      # In project
-            {"session_name": "main", "pane_index": "main:0.1", "pid": 1235, "command": "bash"},        # Not Claude
-            {"session_name": "main", "pane_index": "main:0.2", "pid": 1236, "command": "claude"},      # Out of project
-            {"session_name": "main", "pane_index": "main:0.3", "pid": 1237, "command": "claude"},      # In project
-            {"session_name": "main", "pane_index": "main:0.4", "pid": 1238, "command": "claude-code"}, # Out of project
+            {
+                "session_name": "main",
+                "pane_index": "main:0.0",
+                "pid": 1234,
+                "command": "claude",
+            },  # In project
+            {
+                "session_name": "main",
+                "pane_index": "main:0.1",
+                "pid": 1235,
+                "command": "bash",
+            },  # Not Claude
+            {
+                "session_name": "main",
+                "pane_index": "main:0.2",
+                "pid": 1236,
+                "command": "claude",
+            },  # Out of project
+            {
+                "session_name": "main",
+                "pane_index": "main:0.3",
+                "pid": 1237,
+                "command": "claude",
+            },  # In project
+            {
+                "session_name": "main",
+                "pane_index": "main:0.4",
+                "pid": 1238,
+                "command": "claude-code",
+            },  # Out of project
         ]
 
         # Mock Claude detection
         def is_claude_side_effect(cmd, pid):
             return cmd.lower() in ["claude", "claude-code"]
+
         mock_is_claude.side_effect = is_claude_side_effect
 
         # Mock cwd: 1234 and 1237 are in project, others outside
@@ -526,7 +506,7 @@ class TestDiscoverAgentsProjectFiltering:
         # Two Claude panes, but neither in project
         mock_parse.return_value = [
             {"session_name": "main", "pane_index": "main:0.0", "pid": 1234, "command": "claude"},
-            {"session_name": "main", "pane_index": "main:0.1", "pid": 1235, "command": "claude"}
+            {"session_name": "main", "pane_index": "main:0.1", "pid": 1235, "command": "claude"},
         ]
 
         mock_is_claude.return_value = True
@@ -558,9 +538,24 @@ class TestDiscoverAgentsProjectFiltering:
 
         # Three panes
         mock_parse.return_value = [
-            {"session_name": "main", "pane_index": "main:0.0", "pid": 1234, "command": "claude"},  # In root
-            {"session_name": "main", "pane_index": "main:0.1", "pid": 1235, "command": "claude"},  # In subdir
-            {"session_name": "main", "pane_index": "main:0.2", "pid": 1236, "command": "claude"},  # In other project
+            {
+                "session_name": "main",
+                "pane_index": "main:0.0",
+                "pid": 1234,
+                "command": "claude",
+            },  # In root
+            {
+                "session_name": "main",
+                "pane_index": "main:0.1",
+                "pid": 1235,
+                "command": "claude",
+            },  # In subdir
+            {
+                "session_name": "main",
+                "pane_index": "main:0.2",
+                "pid": 1236,
+                "command": "claude",
+            },  # In other project
         ]
 
         mock_is_claude.return_value = True
@@ -591,26 +586,24 @@ class TestDiscoverAgentsProjectFiltering:
         self, mock_is_claude, mock_get_cwd, mock_load, mock_parse, tmp_path, monkeypatch
     ):
         """Test that stale agents are re-filtered and removed if outside project."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
         project_root = tmp_path / "my_project"
         project_root.mkdir()
         monkeypatch.chdir(project_root)
 
         # Existing registry with an agent
-        old_time = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()
+        old_time = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
         existing_agent = Agent(
             id="agent-0",
             pane_index="main:0.0",
             pid=1234,
             status="active",
             last_seen=old_time,
-            session_name="main"
+            session_name="main",
         )
         mock_load.return_value = AgentRegistry(
-            session_name="main",
-            updated_at=old_time,
-            agents=[existing_agent]
+            session_name="main", updated_at=old_time, agents=[existing_agent]
         )
 
         # No current panes (agent went stale)
@@ -706,7 +699,7 @@ class TestCrossProjectCoordination:
         # Two panes: one in current project, one in other project
         mock_parse.return_value = [
             {"session_name": "main", "pane_index": "main:0.0", "pid": 1234, "command": "claude"},
-            {"session_name": "main", "pane_index": "main:0.1", "pid": 1235, "command": "claude"}
+            {"session_name": "main", "pane_index": "main:0.1", "pid": 1235, "command": "claude"},
         ]
 
         def get_cwd_side_effect(pid):
@@ -750,7 +743,7 @@ class TestCrossProjectCoordination:
         # Two panes: one in current project, one in other project
         mock_parse.return_value = [
             {"session_name": "main", "pane_index": "main:0.0", "pid": 1234, "command": "claude"},
-            {"session_name": "main", "pane_index": "main:0.1", "pid": 1235, "command": "claude"}
+            {"session_name": "main", "pane_index": "main:0.1", "pid": 1235, "command": "claude"},
         ]
 
         def get_cwd_side_effect(pid):
@@ -804,7 +797,7 @@ class TestCrossProjectCoordination:
         self, mock_get_config, mock_load, mock_parse, tmp_path, monkeypatch
     ):
         """Test that default value is False (security-safe default)."""
-        from claudeswarm.config import ClaudeSwarmConfig, DiscoveryConfig
+        from claudeswarm.config import ClaudeSwarmConfig
 
         monkeypatch.chdir(tmp_path)
         mock_load.return_value = None
@@ -839,10 +832,30 @@ class TestCrossProjectCoordination:
 
         # Four agents in different projects
         mock_parse.return_value = [
-            {"session_name": "main", "pane_index": "main:0.0", "pid": 1000, "command": "claude"},  # project1
-            {"session_name": "main", "pane_index": "main:0.1", "pid": 1001, "command": "claude"},  # project1
-            {"session_name": "main", "pane_index": "main:0.2", "pid": 1002, "command": "claude"},  # project2
-            {"session_name": "main", "pane_index": "main:0.3", "pid": 1003, "command": "claude"},  # project3
+            {
+                "session_name": "main",
+                "pane_index": "main:0.0",
+                "pid": 1000,
+                "command": "claude",
+            },  # project1
+            {
+                "session_name": "main",
+                "pane_index": "main:0.1",
+                "pid": 1001,
+                "command": "claude",
+            },  # project1
+            {
+                "session_name": "main",
+                "pane_index": "main:0.2",
+                "pid": 1002,
+                "command": "claude",
+            },  # project2
+            {
+                "session_name": "main",
+                "pane_index": "main:0.3",
+                "pid": 1003,
+                "command": "claude",
+            },  # project3
         ]
 
         def get_cwd_side_effect(pid):

@@ -9,18 +9,14 @@ Tests a complete coordination workflow with 3 agents:
 6. Verify: messages delivered, no conflicts, monitoring shows activity
 """
 
-import pytest
-
 from claudeswarm.discovery import list_active_agents, refresh_registry
 from claudeswarm.messaging import MessageType, broadcast_message, send_message
 
 from .helpers import (
     IntegrationTestContext,
-    assert_lock_state,
     mock_tmux_environment,
     verify_message_broadcast,
     verify_message_delivered,
-    wait_for_lock_release,
 )
 
 
@@ -48,7 +44,7 @@ class TestBasicCoordination:
                     tmux_state["panes"].append(agent.pane_index)
 
                 # Step 1: Agent 0 discovers other agents
-                registry = refresh_registry()
+                refresh_registry()
                 active_agents = list_active_agents()
 
                 assert len(active_agents) == 3
@@ -62,7 +58,7 @@ class TestBasicCoordination:
                     sender_id="agent-0",
                     message_type=MessageType.INFO,
                     content=task_content,
-                    exclude_self=True
+                    exclude_self=True,
                 )
 
                 # Verify broadcast succeeded
@@ -78,7 +74,7 @@ class TestBasicCoordination:
                         ctx.get_agent("agent-1").pane_index,
                         ctx.get_agent("agent-2").pane_index,
                     ],
-                    msg_type=MessageType.INFO
+                    msg_type=MessageType.INFO,
                 )
 
                 # Step 3: Agents acknowledge
@@ -86,7 +82,7 @@ class TestBasicCoordination:
                     sender_id="agent-1",
                     recipient_id="agent-0",
                     message_type=MessageType.ACK,
-                    content="Acknowledged - starting authentication implementation"
+                    content="Acknowledged - starting authentication implementation",
                 )
                 assert agent1_ack is not None
 
@@ -94,7 +90,7 @@ class TestBasicCoordination:
                     sender_id="agent-2",
                     recipient_id="agent-0",
                     message_type=MessageType.ACK,
-                    content="Acknowledged - will review when ready"
+                    content="Acknowledged - will review when ready",
                 )
                 assert agent2_ack is not None
 
@@ -103,7 +99,7 @@ class TestBasicCoordination:
                     tmux_state["messages_sent"],
                     sender_id="agent-1",
                     recipient_pane=ctx.get_agent("agent-0").pane_index,
-                    msg_type=MessageType.ACK
+                    msg_type=MessageType.ACK,
                 )
 
                 # Step 4: Agent 1 acquires lock on auth file
@@ -113,7 +109,7 @@ class TestBasicCoordination:
                 success, conflict = ctx.lock_manager.acquire_lock(
                     filepath=test_file,
                     agent_id="agent-1",
-                    reason="Implementing user authentication"
+                    reason="Implementing user authentication",
                 )
 
                 assert success is True
@@ -122,7 +118,9 @@ class TestBasicCoordination:
 
                 # Step 5: Agent 1 does work (simulated by updating file)
                 file_path = ctx.temp_dir / test_file
-                file_path.write_text("# Auth module\n\ndef authenticate_user(username, password):\n    pass")
+                file_path.write_text(
+                    "# Auth module\n\ndef authenticate_user(username, password):\n    pass"
+                )
 
                 # Step 6: Agent 1 releases lock
                 release_success = ctx.lock_manager.release_lock(test_file, "agent-1")
@@ -133,7 +131,7 @@ class TestBasicCoordination:
                 success, conflict = ctx.lock_manager.acquire_lock(
                     filepath=test_file,
                     agent_id="agent-2",
-                    reason="Reviewing authentication implementation"
+                    reason="Reviewing authentication implementation",
                 )
 
                 assert success is True
@@ -145,7 +143,7 @@ class TestBasicCoordination:
                     sender_id="agent-2",
                     recipient_id="agent-1",
                     message_type=MessageType.REVIEW_REQUEST,
-                    content="LGTM - authentication looks good!"
+                    content="LGTM - authentication looks good!",
                 )
                 assert review_msg is not None
 
@@ -191,7 +189,7 @@ class TestBasicCoordination:
                     sender_id="agent-1",
                     message_type=MessageType.INFO,
                     content="Testing broadcast exclusion",
-                    exclude_self=True
+                    exclude_self=True,
                 )
 
                 # Should only send to agent-0 and agent-2
@@ -208,17 +206,13 @@ class TestBasicCoordination:
 
             # Agent 0 acquires lock
             success, conflict = ctx.lock_manager.acquire_lock(
-                filepath=test_file,
-                agent_id="agent-0",
-                reason="First edit"
+                filepath=test_file, agent_id="agent-0", reason="First edit"
             )
             assert success is True
 
             # Agent 1 tries to acquire lock - should fail
             success, conflict = ctx.lock_manager.acquire_lock(
-                filepath=test_file,
-                agent_id="agent-1",
-                reason="Conflicting edit"
+                filepath=test_file, agent_id="agent-1", reason="Conflicting edit"
             )
             assert success is False
             assert conflict is not None
@@ -230,9 +224,7 @@ class TestBasicCoordination:
 
             # Now agent 1 can acquire
             success, conflict = ctx.lock_manager.acquire_lock(
-                filepath=test_file,
-                agent_id="agent-1",
-                reason="Second edit"
+                filepath=test_file, agent_id="agent-1", reason="Second edit"
             )
             assert success is True
             assert conflict is None
@@ -247,17 +239,13 @@ class TestBasicCoordination:
 
             # Agent 0 locks all auth files with glob
             success, conflict = ctx.lock_manager.acquire_lock(
-                filepath="src/auth/*.py",
-                agent_id="agent-0",
-                reason="Refactoring auth module"
+                filepath="src/auth/*.py", agent_id="agent-0", reason="Refactoring auth module"
             )
             assert success is True
 
             # Agent 1 tries to lock specific file - should fail
             success, conflict = ctx.lock_manager.acquire_lock(
-                filepath="src/auth/login.py",
-                agent_id="agent-1",
-                reason="Updating login"
+                filepath="src/auth/login.py", agent_id="agent-1", reason="Updating login"
             )
             assert success is False
             assert conflict is not None
@@ -276,7 +264,7 @@ class TestBasicCoordination:
                         sender_id="agent-0",
                         recipient_id="agent-1",
                         message_type=MessageType.INFO,
-                        content=f"Message {i}"
+                        content=f"Message {i}",
                     )
                     assert msg is not None
 
@@ -285,7 +273,7 @@ class TestBasicCoordination:
                     sender_id="agent-0",
                     recipient_id="agent-1",
                     message_type=MessageType.INFO,
-                    content="Message 11 - should be blocked"
+                    content="Message 11 - should be blocked",
                 )
                 assert msg is None
 

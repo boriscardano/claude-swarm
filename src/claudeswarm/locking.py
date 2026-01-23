@@ -17,22 +17,23 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Optional
+from typing import TypeVar
 
 from .config import get_config
+from .logging_config import get_logger
 from .project import get_project_root
 from .validators import (
-    ValidationError,
-    validate_agent_id,
-    validate_file_path,
-    validate_timeout,
     normalize_path,
+    validate_agent_id,
+    validate_timeout,
 )
 
 __all__ = [
@@ -41,6 +42,10 @@ __all__ = [
     "LockManager",
     "LOCK_DIR",
     "STALE_LOCK_TIMEOUT",
+    "MAX_LOCK_RETRIES",
+    "INITIAL_RETRY_DELAY_SECONDS",
+    "MAX_RETRY_DELAY_SECONDS",
+    "JITTER_FACTOR",
 ]
 
 # Default lock directory name
@@ -52,6 +57,76 @@ LOCK_DIR = ".agent_locks"
 # This constant will be removed in version 1.0.0
 # Migration: Replace `STALE_LOCK_TIMEOUT` with `get_config().locking.stale_timeout`
 STALE_LOCK_TIMEOUT = 300
+
+# Retry configuration for lock acquisition
+MAX_LOCK_RETRIES = 5
+INITIAL_RETRY_DELAY_SECONDS = 0.1
+MAX_RETRY_DELAY_SECONDS = 2.0
+JITTER_FACTOR = 0.25  # ±25% randomization
+
+# Configure logging
+logger = get_logger(__name__)
+
+# TypeVar for generic retry wrapper
+T = TypeVar("T")
+
+
+def _calculate_backoff_delay(attempt: int) -> float:
+    """Calculate delay with exponential backoff and jitter.
+
+    Uses exponential backoff (2^attempt * initial_delay) with ±25% jitter
+    to prevent thundering herd problem when multiple agents retry simultaneously.
+
+    Args:
+        attempt: Zero-based attempt number (0, 1, 2, ...)
+
+    Returns:
+        Delay in seconds
+    """
+    base_delay = INITIAL_RETRY_DELAY_SECONDS * (2**attempt)
+    # Cap at maximum delay
+    base_delay = min(base_delay, MAX_RETRY_DELAY_SECONDS)
+    # Add jitter: ±25% randomization
+    jitter = base_delay * JITTER_FACTOR * (2 * random.random() - 1)
+    return max(0.01, base_delay + jitter)  # Minimum 10ms
+
+
+def _retry_with_backoff[T](
+    operation: Callable[[], T], operation_name: str, max_retries: int = MAX_LOCK_RETRIES
+) -> T:
+    """Execute operation with exponential backoff retry on lock contention.
+
+    Args:
+        operation: Callable that may raise on lock contention
+        operation_name: Name for logging
+        max_retries: Maximum number of retry attempts
+
+    Returns:
+        Result of successful operation
+
+    Raises:
+        Last exception if all retries exhausted
+    """
+    last_exception = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            return operation()
+        except (OSError, Exception) as e:
+            last_exception = e
+            if attempt < max_retries:
+                delay = _calculate_backoff_delay(attempt)
+                logger.debug(
+                    f"Lock contention on {operation_name}, "
+                    f"retry {attempt + 1}/{max_retries} after {delay:.3f}s"
+                )
+                time.sleep(delay)
+            else:
+                logger.warning(
+                    f"Lock acquisition failed after {max_retries} retries: {operation_name}"
+                )
+
+    raise last_exception
 
 
 @dataclass
@@ -70,7 +145,7 @@ class FileLock:
     locked_at: float
     reason: str
 
-    def is_stale(self, timeout: Optional[int] = None) -> bool:
+    def is_stale(self, timeout: int | None = None) -> bool:
         """Check if this lock is stale (older than timeout).
 
         Args:
@@ -126,7 +201,7 @@ class LockManager:
     Locks are stored as JSON files in a dedicated directory.
     """
 
-    def __init__(self, lock_dir: str = LOCK_DIR, project_root: Optional[Path] = None):
+    def __init__(self, lock_dir: str = LOCK_DIR, project_root: Path | None = None):
         """Initialize the lock manager.
 
         Args:
@@ -159,18 +234,15 @@ class LockManager:
             ValueError: If filepath is outside the project root or contains malicious patterns
         """
         # 1. Check for null bytes (common injection technique)
-        if '\x00' in filepath:
-            raise ValueError(
-                f"Path contains null bytes: '{filepath}'"
-            )
+        if "\x00" in filepath:
+            raise ValueError(f"Path contains null bytes: '{filepath}'")
 
         # 2. Check for URL-encoded path traversal attempts
         import urllib.parse
+
         decoded_path = urllib.parse.unquote(filepath)
-        if decoded_path != filepath and ('..' in decoded_path or '\x00' in decoded_path):
-            raise ValueError(
-                f"URL-encoded path traversal detected: '{filepath}'"
-            )
+        if decoded_path != filepath and (".." in decoded_path or "\x00" in decoded_path):
+            raise ValueError(f"URL-encoded path traversal detected: '{filepath}'")
 
         # 3. Resolve the project root once (for performance and consistency)
         try:
@@ -202,31 +274,14 @@ class LockManager:
 
         except (OSError, RuntimeError) as e:
             # If path resolution fails (e.g., broken symlinks, permission errors),
-            # fall back to string-based validation for glob patterns
-
-            # For glob patterns and non-existent paths, validate the string representation
-            path_str = str(filepath)
-
-            # Check for obvious traversal patterns
-            if '..' in Path(path_str).parts:
-                raise ValueError(
-                    f"Path contains parent directory references (..): '{filepath}'"
-                )
-
-            # For absolute paths, verify they start with project root
-            if path_obj.is_absolute():
-                if not path_str.startswith(str(project_root_resolved)):
-                    raise ValueError(
-                        f"Absolute path '{filepath}' is outside project root '{project_root_resolved}'"
-                    )
-
-            # For relative paths with special characters, be conservative
-            # Only allow alphanumeric, hyphens, underscores, dots (not ..), slashes, and glob chars
-            import re
-            if not re.match(r'^[a-zA-Z0-9/_.\-*?\[\]]+$', path_str):
-                raise ValueError(
-                    f"Path contains potentially unsafe characters: '{filepath}'"
-                )
+            # FAIL CLOSED for security. Do not attempt string-based validation.
+            # Rationale: String validation can be bypassed with Unicode homoglyphs,
+            # null bytes, and other encoding tricks. The safe approach is to reject
+            # any path that cannot be properly resolved and validated.
+            raise ValueError(
+                f"Cannot resolve path '{filepath}': {e}. "
+                f"Path validation requires resolvable paths for security."
+            )
 
     def _get_lock_filename(self, filepath: str) -> str:
         """Generate a unique lock filename for a given filepath.
@@ -262,7 +317,7 @@ class LockManager:
         """
         return self.lock_dir / self._get_lock_filename(filepath)
 
-    def _read_lock(self, lock_path: Path) -> Optional[FileLock]:
+    def _read_lock(self, lock_path: Path) -> FileLock | None:
         """Read a lock file and return the FileLock object.
 
         Args:
@@ -332,7 +387,7 @@ class LockManager:
                     LockConflict(
                         filepath=lock.filepath,
                         current_holder=lock.agent_id,
-                        locked_at=datetime.fromtimestamp(lock.locked_at, tz=timezone.utc),
+                        locked_at=datetime.fromtimestamp(lock.locked_at, tz=UTC),
                         reason=lock.reason,
                     )
                 )
@@ -344,8 +399,8 @@ class LockManager:
         filepath: str,
         agent_id: str,
         reason: str = "",
-        timeout: Optional[int] = None,
-    ) -> tuple[bool, Optional[LockConflict]]:
+        timeout: int | None = None,
+    ) -> tuple[bool, LockConflict | None]:
         """Acquire a lock on a file.
 
         Args:
@@ -445,21 +500,25 @@ class LockManager:
 
                         # Write to temp file first, then atomic rename
                         # This eliminates the race window between unlink() and write
-                        temp_lock_path = lock_path.with_suffix('.lock.tmp')
+                        temp_lock_path = lock_path.with_suffix(".lock.tmp")
                         try:
                             # Write updated lock to temp file
-                            with temp_lock_path.open('w') as f:
+                            with temp_lock_path.open("w") as f:
                                 json.dump(existing_lock.to_dict(), f, indent=2)
 
                             # Atomic rename (os.replace is atomic on POSIX and Windows)
                             os.replace(str(temp_lock_path), str(lock_path))
-                        except Exception:
+                            logger.debug(f"Lock refreshed on '{filepath}' by {agent_id}")
+                        except Exception as e:
                             # Clean up temp file on failure
                             if temp_lock_path.exists():
                                 try:
                                     temp_lock_path.unlink()
                                 except OSError:
                                     pass
+                            logger.error(
+                                f"Failed to refresh lock on '{filepath}' for {agent_id}: {e}"
+                            )
                             raise
                         return True, None
                     else:
@@ -470,7 +529,7 @@ class LockManager:
                                 filepath=existing_lock_new.filepath,
                                 current_holder=existing_lock_new.agent_id,
                                 locked_at=datetime.fromtimestamp(
-                                    existing_lock_new.locked_at, tz=timezone.utc
+                                    existing_lock_new.locked_at, tz=UTC
                                 ),
                                 reason=existing_lock_new.reason,
                             )
@@ -483,6 +542,10 @@ class LockManager:
             # Check if the lock is stale (only if it still exists)
             if existing_lock and existing_lock.is_stale(timeout):
                 # Auto-release stale lock
+                logger.info(
+                    f"Removing stale lock on '{filepath}' held by {existing_lock.agent_id} "
+                    f"(age: {existing_lock.age_seconds():.1f}s)"
+                )
                 try:
                     lock_path.unlink()
                 except FileNotFoundError:
@@ -493,9 +556,7 @@ class LockManager:
                 conflict = LockConflict(
                     filepath=existing_lock.filepath,
                     current_holder=existing_lock.agent_id,
-                    locked_at=datetime.fromtimestamp(
-                        existing_lock.locked_at, tz=timezone.utc
-                    ),
+                    locked_at=datetime.fromtimestamp(existing_lock.locked_at, tz=UTC),
                     reason=existing_lock.reason,
                 )
                 return False, conflict
@@ -513,22 +574,35 @@ class LockManager:
             reason=reason,
         )
 
-        success = self._write_lock(lock_path, new_lock)
-        if not success:
-            # Race condition: another agent acquired the lock between our checks
+        # Attempt to write lock with retry on contention
+        def attempt_write():
+            success = self._write_lock(lock_path, new_lock)
+            if not success:
+                # Race condition: another agent acquired the lock
+                raise OSError("Lock file already exists (race condition)")
+            return success
+
+        try:
+            _retry_with_backoff(
+                operation=attempt_write,
+                operation_name=f"acquire_lock({filepath})",
+                max_retries=MAX_LOCK_RETRIES,
+            )
+            logger.info(f"Lock acquired on '{filepath}' by {agent_id} (reason: {reason})")
+            return True, None
+        except OSError:
+            # All retries exhausted - return conflict information
             existing_lock = self._read_lock(lock_path)
             if existing_lock and existing_lock.agent_id != agent_id:
                 conflict = LockConflict(
                     filepath=existing_lock.filepath,
                     current_holder=existing_lock.agent_id,
-                    locked_at=datetime.fromtimestamp(
-                        existing_lock.locked_at, tz=timezone.utc
-                    ),
+                    locked_at=datetime.fromtimestamp(existing_lock.locked_at, tz=UTC),
                     reason=existing_lock.reason,
                 )
                 return False, conflict
-
-        return success, None
+            # If lock doesn't exist or is ours, this shouldn't happen
+            return False, None
 
     def release_lock(self, filepath: str, agent_id: str) -> bool:
         """Release a lock on a file.
@@ -552,19 +626,26 @@ class LockManager:
         # Verify ownership
         if existing_lock.agent_id != agent_id:
             # Lock is owned by another agent
+            logger.warning(
+                f"Cannot release lock on '{filepath}': {agent_id} does not own it "
+                f"(held by {existing_lock.agent_id})"
+            )
             return False
 
         # Remove lock file
         try:
             lock_path.unlink()
+            logger.info(f"Lock released on '{filepath}' by {agent_id}")
             return True
         except FileNotFoundError:
             # Lock was already deleted - consider this successful
+            logger.debug(f"Lock on '{filepath}' already released (file not found)")
             return True
-        except OSError:
+        except OSError as e:
+            logger.error(f"Failed to release lock on '{filepath}' for {agent_id}: {e}")
             return False
 
-    def who_has_lock(self, filepath: str) -> Optional[FileLock]:
+    def who_has_lock(self, filepath: str) -> FileLock | None:
         """Check who currently holds a lock on a file.
 
         Args:
@@ -618,7 +699,7 @@ class LockManager:
 
         return locks
 
-    def cleanup_stale_locks(self, timeout: Optional[int] = None) -> int:
+    def cleanup_stale_locks(self, timeout: int | None = None) -> int:
         """Clean up all stale locks.
 
         Args:
@@ -639,11 +720,18 @@ class LockManager:
                 try:
                     lock_file.unlink()
                     count += 1
+                    logger.debug(
+                        f"Cleaned up stale lock on '{lock.filepath}' held by {lock.agent_id} "
+                        f"(age: {lock.age_seconds():.1f}s)"
+                    )
                 except FileNotFoundError:
                     # Lock was already deleted by another process
                     pass
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.warning(f"Failed to cleanup stale lock {lock_file}: {e}")
+
+        if count > 0:
+            logger.info(f"Cleaned up {count} stale lock(s)")
 
         return count
 
@@ -666,10 +754,14 @@ class LockManager:
                 try:
                     lock_file.unlink()
                     count += 1
+                    logger.debug(f"Cleaned up lock on '{lock.filepath}' held by {agent_id}")
                 except FileNotFoundError:
                     # Lock was already deleted by another process
                     pass
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.warning(f"Failed to cleanup lock {lock_file} for {agent_id}: {e}")
+
+        if count > 0:
+            logger.info(f"Cleaned up {count} lock(s) for agent {agent_id}")
 
         return count

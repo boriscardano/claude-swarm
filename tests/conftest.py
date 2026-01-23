@@ -7,12 +7,10 @@ This module provides test fixtures for configuration testing including:
 - Config validation helpers
 """
 
-import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 import pytest
 
@@ -135,23 +133,10 @@ def config_dict():
         dict: Configuration dictionary
     """
     return {
-        "rate_limiting": {
-            "messages_per_minute": 10,
-            "window_seconds": 60
-        },
-        "locking": {
-            "stale_timeout": 300,
-            "auto_cleanup": False,
-            "default_reason": "working"
-        },
-        "discovery": {
-            "stale_threshold": 120,
-            "auto_refresh_interval": 30
-        },
-        "onboarding": {
-            "enabled": True,
-            "auto_onboard": False
-        }
+        "rate_limiting": {"messages_per_minute": 10, "window_seconds": 60},
+        "locking": {"stale_timeout": 300, "auto_cleanup": False, "default_reason": "working"},
+        "discovery": {"stale_threshold": 120, "auto_refresh_interval": 30},
+        "onboarding": {"enabled": True, "auto_onboard": False},
     }
 
 
@@ -162,10 +147,12 @@ def write_yaml_config(temp_config_dir):
     Returns:
         callable: Function that writes config and returns path
     """
+
     def _write_config(content: str, filename: str = "config.yaml") -> Path:
         config_path = temp_config_dir / filename
         config_path.write_text(content)
         return config_path
+
     return _write_config
 
 
@@ -176,10 +163,12 @@ def write_toml_config(temp_config_dir):
     Returns:
         callable: Function that writes config and returns path
     """
+
     def _write_config(content: str, filename: str = "config.toml") -> Path:
         config_path = temp_config_dir / filename
         config_path.write_text(content)
         return config_path
+
     return _write_config
 
 
@@ -218,25 +207,25 @@ def mock_editor():
     Yields:
         str: Path to mock editor script
     """
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
         f.write('#!/bin/sh\necho "Mock editor called with: $@"\n')
         f.flush()
         editor_path = f.name
 
     os.chmod(editor_path, 0o755)
-    old_editor = os.environ.get('EDITOR')
-    os.environ['EDITOR'] = editor_path
+    old_editor = os.environ.get("EDITOR")
+    os.environ["EDITOR"] = editor_path
 
     try:
         yield editor_path
     finally:
         if old_editor:
-            os.environ['EDITOR'] = old_editor
+            os.environ["EDITOR"] = old_editor
         else:
-            os.environ.pop('EDITOR', None)
+            os.environ.pop("EDITOR", None)
         try:
             os.unlink(editor_path)
-        except:
+        except OSError:
             pass
 
 
@@ -275,6 +264,7 @@ def capture_subprocess():
         return result
 
     import subprocess
+
     original_run = subprocess.run
     subprocess.run = mock_run
 

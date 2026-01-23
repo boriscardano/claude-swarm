@@ -17,10 +17,9 @@ Phase: Phase 1
 
 from __future__ import annotations
 
-import hmac
 import hashlib
+import hmac
 import json
-import logging
 import shlex
 import subprocess
 import threading
@@ -30,20 +29,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from .config import get_config
 from .discovery import AgentRegistry, get_registry_path
-from .utils import get_or_create_secret
+from .file_lock import FileLock, FileLockError, FileLockTimeout
+from .logging_config import get_logger
 from .project import get_messages_log_path
-from .file_lock import FileLock, FileLockTimeout, FileLockError
+from .utils import get_or_create_secret
 from .validators import (
     ValidationError,
     validate_agent_id,
     validate_message_content,
     validate_rate_limit_config,
     validate_recipient_list,
-    sanitize_message_content,
 )
 
 __all__ = [
@@ -62,7 +60,7 @@ __all__ = [
     "TmuxSocketError",
     "TmuxPaneNotFoundError",
     "TmuxTimeoutError",
-    "MessageDeliveryError"
+    "MessageDeliveryError",
 ]
 
 
@@ -101,47 +99,55 @@ MAX_BROADCAST_RECIPIENTS = 100
 RATE_LIMITER_CLEANUP_SECONDS = 3600
 
 # Configure logging
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Custom exceptions
 class MessagingError(Exception):
     """Base exception for messaging system errors."""
+
     pass
 
 
 class RateLimitExceeded(MessagingError):
     """Raised when message rate limit is exceeded."""
+
     pass
 
 
 class AgentNotFoundError(MessagingError):
     """Raised when target agent cannot be found in registry."""
+
     pass
 
 
 class TmuxError(MessagingError):
     """Base exception for tmux-related errors."""
+
     pass
 
 
 class TmuxSocketError(TmuxError):
     """Raised when tmux socket is inaccessible or stale."""
+
     pass
 
 
 class TmuxPaneNotFoundError(TmuxError):
     """Raised when target tmux pane doesn't exist."""
+
     pass
 
 
 class TmuxTimeoutError(TmuxError):
     """Raised when tmux operation times out."""
+
     pass
 
 
 class MessageDeliveryError(MessagingError):
     """Raised when message delivery fails."""
+
     pass
 
 
@@ -176,10 +182,10 @@ class Message:
     timestamp: datetime
     msg_type: MessageType
     content: str
-    recipients: List[str]
+    recipients: list[str]
     msg_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     signature: str = field(default="")
-    delivery_status: Dict[str, bool] = field(default_factory=dict)
+    delivery_status: dict[str, bool] = field(default_factory=dict)
 
     def __post_init__(self):
         """Validate message fields."""
@@ -225,7 +231,7 @@ class Message:
             secret = get_or_create_secret()
 
         message_data = self._get_message_data_for_signing()
-        signature = hmac.new(secret, message_data.encode('utf-8'), hashlib.sha256)
+        signature = hmac.new(secret, message_data.encode("utf-8"), hashlib.sha256)
         self.signature = signature.hexdigest()
 
     def verify_signature(self, secret: bytes = None) -> bool:
@@ -244,7 +250,7 @@ class Message:
             secret = get_or_create_secret()
 
         message_data = self._get_message_data_for_signing()
-        expected_signature = hmac.new(secret, message_data.encode('utf-8'), hashlib.sha256)
+        expected_signature = hmac.new(secret, message_data.encode("utf-8"), hashlib.sha256)
 
         # Use constant-time comparison to prevent timing attacks
         return hmac.compare_digest(self.signature, expected_signature.hexdigest())
@@ -257,14 +263,14 @@ class Message:
         For log file format, use to_log_dict() instead.
         """
         return {
-            'sender_id': self.sender_id,
-            'timestamp': self.timestamp.isoformat(),
-            'msg_type': self.msg_type.value,
-            'content': self.content,
-            'recipients': self.recipients,
-            'msg_id': self.msg_id,
-            'signature': self.signature,
-            'delivery_status': self.delivery_status
+            "sender_id": self.sender_id,
+            "timestamp": self.timestamp.isoformat(),
+            "msg_type": self.msg_type.value,
+            "content": self.content,
+            "recipients": self.recipients,
+            "msg_id": self.msg_id,
+            "signature": self.signature,
+            "delivery_status": self.delivery_status,
         }
 
     def to_log_dict(self) -> dict:
@@ -275,33 +281,33 @@ class Message:
         read_messages.py, coord.py, and monitoring.py.
         """
         return {
-            'sender': self.sender_id,
-            'timestamp': self.timestamp.isoformat(),
-            'msg_type': self.msg_type.value,
-            'content': self.content,
-            'recipients': self.recipients,
-            'msg_id': self.msg_id
+            "sender": self.sender_id,
+            "timestamp": self.timestamp.isoformat(),
+            "msg_type": self.msg_type.value,
+            "content": self.content,
+            "recipients": self.recipients,
+            "msg_id": self.msg_id,
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> 'Message':
+    def from_dict(cls, data: dict) -> Message:
         """Create message from dictionary (internal format with sender_id).
 
         This expects the format from to_dict() which includes 'sender_id' and
         'signature' fields. For parsing log file entries, use from_log_dict() instead.
         """
         return cls(
-            sender_id=data['sender_id'],
-            timestamp=datetime.fromisoformat(data['timestamp']),
-            msg_type=MessageType(data['msg_type']),
-            content=data['content'],
-            recipients=data['recipients'],
-            msg_id=data.get('msg_id', str(uuid.uuid4())),
-            signature=data.get('signature', '')
+            sender_id=data["sender_id"],
+            timestamp=datetime.fromisoformat(data["timestamp"]),
+            msg_type=MessageType(data["msg_type"]),
+            content=data["content"],
+            recipients=data["recipients"],
+            msg_id=data.get("msg_id", str(uuid.uuid4())),
+            signature=data.get("signature", ""),
         )
 
     @classmethod
-    def from_log_dict(cls, data: dict) -> 'Message':
+    def from_log_dict(cls, data: dict) -> Message:
         """Create message from log file dictionary format.
 
         This expects the format from agent_messages.log which uses 'sender'
@@ -310,13 +316,13 @@ class Message:
         are ignored.
         """
         return cls(
-            sender_id=data['sender'],  # Note: log format uses 'sender'
-            timestamp=datetime.fromisoformat(data['timestamp']),
-            msg_type=MessageType(data['msg_type']),
-            content=data['content'],
-            recipients=data['recipients'],
-            msg_id=data.get('msg_id', str(uuid.uuid4())),
-            signature=''  # Log format doesn't include signature
+            sender_id=data["sender"],  # Note: log format uses 'sender'
+            timestamp=datetime.fromisoformat(data["timestamp"]),
+            msg_type=MessageType(data["msg_type"]),
+            content=data["content"],
+            recipients=data["recipients"],
+            msg_id=data.get("msg_id", str(uuid.uuid4())),
+            signature="",  # Log format doesn't include signature
         )
 
     def format_for_display(self) -> str:
@@ -325,7 +331,7 @@ class Message:
         Format: [AGENT-ID][TIMESTAMP][TYPE]: content
         Example: [agent-0][2025-11-07 14:30:15][QUESTION]: What database schema?
         """
-        timestamp_str = self.timestamp.strftime('%Y-%m-%d %H:%M:%S')
+        timestamp_str = self.timestamp.strftime("%Y-%m-%d %H:%M:%S")
         return f"[{self.sender_id}][{timestamp_str}][{self.msg_type.value}]: {self.content}"
 
 
@@ -336,7 +342,7 @@ class RateLimiter:
     Defaults are configurable via .claudeswarm.yaml/toml configuration file.
     """
 
-    def __init__(self, max_messages: Optional[int] = None, window_seconds: Optional[int] = None):
+    def __init__(self, max_messages: int | None = None, window_seconds: int | None = None):
         """Initialize rate limiter.
 
         Args:
@@ -363,10 +369,13 @@ class RateLimiter:
             raise ValueError(f"Invalid rate limit configuration: {e}")
 
         # Track message timestamps per agent
-        self._message_times: Dict[str, deque] = defaultdict(lambda: deque(maxlen=self.max_messages))
+        self._message_times: dict[str, deque] = defaultdict(lambda: deque(maxlen=self.max_messages))
 
         # Thread safety lock for protecting shared state
         self._lock = threading.Lock()
+
+        # Counter for periodic cleanup (prevent memory leaks)
+        self._cleanup_counter = 0
 
     def check_rate_limit(self, agent_id: str) -> bool:
         """Check if agent is within rate limit.
@@ -378,6 +387,13 @@ class RateLimiter:
             True if within limit, False if rate limit exceeded
         """
         with self._lock:
+            # Periodic cleanup to prevent memory leaks (every 100 checks)
+            self._cleanup_counter += 1
+            if self._cleanup_counter >= 100:
+                self._cleanup_counter = 0
+                # Use 5-minute inactivity threshold for cleanup
+                self._cleanup_inactive_agents_internal(cutoff_seconds=300)
+
             now = datetime.now()
             cutoff = now - timedelta(seconds=self.window_seconds)
 
@@ -392,10 +408,49 @@ class RateLimiter:
 
             return True
 
-    def record_message(self, agent_id: str):
-        """Record that a message was sent by an agent."""
+    def check_rate_limit_bulk(self, agent_id: str, count: int) -> bool:
+        """Check if agent can send multiple messages within rate limit.
+
+        This method is used for broadcasts to ensure that sending a message
+        to N recipients counts as N messages toward the rate limit, preventing
+        broadcast DoS attacks where an agent could send 10 broadcasts to 100
+        recipients each (1000 effective messages) while appearing to stay
+        within a 10 msg/min limit.
+
+        Args:
+            agent_id: ID of the agent to check
+            count: Number of messages to check (e.g., number of broadcast recipients)
+
+        Returns:
+            True if sending count messages would be within limit, False otherwise
+        """
         with self._lock:
-            self._message_times[agent_id].append(datetime.now())
+            now = datetime.now()
+            cutoff = now - timedelta(seconds=self.window_seconds)
+
+            # Remove old timestamps
+            times = self._message_times[agent_id]
+            while times and times[0] < cutoff:
+                times.popleft()
+
+            # Check if we have room for count more messages
+            if len(times) + count > self.max_messages:
+                return False
+
+            return True
+
+    def record_message(self, agent_id: str, count: int = 1):
+        """Record that message(s) were sent by an agent.
+
+        Args:
+            agent_id: ID of the agent
+            count: Number of messages to record (default: 1)
+        """
+        with self._lock:
+            now = datetime.now()
+            # Record count timestamps for rate limiting
+            for _ in range(count):
+                self._message_times[agent_id].append(now)
 
     def reset_agent(self, agent_id: str):
         """Reset rate limit for a specific agent."""
@@ -403,11 +458,44 @@ class RateLimiter:
             if agent_id in self._message_times:
                 del self._message_times[agent_id]
 
+    def _cleanup_inactive_agents_internal(self, cutoff_seconds: int = 300):
+        """Internal cleanup method called automatically during check_rate_limit.
+
+        This is called periodically (every 100 rate limit checks) to prevent
+        memory leaks from inactive agents. Uses a shorter 5-minute threshold
+        by default for more aggressive cleanup.
+
+        Args:
+            cutoff_seconds: Remove agents inactive for this many seconds (default: 5 minutes)
+
+        Note:
+            This method assumes the caller already holds self._lock.
+            For external cleanup, use cleanup_inactive_agents() instead.
+        """
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=cutoff_seconds)
+
+        # Find agents with no recent activity
+        agents_to_remove = []
+        for agent_id, times in self._message_times.items():
+            if not times or (times and times[-1] < cutoff):
+                agents_to_remove.append(agent_id)
+
+        # Remove inactive agents
+        for agent_id in agents_to_remove:
+            del self._message_times[agent_id]
+
+        if agents_to_remove:
+            logger.debug(f"Cleaned up {len(agents_to_remove)} inactive agents from rate limiter")
+
     def cleanup_inactive_agents(self, cutoff_seconds: int = RATE_LIMITER_CLEANUP_SECONDS):
         """Remove tracking data for agents that haven't sent messages recently.
 
         This prevents memory leaks in long-running scenarios where agents
         come and go but their tracking data remains in memory.
+
+        This is the public API for manual cleanup. For automatic periodic cleanup,
+        see _cleanup_inactive_agents_internal() which is called automatically.
 
         Args:
             cutoff_seconds: Remove agents inactive for this many seconds (default: 1 hour)
@@ -461,7 +549,9 @@ class TmuxMessageDelivery:
         return shlex.quote(text)
 
     @staticmethod
-    def send_to_pane(pane_id: str, message: str, timeout: float = DIRECT_MESSAGE_TIMEOUT_SECONDS) -> bool:
+    def send_to_pane(
+        pane_id: str, message: str, timeout: float = DIRECT_MESSAGE_TIMEOUT_SECONDS
+    ) -> bool:
         """Send message to a specific tmux pane.
 
         Args:
@@ -479,24 +569,34 @@ class TmuxMessageDelivery:
             TmuxError: For other tmux errors
         """
         try:
+            # Validate pane ID format to prevent command injection
+            # Pane IDs should not contain shell metacharacters
+            if not isinstance(pane_id, str) or not pane_id:
+                raise TmuxError("Invalid pane ID: must be a non-empty string")
+
+            # Check for shell metacharacters that could cause injection
+            # Tmux accepts multiple formats: session:window.pane or %number
+            # We just need to ensure no shell metacharacters
+            dangerous_chars = set(";&|`$(){}[]<>*?!")
+            if any(c in pane_id for c in dangerous_chars):
+                raise TmuxError(f"Invalid pane ID '{pane_id}': contains shell metacharacters")
+
             # First verify pane exists to give better error messages
             if not TmuxMessageDelivery.verify_pane_exists(pane_id):
                 raise TmuxPaneNotFoundError(
                     f"Tmux pane {pane_id} not found. It may have been closed or the agent terminated."
                 )
 
-            # Escape the message
-            escaped = TmuxMessageDelivery.escape_for_tmux(message)
+            # Format message for display (no escaping needed with -l flag)
+            cmd = f"# [MESSAGE] {message}"
 
-            # Use bash comment to display message (no execution, no approval needed)
-            cmd = f"# [MESSAGE] {escaped}"
-
-            # Send command text to tmux pane
+            # Send command text to tmux pane using -l for literal interpretation
+            # The -l flag treats the text literally, preventing command injection
             result = subprocess.run(
-                ['tmux', 'send-keys', '-t', pane_id, cmd],
+                ["tmux", "send-keys", "-l", "-t", pane_id, cmd],
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
             )
 
             if result.returncode != 0:
@@ -515,10 +615,10 @@ class TmuxMessageDelivery:
 
             # Send Enter key separately to execute the command
             result = subprocess.run(
-                ['tmux', 'send-keys', '-t', pane_id, 'Enter'],
+                ["tmux", "send-keys", "-t", pane_id, "Enter"],
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
             )
 
             if result.returncode != 0:
@@ -561,10 +661,10 @@ class TmuxMessageDelivery:
         """
         try:
             result = subprocess.run(
-                ['tmux', 'list-panes', '-a', '-F', '#{session_name}:#{window_index}.#{pane_index}'],
+                ["tmux", "list-panes", "-a", "-F", "#{session_name}:#{window_index}.#{pane_index}"],
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
             )
 
             if result.returncode != 0:
@@ -576,7 +676,7 @@ class TmuxMessageDelivery:
                 return False
 
             # Check if our pane_id is in the list
-            panes = result.stdout.strip().split('\n')
+            panes = result.stdout.strip().split("\n")
             exists = pane_id in panes or any(pane_id in p for p in panes)
             logger.debug(f"Pane {pane_id} exists: {exists}")
             return exists
@@ -601,7 +701,7 @@ class MessageLogger:
     - Thread-safe writing
     """
 
-    def __init__(self, log_file: Optional[Path] = None, project_root: Optional[Path] = None):
+    def __init__(self, log_file: Path | None = None, project_root: Path | None = None):
         """Initialize message logger.
 
         Args:
@@ -615,7 +715,7 @@ class MessageLogger:
         if not self.log_file.exists():
             self.log_file.touch()
 
-    def log_message(self, message: Message, delivery_status: Dict[str, bool]):
+    def log_message(self, message: Message, delivery_status: dict[str, bool]):
         """Log a message with delivery status.
 
         Writes entries to agent_messages.log in a standardized JSON format.
@@ -644,12 +744,12 @@ class MessageLogger:
         log_entry = message.to_log_dict()
 
         # Add delivery-specific fields
-        log_entry['delivery_status'] = delivery_status
-        log_entry['success_count'] = sum(1 for success in delivery_status.values() if success)
-        log_entry['failure_count'] = sum(1 for success in delivery_status.values() if not success)
+        log_entry["delivery_status"] = delivery_status
+        log_entry["success_count"] = sum(1 for success in delivery_status.values() if success)
+        log_entry["failure_count"] = sum(1 for success in delivery_status.values() if not success)
 
         # Update timestamp to current time (log time, not message creation time)
-        log_entry['timestamp'] = datetime.now().isoformat()
+        log_entry["timestamp"] = datetime.now().isoformat()
 
         # Use exclusive lock to protect both rotation check and write
         # This prevents multiple agents from interleaving JSON lines
@@ -659,8 +759,8 @@ class MessageLogger:
                 self._rotate_if_needed()
 
                 # Append to log file
-                with open(self.log_file, 'a') as f:
-                    f.write(json.dumps(log_entry) + '\n')
+                with open(self.log_file, "a") as f:
+                    f.write(json.dumps(log_entry) + "\n")
 
         except FileLockTimeout:
             # Log warning but don't crash - graceful degradation
@@ -668,11 +768,9 @@ class MessageLogger:
                 f"Timeout acquiring lock on {self.log_file} for message {message.msg_id}. "
                 f"Message logging skipped to avoid blocking."
             )
-        except (FileLockError, OSError, IOError) as e:
+        except (FileLockError, OSError) as e:
             # Handle other file locking or I/O errors gracefully
-            logger.error(
-                f"Failed to log message {message.msg_id} to {self.log_file}: {e}"
-            )
+            logger.error(f"Failed to log message {message.msg_id} to {self.log_file}: {e}")
 
     def _rotate_if_needed(self):
         """Rotate log file if it exceeds max size."""
@@ -681,14 +779,14 @@ class MessageLogger:
 
         if self.log_file.stat().st_size > self.max_size:
             # Rename to .old
-            old_log = self.log_file.with_suffix('.log.old')
+            old_log = self.log_file.with_suffix(".log.old")
             if old_log.exists():
                 old_log.unlink()
             self.log_file.rename(old_log)
             self.log_file.touch()
             logger.info(f"Rotated log file to {old_log}")
 
-    def get_messages_for_agent(self, agent_id: str, limit: Optional[int] = None) -> List[dict]:
+    def get_messages_for_agent(self, agent_id: str, limit: int | None = None) -> list[dict]:
         """Get messages for a specific agent from the log file.
 
         Reads messages from agent_messages.log and filters for messages
@@ -711,7 +809,7 @@ class MessageLogger:
 
         messages = []
         try:
-            with open(self.log_file, 'r', encoding='utf-8') as f:
+            with open(self.log_file, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -721,14 +819,18 @@ class MessageLogger:
                         msg = json.loads(line)
 
                         # Check if this message is for the specified agent
-                        recipients = msg.get('recipients', [])
-                        if agent_id in recipients or 'all' in recipients:
+                        recipients = msg.get("recipients", [])
+                        if agent_id in recipients or "all" in recipients:
                             messages.append(msg)
-                    except json.JSONDecodeError:
-                        # Skip invalid JSON lines
+                    except json.JSONDecodeError as e:
+                        # Log corrupted JSON entries for debugging
+                        logger.warning(
+                            f"Skipping corrupted JSON entry in {self.log_file}: {e}. "
+                            f"Line content (truncated): {line[:100]}"
+                        )
                         continue
 
-        except (IOError, OSError) as e:
+        except OSError as e:
             logger.warning(f"Error reading messages from {self.log_file}: {e}")
             return []
 
@@ -753,8 +855,8 @@ class MessagingSystem:
     def __init__(
         self,
         log_file: Path = None,
-        rate_limit_messages: Optional[int] = None,
-        rate_limit_window: Optional[int] = None
+        rate_limit_messages: int | None = None,
+        rate_limit_window: int | None = None,
     ):
         """Initialize messaging system.
 
@@ -767,7 +869,7 @@ class MessagingSystem:
         self.message_logger = MessageLogger(log_file)
         self.delivery = TmuxMessageDelivery()
 
-    def _load_agent_registry(self) -> Optional[AgentRegistry]:
+    def _load_agent_registry(self) -> AgentRegistry | None:
         """Load the current agent registry with file locking.
 
         Uses shared (read) lock to prevent race conditions when
@@ -787,7 +889,7 @@ class MessagingSystem:
         try:
             # Use shared lock for reading (allows multiple readers)
             with FileLock(registry_path, timeout=REGISTRY_READ_LOCK_TIMEOUT_SECONDS, shared=True):
-                with open(registry_path, 'r') as f:
+                with open(registry_path) as f:
                     data = json.load(f)
                 return AgentRegistry.from_dict(data)
 
@@ -804,7 +906,7 @@ class MessagingSystem:
             logger.error(f"Error loading agent registry: {e}")
             return None
 
-    def _get_agent_pane(self, agent_id: str) -> Optional[str]:
+    def _get_agent_pane(self, agent_id: str) -> str | None:
         """Get tmux pane ID for an agent.
 
         Args:
@@ -820,8 +922,8 @@ class MessagingSystem:
         registry = self._load_agent_registry()
         if not registry:
             raise AgentNotFoundError(
-                f"Agent registry not found. No agents are currently registered. "
-                f"Run 'claudeswarm refresh' to update the registry."
+                "Agent registry not found. No agents are currently registered. "
+                "Run 'claudeswarm refresh' to update the registry."
             )
 
         # Look for the agent
@@ -849,11 +951,7 @@ class MessagingSystem:
             )
 
     def send_message(
-        self,
-        sender_id: str,
-        recipient_id: str,
-        msg_type: MessageType,
-        content: str
+        self, sender_id: str, recipient_id: str, msg_type: MessageType, content: str
     ) -> Message:
         """Send a direct message to a specific agent.
 
@@ -893,7 +991,7 @@ class MessagingSystem:
                 timestamp=datetime.now(),
                 msg_type=msg_type,
                 content=content,
-                recipients=[recipient_id]
+                recipients=[recipient_id],
             )
         except ValueError as e:
             raise MessageDeliveryError(f"Invalid message data: {e}") from e
@@ -995,24 +1093,27 @@ class MessagingSystem:
 
         # Track delivery success for logging
         success = False
-        error_msg = None
-        tmux_unavailable = False
 
         try:
-            self.delivery.send_to_pane(pane_id, formatted_msg, timeout=DIRECT_MESSAGE_TIMEOUT_SECONDS)
+            self.delivery.send_to_pane(
+                pane_id, formatted_msg, timeout=DIRECT_MESSAGE_TIMEOUT_SECONDS
+            )
             success = True
             logger.info(f"Message {message.msg_id} delivered to {recipient_id}")
 
         except (TmuxError, TmuxSocketError, TmuxPaneNotFoundError, TmuxTimeoutError) as e:
             # Tmux errors are expected in sandboxed environments
             # Don't raise - just log to file and continue
-            error_msg = str(e)
-            tmux_unavailable = True
-            logger.debug(f"Tmux delivery unavailable for message {message.msg_id} to {recipient_id}: {e}")
+            str(e)
+            logger.debug(
+                f"Tmux delivery unavailable for message {message.msg_id} to {recipient_id}: {e}"
+            )
 
         except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Unexpected error delivering message {message.msg_id} to {recipient_id}: {e}")
+            str(e)
+            logger.error(
+                f"Unexpected error delivering message {message.msg_id} to {recipient_id}: {e}"
+            )
             raise MessageDeliveryError(f"Message delivery failed: {e}") from e
 
         finally:
@@ -1039,8 +1140,8 @@ class MessagingSystem:
         msg_type: MessageType,
         content: str,
         exclude_self: bool = True,
-        max_recipients: int = MAX_BROADCAST_RECIPIENTS
-    ) -> Dict[str, bool]:
+        max_recipients: int = MAX_BROADCAST_RECIPIENTS,
+    ) -> dict[str, bool]:
         """Broadcast a message to all active agents.
 
         Args:
@@ -1059,17 +1160,7 @@ class MessagingSystem:
             MessageDeliveryError: If broadcast validation fails
             FileLockTimeout: If cannot acquire registry lock
         """
-        # Check rate limit first
-        if not self.rate_limiter.check_rate_limit(sender_id):
-            max_messages = self.rate_limiter.max_messages
-            window_seconds = self.rate_limiter.window_seconds
-            raise RateLimitExceeded(
-                f"Rate limit exceeded for {sender_id}. "
-                f"Maximum {max_messages} messages per {window_seconds} seconds. "
-                f"Please wait before sending more messages."
-            )
-
-        # Load agent registry with file locking
+        # Load agent registry with file locking first to get recipient count
         registry = self._load_agent_registry()
         if not registry:
             raise AgentNotFoundError(
@@ -1107,6 +1198,17 @@ class MessagingSystem:
                 f"Maximum is {max_recipients}. Consider using targeted messages instead."
             )
 
+        # Check rate limit for EACH recipient (prevents broadcast DoS)
+        # This ensures broadcasting to N recipients counts as N messages toward the rate limit
+        if not self.rate_limiter.check_rate_limit_bulk(sender_id, len(recipients)):
+            max_messages = self.rate_limiter.max_messages
+            window_seconds = self.rate_limiter.window_seconds
+            raise RateLimitExceeded(
+                f"Rate limit exceeded for {sender_id}: broadcasting to {len(recipients)} recipients "
+                f"would exceed {max_messages} msg/{window_seconds}s limit. "
+                f"Please wait before sending more messages."
+            )
+
         logger.info(f"Broadcasting to {len(recipients)} recipients: {', '.join(recipients)}")
 
         # Create message
@@ -1116,7 +1218,7 @@ class MessagingSystem:
                 timestamp=datetime.now(),
                 msg_type=msg_type,
                 content=content,
-                recipients=recipients
+                recipients=recipients,
             )
         except ValueError as e:
             raise MessageDeliveryError(f"Invalid broadcast message data: {e}") from e
@@ -1181,11 +1283,12 @@ class MessagingSystem:
         # - Monitor agent health/reachability
         #
         # RATE LIMITING:
-        # Rate limit is recorded AFTER delivery loop, not before each send:
-        # - One rate limit "charge" per broadcast, not per recipient
-        # - Prevents broadcasts from being expensive in rate limit budget
-        # - Fair policy: broadcasting to 10 agents costs same as to 1 agent
+        # Rate limit is recorded AFTER delivery loop, counting each recipient:
+        # - Each recipient counts as one message toward the rate limit
+        # - Prevents broadcast DoS: can't send 10 broadcasts × 100 recipients = 1000 messages
+        # - Fair policy: broadcasting to 10 agents costs 10× more than to 1 agent
         # - Recorded even if all deliveries fail (we attempted the broadcast)
+        # - Check is done BEFORE delivery using check_rate_limit_bulk()
         #
         # PERFORMANCE CHARACTERISTICS:
         # - Best case (all succeed): ~100ms for 10 recipients
@@ -1212,7 +1315,9 @@ class MessagingSystem:
                     continue
 
                 # Attempt delivery with shorter timeout for broadcasts
-                self.delivery.send_to_pane(pane_id, formatted_msg, timeout=BROADCAST_TIMEOUT_SECONDS)
+                self.delivery.send_to_pane(
+                    pane_id, formatted_msg, timeout=BROADCAST_TIMEOUT_SECONDS
+                )
                 delivery_status[recipient_id] = True
                 logger.debug(f"Broadcast delivered to {recipient_id}")
 
@@ -1228,8 +1333,9 @@ class MessagingSystem:
                 logger.error(f"Unexpected error delivering broadcast to {recipient_id}: {e}")
                 delivery_status[recipient_id] = False
 
-        # Always record rate limit (we attempted the broadcast)
-        self.rate_limiter.record_message(sender_id)
+        # Always record rate limit for EACH recipient (we attempted the broadcast)
+        # This ensures broadcasting to N recipients counts as N messages toward the rate limit
+        self.rate_limiter.record_message(sender_id, len(recipients))
 
         # Store delivery status in message for CLI access
         message.delivery_status = delivery_status
@@ -1268,6 +1374,7 @@ class MessagingSystem:
 
 _default_messaging_system = None
 
+
 def _get_messaging_system() -> MessagingSystem:
     """Get or create the default messaging system instance."""
     global _default_messaging_system
@@ -1277,11 +1384,8 @@ def _get_messaging_system() -> MessagingSystem:
 
 
 def send_message(
-    sender_id: str,
-    recipient_id: str,
-    message_type: MessageType,
-    content: str
-) -> Optional[Message]:
+    sender_id: str, recipient_id: str, message_type: MessageType, content: str
+) -> Message | None:
     """Send a direct message to a specific agent.
 
     This is a convenience wrapper around MessagingSystem.send_message()
@@ -1315,11 +1419,8 @@ def send_message(
 
 
 def broadcast_message(
-    sender_id: str,
-    message_type: MessageType,
-    content: str,
-    exclude_self: bool = True
-) -> Dict[str, bool]:
+    sender_id: str, message_type: MessageType, content: str, exclude_self: bool = True
+) -> dict[str, bool]:
     """Broadcast a message to all active agents.
 
     This is a convenience wrapper around MessagingSystem.broadcast_message()

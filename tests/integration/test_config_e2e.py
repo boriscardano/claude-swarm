@@ -18,42 +18,44 @@ Author: Agent-4 (Test Engineer)
 
 import json
 import os
-import subprocess
 import tempfile
 import time
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
-from claudeswarm.messaging import MessagingSystem, Message, MessageType
 from claudeswarm.locking import LockManager
-from claudeswarm.discovery import refresh_registry, get_registry_path
+from claudeswarm.messaging import MessagingSystem
 
 # Config imports
 try:
     from claudeswarm.config import (
         Config,
-        load_config,
         ConfigLoader,
         get_default_config,
+        load_config,
     )
+
     CONFIG_MODULE_EXISTS = True
 except ImportError:
+
     class Config:
         pass
+
     def load_config(*args, **kwargs):
         pass
+
     class ConfigLoader:
         pass
+
     def get_default_config():
         pass
+
     CONFIG_MODULE_EXISTS = False
 
 
 pytestmark = pytest.mark.skipif(
-    not CONFIG_MODULE_EXISTS,
-    reason="Config module not yet implemented"
+    not CONFIG_MODULE_EXISTS, reason="Config module not yet implemented"
 )
 
 
@@ -90,17 +92,12 @@ discovery:
         assert config.discovery.stale_threshold_seconds == 180
 
         # Create system components with this config
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             messaging = MessagingSystem(
-                agent_id="agent-0",
-                project_root=str(mock_project_root),
-                config=config
+                agent_id="agent-0", project_root=str(mock_project_root), config=config
             )
 
-        lock_manager = LockManager(
-            project_root=str(mock_project_root),
-            config=config
-        )
+        lock_manager = LockManager(project_root=str(mock_project_root), config=config)
 
         # Verify components use config values
         assert messaging.rate_limiter.max_messages == 15
@@ -111,11 +108,8 @@ discovery:
         # No config file created
 
         # Create components without config
-        with patch('claudeswarm.messaging.subprocess.run'):
-            messaging = MessagingSystem(
-                agent_id="agent-0",
-                project_root=str(mock_project_root)
-            )
+        with patch("claudeswarm.messaging.subprocess.run"):
+            messaging = MessagingSystem(agent_id="agent-0", project_root=str(mock_project_root))
 
         lock_manager = LockManager(project_root=str(mock_project_root))
 
@@ -144,12 +138,10 @@ class TestMultiAgentWithConfig:
 
         # Create multiple agents
         agents = []
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             for i in range(3):
                 agent = MessagingSystem(
-                    agent_id=f"agent-{i}",
-                    project_root=str(mock_project_root),
-                    config=config
+                    agent_id=f"agent-{i}", project_root=str(mock_project_root), config=config
                 )
                 agents.append(agent)
 
@@ -172,11 +164,11 @@ class TestMultiAgentWithConfig:
     time_window_seconds: 60
 """
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f1:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f1:
             f1.write(config1_content)
             config1_path = f1.name
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f2:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f2:
             f2.write(config2_content)
             config2_path = f2.name
 
@@ -184,16 +176,12 @@ class TestMultiAgentWithConfig:
             config1 = load_config(config1_path)
             config2 = load_config(config2_path)
 
-            with patch('claudeswarm.messaging.subprocess.run'):
+            with patch("claudeswarm.messaging.subprocess.run"):
                 agent1 = MessagingSystem(
-                    agent_id="agent-0",
-                    project_root=str(mock_project_root),
-                    config=config1
+                    agent_id="agent-0", project_root=str(mock_project_root), config=config1
                 )
                 agent2 = MessagingSystem(
-                    agent_id="agent-1",
-                    project_root=str(mock_project_root),
-                    config=config2
+                    agent_id="agent-1", project_root=str(mock_project_root), config=config2
                 )
 
             # Different rate limits
@@ -223,11 +211,9 @@ class TestRateLimitingWithConfig:
 
         config = load_config(config_path)
 
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             messaging = MessagingSystem(
-                agent_id="agent-0",
-                project_root=str(mock_project_root),
-                config=config
+                agent_id="agent-0", project_root=str(mock_project_root), config=config
             )
 
             # First 2 messages should succeed
@@ -261,29 +247,37 @@ class TestRateLimitingWithConfig:
             "session_name": "test",
             "updated_at": "2025-11-10T12:00:00",
             "agents": [
-                {"id": "agent-0", "pane_index": "0:0.0", "pid": 1000,
-                 "status": "active", "last_seen": "2025-11-10T12:00:00",
-                 "session_name": "test"},
-                {"id": "agent-1", "pane_index": "0:0.1", "pid": 1001,
-                 "status": "active", "last_seen": "2025-11-10T12:00:00",
-                 "session_name": "test"},
-            ]
+                {
+                    "id": "agent-0",
+                    "pane_index": "0:0.0",
+                    "pid": 1000,
+                    "status": "active",
+                    "last_seen": "2025-11-10T12:00:00",
+                    "session_name": "test",
+                },
+                {
+                    "id": "agent-1",
+                    "pane_index": "0:0.1",
+                    "pid": 1001,
+                    "status": "active",
+                    "last_seen": "2025-11-10T12:00:00",
+                    "session_name": "test",
+                },
+            ],
         }
 
         registry_path = mock_project_root / "ACTIVE_AGENTS.json"
         registry_path.write_text(json.dumps(registry_data))
 
-        with patch('claudeswarm.messaging.subprocess.run'):
-            with patch('claudeswarm.discovery.get_registry_path', return_value=registry_path):
+        with patch("claudeswarm.messaging.subprocess.run"):
+            with patch("claudeswarm.discovery.get_registry_path", return_value=registry_path):
                 messaging = MessagingSystem(
-                    agent_id="agent-0",
-                    project_root=str(mock_project_root),
-                    config=config
+                    agent_id="agent-0", project_root=str(mock_project_root), config=config
                 )
 
                 # Attempt broadcast
                 # Should respect rate limits
-                assert hasattr(messaging, 'rate_limiter')
+                assert hasattr(messaging, "rate_limiter")
 
 
 class TestLockTimeoutsWithConfig:
@@ -303,16 +297,11 @@ class TestLockTimeoutsWithConfig:
 
         config = load_config(config_path)
 
-        lock_manager = LockManager(
-            project_root=str(mock_project_root),
-            config=config
-        )
+        lock_manager = LockManager(project_root=str(mock_project_root), config=config)
 
         # Acquire a lock
         success, _ = lock_manager.acquire_lock(
-            filepath="test.txt",
-            agent_id="agent-0",
-            reason="testing"
+            filepath="test.txt", agent_id="agent-0", reason="testing"
         )
         assert success
 
@@ -343,10 +332,7 @@ class TestLockTimeoutsWithConfig:
 
         config = load_config(config_path)
 
-        lock_manager = LockManager(
-            project_root=str(mock_project_root),
-            config=config
-        )
+        lock_manager = LockManager(project_root=str(mock_project_root), config=config)
 
         assert lock_manager.refresh_interval == 30
 
@@ -370,11 +356,9 @@ class TestConfigReloadingE2E:
 
         config1 = load_config(config_path)
 
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             messaging1 = MessagingSystem(
-                agent_id="agent-0",
-                project_root=str(mock_project_root),
-                config=config1
+                agent_id="agent-0", project_root=str(mock_project_root), config=config1
             )
             assert messaging1.rate_limiter.max_messages == 10
 
@@ -388,11 +372,9 @@ class TestConfigReloadingE2E:
 
         config2 = load_config(config_path)
 
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             messaging2 = MessagingSystem(
-                agent_id="agent-1",
-                project_root=str(mock_project_root),
-                config=config2
+                agent_id="agent-1", project_root=str(mock_project_root), config=config2
             )
             assert messaging2.rate_limiter.max_messages == 20
 
@@ -444,17 +426,12 @@ locking:
         # Create initial system
         config = load_config(config_path)
 
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             messaging = MessagingSystem(
-                agent_id="agent-0",
-                project_root=str(mock_project_root),
-                config=config
+                agent_id="agent-0", project_root=str(mock_project_root), config=config
             )
 
-        lock_manager = LockManager(
-            project_root=str(mock_project_root),
-            config=config
-        )
+        lock_manager = LockManager(project_root=str(mock_project_root), config=config)
 
         # Verify initial values
         assert messaging.rate_limiter.max_messages == 5
@@ -474,17 +451,12 @@ locking:
         # Create new instances (simulating restart or new agents)
         new_config = load_config(config_path)
 
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             new_messaging = MessagingSystem(
-                agent_id="agent-1",
-                project_root=str(mock_project_root),
-                config=new_config
+                agent_id="agent-1", project_root=str(mock_project_root), config=new_config
             )
 
-        new_lock_manager = LockManager(
-            project_root=str(mock_project_root),
-            config=new_config
-        )
+        new_lock_manager = LockManager(project_root=str(mock_project_root), config=new_config)
 
         # Verify new values
         assert new_messaging.rate_limiter.max_messages == 15
@@ -511,11 +483,9 @@ class TestConfigValidationE2E:
         with pytest.raises(Exception):  # ConfigError or ValidationError
             config = load_config(config_path)
 
-            with patch('claudeswarm.messaging.subprocess.run'):
+            with patch("claudeswarm.messaging.subprocess.run"):
                 MessagingSystem(
-                    agent_id="agent-0",
-                    project_root=str(mock_project_root),
-                    config=config
+                    agent_id="agent-0", project_root=str(mock_project_root), config=config
                 )
 
     def test_partial_invalid_config_fallback(self, mock_project_root):
@@ -555,23 +525,14 @@ class TestRealWorldScenarios:
         # Start working
         config = load_config(config_path)
 
-        with patch('claudeswarm.messaging.subprocess.run'):
-            messaging = MessagingSystem(
-                agent_id="agent-0",
-                project_root=str(mock_project_root),
-                config=config
-            )
+        with patch("claudeswarm.messaging.subprocess.run"):
+            MessagingSystem(agent_id="agent-0", project_root=str(mock_project_root), config=config)
 
-        lock_manager = LockManager(
-            project_root=str(mock_project_root),
-            config=config
-        )
+        lock_manager = LockManager(project_root=str(mock_project_root), config=config)
 
         # Do some work
         success, _ = lock_manager.acquire_lock(
-            filepath="main.py",
-            agent_id="agent-0",
-            reason="editing"
+            filepath="main.py", agent_id="agent-0", reason="editing"
         )
         assert success
 
@@ -589,11 +550,9 @@ locking:
         # Continue working with new config
         new_config = load_config(config_path)
 
-        with patch('claudeswarm.messaging.subprocess.run'):
+        with patch("claudeswarm.messaging.subprocess.run"):
             new_messaging = MessagingSystem(
-                agent_id="agent-1",
-                project_root=str(mock_project_root),
-                config=new_config
+                agent_id="agent-1", project_root=str(mock_project_root), config=new_config
             )
 
         assert new_messaging.rate_limiter.max_messages == 50
@@ -635,17 +594,9 @@ locking:
         assert config2.messaging.rate_limit.max_messages == 20
 
         # Create systems in each project
-        with patch('claudeswarm.messaging.subprocess.run'):
-            msg1 = MessagingSystem(
-                agent_id="agent-0",
-                project_root=str(project1),
-                config=config1
-            )
-            msg2 = MessagingSystem(
-                agent_id="agent-0",
-                project_root=str(project2),
-                config=config2
-            )
+        with patch("claudeswarm.messaging.subprocess.run"):
+            msg1 = MessagingSystem(agent_id="agent-0", project_root=str(project1), config=config1)
+            msg2 = MessagingSystem(agent_id="agent-0", project_root=str(project2), config=config2)
 
         assert msg1.rate_limiter.max_messages == 10
         assert msg2.rate_limiter.max_messages == 20

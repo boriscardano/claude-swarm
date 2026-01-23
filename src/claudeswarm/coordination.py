@@ -14,9 +14,8 @@ communicate their current work, blockers, and coordination needs.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 from .locking import LockManager
 from .utils import atomic_write
@@ -68,9 +67,9 @@ class CoordinationFile:
 
     def __init__(
         self,
-        project_root: Optional[Path] = None,
-        agent_id: Optional[str] = None,
-        lock_manager: Optional[LockManager] = None,
+        project_root: Path | None = None,
+        agent_id: str | None = None,
+        lock_manager: LockManager | None = None,
     ):
         """Initialize the coordination file manager.
 
@@ -105,7 +104,7 @@ class CoordinationFile:
 
 | Agent | Task | Status | Started |
 |-------|------|--------|---------|
-| example-agent | Example task | In Progress | {datetime.now(timezone.utc).strftime('%Y-%m-%d')} |
+| example-agent | Example task | In Progress | {datetime.now(UTC).strftime('%Y-%m-%d')} |
 
 ## Blocked Items
 
@@ -117,7 +116,7 @@ class CoordinationFile:
 
 ## Decisions
 
-- **[{datetime.now(timezone.utc).strftime('%Y-%m-%d')}]** Decision made: Rationale and context
+- **[{datetime.now(UTC).strftime('%Y-%m-%d')}]** Decision made: Rationale and context
 """
 
     def init_file(self, project_name: str = "Project", force: bool = False) -> bool:
@@ -157,7 +156,7 @@ class CoordinationFile:
         sections: dict[str, CoordinationSection] = {}
         lines = content.split("\n")
 
-        current_section: Optional[str] = None
+        current_section: str | None = None
         section_start = 0
         section_lines: list[str] = []
 
@@ -231,13 +230,12 @@ class CoordinationFile:
         """
         if not self.filepath.exists():
             raise FileNotFoundError(
-                f"Coordination file not found at {self.filepath}. "
-                "Call init_file() first."
+                f"Coordination file not found at {self.filepath}. " "Call init_file() first."
             )
 
         return self.filepath.read_text(encoding="utf-8")
 
-    def get_section(self, section_name: str) -> Optional[str]:
+    def get_section(self, section_name: str) -> str | None:
         """Get the content of a specific section.
 
         Args:
@@ -331,10 +329,10 @@ class CoordinationFile:
 
 
 # Module-level convenience functions using default instance
-_default_coordination: Optional[CoordinationFile] = None
+_default_coordination: CoordinationFile | None = None
 
 
-def _get_default_coordination(project_root: Optional[Path] = None) -> CoordinationFile:
+def _get_default_coordination(project_root: Path | None = None) -> CoordinationFile:
     """Get or create default coordination file instance."""
     global _default_coordination
     if _default_coordination is None or (
@@ -351,7 +349,7 @@ def _reset_default_coordination() -> None:
 
 
 def init_coordination_file(
-    project_name: str = "Project", force: bool = False, project_root: Optional[Path] = None
+    project_name: str = "Project", force: bool = False, project_root: Path | None = None
 ) -> bool:
     """Initialize a new COORDINATION.md file with template sections.
 
@@ -373,9 +371,9 @@ def init_coordination_file(
 def update_section(
     section: str,
     content: str,
-    agent_id: Optional[str] = None,
+    agent_id: str | None = None,
     reason: str = "updating section",
-    project_root: Optional[Path] = None,
+    project_root: Path | None = None,
 ) -> bool:
     """Update a specific section of the coordination file.
 
@@ -405,7 +403,7 @@ def update_section(
     return coord.update_section(section, content, reason=reason)
 
 
-def get_section(section: str, project_root: Optional[Path] = None) -> Optional[str]:
+def get_section(section: str, project_root: Path | None = None) -> str | None:
     """Get content of a specific section.
 
     Args:
@@ -419,7 +417,7 @@ def get_section(section: str, project_root: Optional[Path] = None) -> Optional[s
     return coord.get_section(section)
 
 
-def get_current_work(project_root: Optional[Path] = None) -> list[str]:
+def get_current_work(project_root: Path | None = None) -> list[str]:
     """Get list of items in the Current Work section.
 
     Args:
@@ -440,7 +438,7 @@ def get_current_work(project_root: Optional[Path] = None) -> list[str]:
     return data_lines
 
 
-def get_blocked_items(project_root: Optional[Path] = None) -> list[str]:
+def get_blocked_items(project_root: Path | None = None) -> list[str]:
     """Get list of blocked items from the Blocked section.
 
     Args:
@@ -458,7 +456,7 @@ def get_blocked_items(project_root: Optional[Path] = None) -> list[str]:
     return [line for line in lines if line.startswith("-") or line.startswith("*")]
 
 
-def get_review_queue(project_root: Optional[Path] = None) -> list[str]:
+def get_review_queue(project_root: Path | None = None) -> list[str]:
     """Get list of items in the Code Review Queue section.
 
     Args:
@@ -476,7 +474,7 @@ def get_review_queue(project_root: Optional[Path] = None) -> list[str]:
     return [line for line in lines if line.startswith("-") or line.startswith("*")]
 
 
-def get_decisions(project_root: Optional[Path] = None) -> list[str]:
+def get_decisions(project_root: Path | None = None) -> list[str]:
     """Get list of decisions from the Decisions section.
 
     Args:
@@ -498,8 +496,8 @@ def add_current_work(
     agent: str,
     task: str,
     status: str = "In Progress",
-    agent_id: Optional[str] = None,
-    project_root: Optional[Path] = None,
+    agent_id: str | None = None,
+    project_root: Path | None = None,
 ) -> bool:
     """Add a new work item to the Current Work table.
 
@@ -513,7 +511,7 @@ def add_current_work(
     Returns:
         True if added successfully
     """
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     new_row = f"| {agent} | {task} | {status} | {today} |"
 
     coord = _get_default_coordination(project_root=project_root)
@@ -527,8 +525,8 @@ def add_blocked_item(
     task: str,
     reason: str,
     agent: str,
-    agent_id: Optional[str] = None,
-    project_root: Optional[Path] = None,
+    agent_id: str | None = None,
+    project_root: Path | None = None,
 ) -> bool:
     """Add a blocked item to the Blocked Items section.
 
@@ -557,8 +555,8 @@ def add_review_item(
     author: str,
     reviewer: str = "TBD",
     status: str = "Pending",
-    agent_id: Optional[str] = None,
-    project_root: Optional[Path] = None,
+    agent_id: str | None = None,
+    project_root: Path | None = None,
 ) -> bool:
     """Add a code review item to the Code Review Queue.
 
@@ -587,7 +585,7 @@ def add_review_item(
 
 
 def add_decision(
-    decision: str, rationale: str, agent_id: Optional[str] = None, project_root: Optional[Path] = None
+    decision: str, rationale: str, agent_id: str | None = None, project_root: Path | None = None
 ) -> bool:
     """Add a decision to the Decisions section.
 
@@ -600,7 +598,7 @@ def add_decision(
     Returns:
         True if added successfully
     """
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     new_item = f"- **[{today}]** {decision}: {rationale}"
 
     coord = _get_default_coordination(project_root=project_root)

@@ -7,22 +7,26 @@ This module tests all validation functions to ensure:
 - Security validations work correctly
 """
 
-import pytest
-from pathlib import Path
-import tempfile
 import os
+import tempfile
+from pathlib import Path
+
+import pytest
 
 from src.claudeswarm.validators import (
     ValidationError,
+    contains_dangerous_unicode,
+    normalize_path,
+    sanitize_message_content,
     validate_agent_id,
-    validate_message_content,
     validate_file_path,
-    validate_timeout,
-    validate_retry_count,
+    validate_host,
+    validate_message_content,
+    validate_port,
     validate_rate_limit_config,
     validate_recipient_list,
-    sanitize_message_content,
-    normalize_path,
+    validate_retry_count,
+    validate_timeout,
 )
 
 
@@ -400,6 +404,186 @@ class TestMessageContentSanitization:
         assert not result.startswith("  ")
         assert not result.endswith("  ")
 
+    def test_bidirectional_override_removed(self):
+        """Test that bidirectional override characters are removed."""
+        # RIGHT-TO-LEFT OVERRIDE
+        content = "Hello\u202eWorld"
+        result = sanitize_message_content(content)
+        assert "\u202e" not in result
+        assert result == "HelloWorld"
+
+        # LEFT-TO-RIGHT EMBEDDING
+        content = "Test\u202aCode"
+        result = sanitize_message_content(content)
+        assert "\u202a" not in result
+        assert result == "TestCode"
+
+        # Multiple bidi characters
+        content = "\u202dHello\u202eWorld\u202c"
+        result = sanitize_message_content(content)
+        assert "\u202d" not in result
+        assert "\u202e" not in result
+        assert "\u202c" not in result
+        assert result == "HelloWorld"
+
+    def test_zero_width_characters_removed(self):
+        """Test that zero-width characters are removed."""
+        # ZERO WIDTH SPACE
+        content = "Hello\u200bWorld"
+        result = sanitize_message_content(content)
+        assert "\u200b" not in result
+        assert result == "HelloWorld"
+
+        # ZERO WIDTH NON-JOINER
+        content = "Test\u200cCode"
+        result = sanitize_message_content(content)
+        assert "\u200c" not in result
+        assert result == "TestCode"
+
+        # ZERO WIDTH JOINER
+        content = "My\u200dText"
+        result = sanitize_message_content(content)
+        assert "\u200d" not in result
+        assert result == "MyText"
+
+        # WORD JOINER
+        content = "Some\u2060Text"
+        result = sanitize_message_content(content)
+        assert "\u2060" not in result
+        assert result == "SomeText"
+
+        # ZERO WIDTH NO-BREAK SPACE (BOM)
+        content = "\ufeffHello"
+        result = sanitize_message_content(content)
+        assert "\ufeff" not in result
+        assert result == "Hello"
+
+    def test_normal_unicode_preserved(self):
+        """Test that normal Unicode characters (emojis, international) are preserved."""
+        # Emojis
+        content = "Hello 👋 World 🌍"
+        result = sanitize_message_content(content)
+        assert "👋" in result
+        assert "🌍" in result
+
+        # Chinese characters
+        content = "你好世界"
+        result = sanitize_message_content(content)
+        assert result == "你好世界"
+
+        # Arabic
+        content = "مرحبا"
+        result = sanitize_message_content(content)
+        assert result == "مرحبا"
+
+        # Cyrillic
+        content = "Привет"
+        result = sanitize_message_content(content)
+        assert result == "Привет"
+
+        # Japanese
+        content = "こんにちは"
+        result = sanitize_message_content(content)
+        assert result == "こんにちは"
+
+    def test_mixed_dangerous_and_safe_unicode(self):
+        """Test content with both dangerous and safe Unicode."""
+        # Mix of emoji and bidi override
+        content = "Hello 👋\u202e World"
+        result = sanitize_message_content(content)
+        assert "👋" in result
+        assert "\u202e" not in result
+        assert "Hello" in result
+        assert "World" in result
+
+        # Mix of international text and zero-width
+        content = "你好\u200b世界"
+        result = sanitize_message_content(content)
+        assert "你好" in result
+        assert "世界" in result
+        assert "\u200b" not in result
+
+    def test_trojan_source_attack_prevented(self):
+        """Test prevention of Trojan Source attack (CVE-2021-42574)."""
+        # Example of a potential attack where code appears different than it executes
+        # The bidi override can make "/* comment */" look like code
+        malicious_content = "access = \u202efalse\u202c = true"
+        result = sanitize_message_content(malicious_content)
+        # All bidi characters should be removed
+        assert "\u202e" not in result
+        assert "\u202c" not in result
+        # Content should be readable left-to-right
+        assert "access = false = true" in result or "access =  = true" in result
+
+
+class TestDangerousUnicodeDetection:
+    """Tests for dangerous Unicode detection function."""
+
+    def test_no_dangerous_unicode(self):
+        """Test detection with safe text."""
+        has_dangerous, found = contains_dangerous_unicode("Hello World")
+        assert has_dangerous is False
+        assert len(found) == 0
+
+    def test_detect_bidi_override(self):
+        """Test detection of bidirectional override characters."""
+        # RIGHT-TO-LEFT OVERRIDE
+        has_dangerous, found = contains_dangerous_unicode("Hello\u202eWorld")
+        assert has_dangerous is True
+        assert len(found) > 0
+        assert any("RIGHT-TO-LEFT OVERRIDE" in name for name in found)
+
+        # LEFT-TO-RIGHT EMBEDDING
+        has_dangerous, found = contains_dangerous_unicode("Test\u202aCode")
+        assert has_dangerous is True
+        assert len(found) > 0
+
+    def test_detect_zero_width_chars(self):
+        """Test detection of zero-width characters."""
+        # ZERO WIDTH SPACE
+        has_dangerous, found = contains_dangerous_unicode("Hello\u200bWorld")
+        assert has_dangerous is True
+        assert len(found) > 0
+        assert any("ZERO WIDTH SPACE" in name for name in found)
+
+        # ZERO WIDTH NON-JOINER
+        has_dangerous, found = contains_dangerous_unicode("Test\u200cCode")
+        assert has_dangerous is True
+        assert len(found) > 0
+
+    def test_detect_multiple_dangerous_chars(self):
+        """Test detection of multiple dangerous characters."""
+        text = "Hello\u202e\u200bWorld"
+        has_dangerous, found = contains_dangerous_unicode(text)
+        assert has_dangerous is True
+        assert len(found) >= 2
+
+    def test_normal_unicode_not_flagged(self):
+        """Test that normal Unicode (emojis, international) is not flagged."""
+        # Emojis
+        has_dangerous, found = contains_dangerous_unicode("Hello 👋 World")
+        assert has_dangerous is False
+        assert len(found) == 0
+
+        # Chinese
+        has_dangerous, found = contains_dangerous_unicode("你好世界")
+        assert has_dangerous is False
+        assert len(found) == 0
+
+        # Arabic
+        has_dangerous, found = contains_dangerous_unicode("مرحبا")
+        assert has_dangerous is False
+        assert len(found) == 0
+
+    def test_character_names_reported(self):
+        """Test that character names are properly reported."""
+        text = "Test\u202eCode"
+        has_dangerous, found = contains_dangerous_unicode(text)
+        assert has_dangerous is True
+        assert len(found) == 1
+        # Should contain human-readable name
+        assert "RIGHT-TO-LEFT OVERRIDE" in found[0]
+
 
 class TestPathNormalization:
     """Tests for cross-platform path normalization."""
@@ -451,3 +635,215 @@ class TestValidationErrorMessages:
 
         with pytest.raises(ValidationError, match="does not exist"):
             validate_file_path("/nonexistent", must_exist=True)
+
+
+class TestHostValidation:
+    """Tests for host/IP validation."""
+
+    def test_valid_hostnames(self):
+        """Test that valid hostnames are accepted."""
+        valid_hosts = [
+            "localhost",
+            "example.com",
+            "sub.example.com",
+            "api-server.example.com",
+            "server1",
+            "my-server-123",
+        ]
+        for host in valid_hosts:
+            result = validate_host(host)
+            assert result == host
+
+    def test_valid_ipv4_addresses(self):
+        """Test that valid IPv4 addresses are accepted."""
+        valid_ips = [
+            "127.0.0.1",
+            "192.168.1.1",
+            "10.0.0.1",
+            "172.16.0.1",
+        ]
+        for ip in valid_ips:
+            result = validate_host(ip)
+            assert result == ip
+
+    def test_valid_ipv6_addresses(self):
+        """Test that valid IPv6 addresses are accepted."""
+        valid_ips = [
+            "::1",
+            "fe80::1",
+            "2001:db8::1",
+            "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+        ]
+        for ip in valid_ips:
+            result = validate_host(ip)
+            assert result == ip
+
+    def test_invalid_hostnames(self):
+        """Test that invalid hostnames are rejected."""
+        invalid_hosts = [
+            "",  # Empty
+            "   ",  # Whitespace only
+            "host@name",  # Invalid character
+            "host name",  # Space
+            "-hostname",  # Leading hyphen
+            "hostname-",  # Trailing hyphen
+            "host..name",  # Double dot
+            "a" * 300,  # Too long
+        ]
+        for host in invalid_hosts:
+            with pytest.raises(ValidationError):
+                validate_host(host)
+
+    def test_all_interfaces_warning(self):
+        """Test that binding to all interfaces triggers a warning."""
+        warnings = []
+
+        def capture_warning(msg: str):
+            warnings.append(msg)
+
+        # Test 0.0.0.0 without allow_all_interfaces
+        validate_host("0.0.0.0", allow_all_interfaces=False, warn_callback=capture_warning)
+        assert len(warnings) == 1
+        assert "all network interfaces" in warnings[0]
+
+        # Test :: (IPv6 all interfaces)
+        warnings.clear()
+        validate_host("::", allow_all_interfaces=False, warn_callback=capture_warning)
+        assert len(warnings) == 1
+        assert "all network interfaces" in warnings[0]
+
+    def test_all_interfaces_allowed(self):
+        """Test that all-interfaces binding can be explicitly allowed."""
+        warnings = []
+
+        def capture_warning(msg: str):
+            warnings.append(msg)
+
+        # Should not warn when explicitly allowed
+        validate_host("0.0.0.0", allow_all_interfaces=True, warn_callback=capture_warning)
+        assert len(warnings) == 0
+
+        validate_host("::", allow_all_interfaces=True, warn_callback=capture_warning)
+        assert len(warnings) == 0
+
+    def test_public_ip_warning(self):
+        """Test that public IP addresses trigger warnings."""
+        warnings = []
+
+        def capture_warning(msg: str):
+            warnings.append(msg)
+
+        # Test a public IP (e.g., Google DNS)
+        validate_host("8.8.8.8", warn_callback=capture_warning)
+        assert len(warnings) == 1
+        assert "public IP address" in warnings[0]
+
+    def test_private_ip_no_warning(self):
+        """Test that private IPs don't trigger public IP warnings."""
+        warnings = []
+
+        def capture_warning(msg: str):
+            warnings.append(msg)
+
+        # Private IPs should not warn about being public
+        private_ips = ["127.0.0.1", "192.168.1.1", "10.0.0.1", "172.16.0.1"]
+        for ip in private_ips:
+            warnings.clear()
+            validate_host(ip, warn_callback=capture_warning)
+            # Should have no warnings (not public IPs)
+            public_warnings = [w for w in warnings if "public IP" in w]
+            assert len(public_warnings) == 0
+
+    def test_host_type_validation(self):
+        """Test that non-string types are rejected."""
+        with pytest.raises(ValidationError, match="must be a non-empty string"):
+            validate_host(None)
+
+        with pytest.raises(ValidationError, match="must be a non-empty string"):
+            validate_host(123)
+
+
+class TestPortValidation:
+    """Tests for port number validation."""
+
+    def test_valid_ports(self):
+        """Test that valid port numbers are accepted."""
+        valid_ports = [1, 80, 443, 8080, 3000, 5000, 65535]
+        for port in valid_ports:
+            result = validate_port(port)
+            assert result == port
+            assert isinstance(result, int)
+
+    def test_port_range_validation(self):
+        """Test port range limits."""
+        # Too small
+        with pytest.raises(ValidationError, match="must be between 1 and 65535"):
+            validate_port(0)
+
+        # Too large
+        with pytest.raises(ValidationError, match="must be between 1 and 65535"):
+            validate_port(65536)
+
+        # Negative
+        with pytest.raises(ValidationError, match="must be between 1 and 65535"):
+            validate_port(-1)
+
+    def test_port_type_conversion(self):
+        """Test that ports are converted to int."""
+        result = validate_port("8080")
+        assert result == 8080
+        assert isinstance(result, int)
+
+        result = validate_port(8080.5)
+        assert result == 8080
+        assert isinstance(result, int)
+
+    def test_port_type_validation(self):
+        """Test that invalid types are rejected."""
+        with pytest.raises(ValidationError, match="must be an integer"):
+            validate_port("invalid")
+
+        with pytest.raises(ValidationError, match="must be an integer"):
+            validate_port(None)
+
+    def test_privileged_ports_parameter(self):
+        """Test that allow_privileged parameter is accepted."""
+        # Currently, allow_privileged doesn't affect validation,
+        # but the parameter should be accepted for future use
+        result = validate_port(80, allow_privileged=True)
+        assert result == 80
+
+        result = validate_port(80, allow_privileged=False)
+        assert result == 80
+
+
+class TestHostPortIntegration:
+    """Integration tests for host and port validation together."""
+
+    def test_common_server_configurations(self):
+        """Test common server configurations."""
+        configs = [
+            ("localhost", 8080),
+            ("127.0.0.1", 3000),
+            ("0.0.0.0", 8000),
+            ("example.com", 443),
+        ]
+
+        for host, port in configs:
+            validated_host = validate_host(host, allow_all_interfaces=True)
+            validated_port = validate_port(port)
+            assert validated_host == host
+            assert validated_port == port
+
+    def test_invalid_configurations(self):
+        """Test that invalid configurations are rejected."""
+        # Invalid host
+        with pytest.raises(ValidationError):
+            validate_host("invalid@host")
+
+        # Invalid port
+        with pytest.raises(ValidationError):
+            validate_port(0)
+
+        with pytest.raises(ValidationError):
+            validate_port(70000)

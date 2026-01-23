@@ -8,24 +8,28 @@ for live updates.
 import asyncio
 import json
 import os
+import secrets
 from collections.abc import AsyncGenerator
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from ..file_lock import FileLock, FileLockError, FileLockTimeout
 
 # Import project utilities
 from ..project import (
-    get_project_root,
     get_active_agents_path,
-    get_messages_log_path,
     get_locks_dir_path,
+    get_messages_log_path,
+    get_project_root,
 )
-from ..file_lock import FileLock, FileLockTimeout, FileLockError
 
 # Project paths
 PROJECT_ROOT = get_project_root()
@@ -41,18 +45,117 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS configuration for development
+
+# Security headers middleware
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Middleware to add security headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        """Add security headers to response."""
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        # NOTE: CSP allows 'unsafe-inline' for scripts and styles.
+        # This is intentional for the current dashboard implementation which uses
+        # inline event handlers (onclick, etc.) in the HTML. This is a known
+        # security trade-off that will be addressed in a future refactor by:
+        # 1. Moving all JavaScript to external files with event listeners
+        # 2. Using nonces or hashes for inline scripts if needed
+        # 3. Removing 'unsafe-inline' from the CSP policy
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:;"
+        )
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# HTTP Basic Authentication setup
+security = HTTPBasic(auto_error=False)
+
+
+def get_current_user(credentials: HTTPBasicCredentials | None = Depends(security)) -> str | None:
+    """Verify HTTP Basic authentication credentials.
+
+    Reads credentials from DASHBOARD_USERNAME and DASHBOARD_PASSWORD environment variables.
+    If both are set, authentication is required. Otherwise, access is allowed without auth.
+
+    Args:
+        credentials: HTTP Basic credentials from request
+
+    Returns:
+        Username if authenticated, None if auth not configured
+
+    Raises:
+        HTTPException: 401 if authentication required but credentials invalid/missing
+    """
+    username = os.environ.get("DASHBOARD_USERNAME")
+    password = os.environ.get("DASHBOARD_PASSWORD")
+
+    # If no auth configured, allow access
+    if not username or not password:
+        return None
+
+    # If auth configured but no credentials provided
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    # Constant-time comparison to prevent timing attacks
+    is_valid_user = secrets.compare_digest(credentials.username.encode(), username.encode())
+    is_valid_pass = secrets.compare_digest(credentials.password.encode(), password.encode())
+
+    if not (is_valid_user and is_valid_pass):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    return credentials.username
+
+
+# CORS configuration - restrictive by default for security
+# To allow external origins, set ALLOWED_ORIGINS environment variable (comma-separated)
+default_origins = (
+    "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000"
+)
+allowed_origins_str = os.getenv("ALLOWED_ORIGINS", default_origins)
+
+# Validate ALLOWED_ORIGINS to prevent wildcard injection
+if "*" in allowed_origins_str and allowed_origins_str.strip() != "*":
+    # If mixed with other origins, log warning and use default
+    import logging
+
+    logging.warning("ALLOWED_ORIGINS contains wildcard mixed with other origins - using default")
+    allowed_origins_str = default_origins
+
+allowed_origins = allowed_origins_str.split(",")
+
+# Enable credentials only if auth is configured
+auth_enabled = bool(os.environ.get("DASHBOARD_USERNAME") and os.environ.get("DASHBOARD_PASSWORD"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=allowed_origins,
+    allow_credentials=auth_enabled,  # Enable if auth is configured
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept", "Authorization"],
 )
 
 # Mount static files if directory exists
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Create versioned API router
+api_v1 = APIRouter(prefix="/api/v1", tags=["v1"])
 
 
 # Utility functions
@@ -77,26 +180,31 @@ def safe_load_json(file_path: Path) -> dict[str, Any] | None:
         if file_path.name == "ACTIVE_AGENTS.json":
             try:
                 with FileLock(file_path, timeout=2.0, shared=True):
-                    with open(file_path, "r", encoding="utf-8") as f:
+                    with open(file_path, encoding="utf-8") as f:
                         return json.load(f)
             except FileLockTimeout:
                 # If we can't get the lock, return None gracefully
                 # Dashboard will retry on next poll
                 return None
-            except (FileLockError, OSError, IOError):
+            except (FileLockError, OSError):
                 # Other locking or I/O errors - return None gracefully
                 return None
         else:
             # For other JSON files, read without locking
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 return json.load(f)
 
-    except (json.JSONDecodeError, IOError, OSError):
+    except (json.JSONDecodeError, OSError):
         return None
 
 
 def tail_log_file(file_path: Path, limit: int = 50) -> list[dict[str, Any]]:
-    """Read last N lines from log file and parse as JSON.
+    """Read last N lines from log file efficiently using seek.
+
+    This implementation avoids loading the entire file into memory by:
+    1. Seeking to the end of the file
+    2. Reading backwards in chunks to find line boundaries
+    3. Stopping once we have enough lines
 
     Args:
         file_path: Path to log file
@@ -110,10 +218,45 @@ def tail_log_file(file_path: Path, limit: int = 50) -> list[dict[str, Any]]:
         if not file_path.exists():
             return messages
 
-        with open(file_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            # Get last 'limit' lines
-            for line in lines[-limit:]:
+        with open(file_path, "rb") as f:
+            # Get file size
+            f.seek(0, os.SEEK_END)
+            file_size = f.tell()
+
+            if file_size == 0:
+                return messages
+
+            # Read file backwards in chunks to find last N lines
+            buffer_size = 8192  # 8KB chunks
+            lines_found = []
+            position = file_size
+
+            while position > 0 and len(lines_found) < limit:
+                # Calculate chunk size (don't read beyond start of file)
+                chunk_size = min(buffer_size, position)
+                position -= chunk_size
+
+                # Read chunk
+                f.seek(position)
+                chunk = f.read(chunk_size).decode("utf-8", errors="ignore")
+
+                # Split into lines and prepend to our list
+                chunk_lines = chunk.split("\n")
+
+                # If this isn't the first chunk, combine with previous partial line
+                if lines_found and position > 0:
+                    chunk_lines[-1] += lines_found[0]
+                    lines_found[0] = chunk_lines[-1]
+                    chunk_lines = chunk_lines[:-1]
+
+                # Add new lines to beginning
+                lines_found = chunk_lines + lines_found
+
+            # Take the last 'limit' lines
+            selected_lines = lines_found[-limit:] if len(lines_found) > limit else lines_found
+
+            # Parse JSON from lines
+            for line in selected_lines:
                 line = line.strip()
                 if line:
                     try:
@@ -122,7 +265,8 @@ def tail_log_file(file_path: Path, limit: int = 50) -> list[dict[str, Any]]:
                     except json.JSONDecodeError:
                         # Skip malformed lines
                         continue
-    except (IOError, OSError):
+
+    except OSError:
         pass
 
     return messages
@@ -141,11 +285,11 @@ def get_lock_files() -> list[dict[str, Any]]:
 
         for lock_file in AGENT_LOCKS_DIR.glob("*.lock"):
             try:
-                with open(lock_file, "r", encoding="utf-8") as f:
+                with open(lock_file, encoding="utf-8") as f:
                     lock_data = json.load(f)
                     lock_data["lock_file"] = lock_file.name
                     locks.append(lock_data)
-            except (json.JSONDecodeError, IOError, OSError):
+            except (json.JSONDecodeError, OSError):
                 # Skip corrupt lock files
                 continue
     except OSError:
@@ -156,7 +300,7 @@ def get_lock_files() -> list[dict[str, Any]]:
 
 # State tracking for SSE
 class StateTracker:
-    """Track file modification times for change detection."""
+    """Track file modification times and stats for change detection."""
 
     def __init__(self) -> None:
         """Initialize state tracker."""
@@ -164,6 +308,8 @@ class StateTracker:
         self.messages_mtime: float = 0.0
         self.locks_mtime: float = 0.0
         self.message_count: int = 0
+        self.last_stats: dict[str, Any] | None = None
+        self.last_stats_time: float = 0.0
 
     def check_changes(self) -> dict[str, bool]:
         """Check which files have changed since last check.
@@ -207,11 +353,47 @@ class StateTracker:
 
         return changes
 
+    def should_send_stats(self, current_stats: dict[str, Any], current_time: float) -> bool:
+        """Determine if stats should be sent based on changes or heartbeat interval.
 
-# API Endpoints
+        Stats are sent if:
+        1. Stats have changed since last send, OR
+        2. 5 seconds have elapsed since last send (heartbeat)
+
+        Args:
+            current_stats: Current stats data
+            current_time: Current timestamp
+
+        Returns:
+            True if stats should be sent
+        """
+        # Always send if this is the first time
+        if self.last_stats is None:
+            self.last_stats = current_stats
+            self.last_stats_time = current_time
+            return True
+
+        # Send if stats have changed
+        if current_stats != self.last_stats:
+            self.last_stats = current_stats
+            self.last_stats_time = current_time
+            return True
+
+        # Send as heartbeat every 5 seconds even if no changes
+        if current_time - self.last_stats_time >= 5.0:
+            self.last_stats_time = current_time
+            return True
+
+        return False
+
+
+# Root and health endpoints (not versioned)
 @app.get("/", response_class=HTMLResponse)
-async def dashboard() -> HTMLResponse:
+async def dashboard(user: str | None = Depends(get_current_user)) -> HTMLResponse:
     """Serve the dashboard HTML page.
+
+    Args:
+        user: Authenticated user (if auth configured)
 
     Returns:
         HTML response with dashboard page or placeholder
@@ -219,11 +401,15 @@ async def dashboard() -> HTMLResponse:
     index_file = STATIC_DIR / "index.html"
     if index_file.exists():
         try:
-            with open(index_file, "r", encoding="utf-8") as f:
+            with open(index_file, encoding="utf-8") as f:
                 content = f.read()
             return HTMLResponse(content=content)
-        except (IOError, OSError) as e:
-            raise HTTPException(status_code=500, detail=f"Failed to load dashboard: {e}")
+        except OSError as e:
+            # Log the detailed error server-side, return generic message to client
+            import logging
+
+            logging.error(f"Failed to load dashboard: {e}")
+            raise HTTPException(status_code=500, detail="Failed to load dashboard")
 
     # Placeholder if frontend hasn't been created yet
     placeholder_html = """
@@ -274,11 +460,11 @@ async def dashboard() -> HTMLResponse:
             <div class="endpoints">
                 <h3>Available Endpoints:</h3>
                 <ul>
-                    <li><code>GET /api/agents</code> - Active agents</li>
-                    <li><code>GET /api/locks</code> - Active locks</li>
-                    <li><code>GET /api/messages</code> - Recent messages</li>
-                    <li><code>GET /api/stats</code> - System statistics</li>
-                    <li><code>GET /api/stream</code> - SSE live updates</li>
+                    <li><code>GET /api/v1/agents</code> - Active agents</li>
+                    <li><code>GET /api/v1/locks</code> - Active locks</li>
+                    <li><code>GET /api/v1/messages</code> - Recent messages</li>
+                    <li><code>GET /api/v1/stats</code> - System statistics</li>
+                    <li><code>GET /api/v1/stream</code> - SSE live updates</li>
                     <li><code>GET /docs</code> - API documentation</li>
                 </ul>
             </div>
@@ -289,9 +475,12 @@ async def dashboard() -> HTMLResponse:
     return HTMLResponse(content=placeholder_html)
 
 
-@app.get("/api/agents")
-async def get_agents() -> dict[str, Any]:
+@api_v1.get("/agents")
+async def get_agents(user: str | None = Depends(get_current_user)) -> dict[str, Any]:
     """Get list of active agents.
+
+    Args:
+        user: Authenticated user (if auth configured)
 
     Returns:
         Dictionary containing session info and list of active agents
@@ -311,9 +500,12 @@ async def get_agents() -> dict[str, Any]:
     }
 
 
-@app.get("/api/locks")
-async def get_locks() -> dict[str, Any]:
+@api_v1.get("/locks")
+async def get_locks(user: str | None = Depends(get_current_user)) -> dict[str, Any]:
     """Get list of active file locks.
+
+    Args:
+        user: Authenticated user (if auth configured)
 
     Returns:
         Dictionary containing list of active locks
@@ -325,12 +517,15 @@ async def get_locks() -> dict[str, Any]:
     }
 
 
-@app.get("/api/messages")
-async def get_messages(limit: int = 50) -> dict[str, Any]:
+@api_v1.get("/messages")
+async def get_messages(
+    limit: int = 50, user: str | None = Depends(get_current_user)
+) -> dict[str, Any]:
     """Get recent messages from log file.
 
     Args:
         limit: Maximum number of messages to return (default: 50)
+        user: Authenticated user (if auth configured)
 
     Returns:
         Dictionary containing list of messages and count
@@ -348,9 +543,12 @@ async def get_messages(limit: int = 50) -> dict[str, Any]:
     }
 
 
-@app.get("/api/stats")
-async def get_stats() -> dict[str, Any]:
+@api_v1.get("/stats")
+async def get_stats(user: str | None = Depends(get_current_user)) -> dict[str, Any]:
     """Get aggregated system statistics.
+
+    Args:
+        user: Authenticated user (if auth configured)
 
     Returns:
         Dictionary containing various system metrics
@@ -389,9 +587,12 @@ async def get_stats() -> dict[str, Any]:
     }
 
 
-@app.get("/api/stream")
-async def event_stream() -> StreamingResponse:
+@api_v1.get("/stream")
+async def event_stream(user: str | None = Depends(get_current_user)) -> StreamingResponse:
     """Server-Sent Events endpoint for real-time updates.
+
+    Args:
+        user: Authenticated user (if auth configured)
 
     Returns:
         StreamingResponse with SSE stream
@@ -403,13 +604,17 @@ async def event_stream() -> StreamingResponse:
         Yields:
             SSE formatted event strings
         """
+        import time
+
         tracker = StateTracker()
 
         # Send initial connection event
-        yield f"event: connected\ndata: {json.dumps({'status': 'connected', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+        yield f"event: connected\ndata: {json.dumps({'status': 'connected', 'timestamp': datetime.now(UTC).isoformat()})}\n\n"
 
         while True:
             try:
+                current_time = time.time()
+
                 # Check for changes
                 changes = tracker.check_changes()
 
@@ -428,12 +633,13 @@ async def event_stream() -> StreamingResponse:
                     messages_data = await get_messages(limit=10)  # Send last 10 new messages
                     yield f"event: messages\ndata: {json.dumps(messages_data)}\n\n"
 
-                # Send stats update periodically (every iteration)
+                # Send stats only if changed or as periodic heartbeat (every 5s)
                 stats_data = await get_stats()
-                yield f"event: stats\ndata: {json.dumps(stats_data)}\n\n"
+                if tracker.should_send_stats(stats_data, current_time):
+                    yield f"event: stats\ndata: {json.dumps(stats_data)}\n\n"
 
                 # Send heartbeat
-                yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.utcnow().isoformat()})}\n\n"
+                yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.now(UTC).isoformat()})}\n\n"
 
                 # Wait before next check
                 await asyncio.sleep(1.0)
@@ -442,8 +648,16 @@ async def event_stream() -> StreamingResponse:
                 # Client disconnected
                 break
             except Exception as e:
-                # Log error but continue
-                error_data = {"error": str(e), "timestamp": datetime.utcnow().isoformat()}
+                # Log the full error server-side for debugging
+                import logging
+
+                logging.error(f"SSE stream error: {e}", exc_info=True)
+
+                # Send generic error to client without exposing internal details
+                error_data = {
+                    "error": "An error occurred",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
                 yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
                 await asyncio.sleep(1.0)
 
@@ -458,6 +672,66 @@ async def event_stream() -> StreamingResponse:
     )
 
 
+# Register the v1 API router
+app.include_router(api_v1)
+
+
+# Legacy API redirects for backwards compatibility
+@app.get("/api/agents")
+async def legacy_agents_redirect(
+    request: Request, user: str | None = Depends(get_current_user)
+) -> RedirectResponse:
+    """Redirect legacy /api/agents to /api/v1/agents."""
+    url = "/api/v1/agents"
+    if request.query_params:
+        url += f"?{request.query_params}"
+    return RedirectResponse(url=url, status_code=307)
+
+
+@app.get("/api/locks")
+async def legacy_locks_redirect(
+    request: Request, user: str | None = Depends(get_current_user)
+) -> RedirectResponse:
+    """Redirect legacy /api/locks to /api/v1/locks."""
+    url = "/api/v1/locks"
+    if request.query_params:
+        url += f"?{request.query_params}"
+    return RedirectResponse(url=url, status_code=307)
+
+
+@app.get("/api/messages")
+async def legacy_messages_redirect(
+    request: Request, user: str | None = Depends(get_current_user)
+) -> RedirectResponse:
+    """Redirect legacy /api/messages to /api/v1/messages."""
+    url = "/api/v1/messages"
+    if request.query_params:
+        url += f"?{request.query_params}"
+    return RedirectResponse(url=url, status_code=307)
+
+
+@app.get("/api/stats")
+async def legacy_stats_redirect(
+    request: Request, user: str | None = Depends(get_current_user)
+) -> RedirectResponse:
+    """Redirect legacy /api/stats to /api/v1/stats."""
+    url = "/api/v1/stats"
+    if request.query_params:
+        url += f"?{request.query_params}"
+    return RedirectResponse(url=url, status_code=307)
+
+
+@app.get("/api/stream")
+async def legacy_stream_redirect(
+    request: Request, user: str | None = Depends(get_current_user)
+) -> RedirectResponse:
+    """Redirect legacy /api/stream to /api/v1/stream."""
+    url = "/api/v1/stream"
+    if request.query_params:
+        url += f"?{request.query_params}"
+    return RedirectResponse(url=url, status_code=307)
+
+
 @app.get("/health")
 async def health_check() -> dict[str, Any]:
     """Health check endpoint for monitoring.
@@ -467,7 +741,7 @@ async def health_check() -> dict[str, Any]:
     """
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "files": {
             "agents": ACTIVE_AGENTS_FILE.exists(),
             "messages": AGENT_MESSAGES_LOG.exists(),
@@ -480,9 +754,12 @@ async def health_check() -> dict[str, Any]:
 if __name__ == "__main__":
     import uvicorn
 
+    # Bind to localhost by default for security
+    # To expose to network, set HOST environment variable to "0.0.0.0"
+    host = os.getenv("HOST", "127.0.0.1")
     uvicorn.run(
         "claudeswarm.web.server:app",
-        host="0.0.0.0",
+        host=host,
         port=8000,
         reload=True,
         log_level="info",

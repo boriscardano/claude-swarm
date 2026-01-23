@@ -35,7 +35,6 @@ from claudeswarm.coordination import (
     init_coordination_file,
     update_section,
 )
-from claudeswarm.locking import LockManager
 
 
 @pytest.fixture(autouse=True)
@@ -254,7 +253,7 @@ class TestAtomicUpdates:
     def test_update_is_atomic(self, initialized_coord):
         """Test that updates are atomic (file is never in invalid state)."""
         # This test verifies that temp file + rename pattern is used
-        original_content = initialized_coord.read_file()
+        initialized_coord.read_file()
 
         # Update
         initialized_coord.update_section("Sprint Goals", "- New goal")
@@ -287,9 +286,7 @@ class TestAtomicUpdates:
             try:
                 # Small delay to ensure both try to update around same time
                 time.sleep(0.01)
-                results["agent1"] = coord1.update_section(
-                    "Sprint Goals", "- Goal from agent 1"
-                )
+                results["agent1"] = coord1.update_section("Sprint Goals", "- Goal from agent 1")
             except Exception as e:
                 errors["agent1"] = e
 

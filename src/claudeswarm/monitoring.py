@@ -27,7 +27,6 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Set, Tuple
 
 from claudeswarm.ack import PendingAck, check_pending_acks
 from claudeswarm.discovery import Agent, list_active_agents
@@ -88,9 +87,9 @@ class MessageFilter:
         time_range: If set, only show messages in this time range
     """
 
-    msg_types: Optional[Set[MessageType]] = None
-    agent_ids: Optional[Set[str]] = None
-    time_range: Optional[Tuple[datetime, datetime]] = None
+    msg_types: set[MessageType] | None = None
+    agent_ids: set[str] | None = None
+    time_range: tuple[datetime, datetime] | None = None
 
     def matches(self, message: Message) -> bool:
         """Check if a message matches the filter criteria.
@@ -148,7 +147,7 @@ class LogTailer:
         self._ensure_log_exists()
         self._update_inode()
 
-    def __enter__(self) -> 'LogTailer':
+    def __enter__(self) -> LogTailer:
         """Context manager entry."""
         return self
 
@@ -159,13 +158,13 @@ class LogTailer:
 
     def cleanup(self) -> None:
         """Clean up any open file handles and reset state."""
-        if self._file_handle is not None:
-            try:
+        try:
+            if self._file_handle is not None:
                 self._file_handle.close()
-            except Exception:
-                pass
-            finally:
-                self._file_handle = None
+        except Exception:
+            pass
+        finally:
+            self._file_handle = None
         self.position = 0
         self.last_inode = None
 
@@ -180,7 +179,7 @@ class LogTailer:
             try:
                 stat_info = self.log_path.stat()
                 self.last_inode = stat_info.st_ino
-            except (OSError, IOError):
+            except OSError:
                 self.last_inode = None
 
     def _detect_log_rotation(self) -> bool:
@@ -207,7 +206,7 @@ class LogTailer:
 
             return False
 
-        except (OSError, IOError):
+        except OSError:
             return True
 
     def tail_new_lines(self) -> list[str]:
@@ -227,7 +226,7 @@ class LogTailer:
             self._update_inode()
 
         try:
-            with open(self.log_path, 'r') as f:
+            with open(self.log_path) as f:
                 # Seek to last position
                 f.seek(self.position)
 
@@ -238,12 +237,12 @@ class LogTailer:
                 self.position = f.tell()
 
                 # Strip newlines
-                return [line.rstrip('\n') for line in new_lines]
+                return [line.rstrip("\n") for line in new_lines]
 
-        except (OSError, IOError):
+        except OSError:
             return []
 
-    def parse_log_entry(self, line: str) -> Optional[Message]:
+    def parse_log_entry(self, line: str) -> Message | None:
         """Parse a JSON log entry into a Message object.
 
         Uses Message.from_log_dict() to handle the log file format which uses
@@ -277,7 +276,7 @@ class Monitor:
         self,
         log_path: Path = Path("./agent_messages.log"),
         refresh_interval: float = 2.0,
-        message_filter: Optional[MessageFilter] = None
+        message_filter: MessageFilter | None = None,
     ):
         """Initialize monitor.
 
@@ -294,7 +293,7 @@ class Monitor:
         self.recent_messages: deque[Message] = deque(maxlen=100)
         self.running = False
 
-    def __enter__(self) -> 'Monitor':
+    def __enter__(self) -> Monitor:
         """Context manager entry."""
         return self
 
@@ -325,7 +324,7 @@ class Monitor:
             active_agents=active_agents,
             active_locks=active_locks,
             pending_acks=pending_acks,
-            recent_messages=self.recent_messages
+            recent_messages=self.recent_messages,
         )
 
     def format_with_colors(self, message: Message) -> str:
@@ -352,7 +351,7 @@ class Monitor:
             color = ColorScheme.MAGENTA
 
         # Format timestamp
-        timestamp_str = message.timestamp.strftime('%H:%M:%S')
+        timestamp_str = message.timestamp.strftime("%H:%M:%S")
 
         # Format message with colors
         formatted = (
@@ -380,9 +379,13 @@ class Monitor:
         lines.append("")
 
         # Active agents
-        lines.append(f"{ColorScheme.CYAN}Active Agents: {len(state.active_agents)}{ColorScheme.RESET}")
+        lines.append(
+            f"{ColorScheme.CYAN}Active Agents: {len(state.active_agents)}{ColorScheme.RESET}"
+        )
         for agent in state.active_agents:
-            lines.append(f"  {ColorScheme.GREEN}•{ColorScheme.RESET} {agent.id} ({agent.pane_index})")
+            lines.append(
+                f"  {ColorScheme.GREEN}•{ColorScheme.RESET} {agent.id} ({agent.pane_index})"
+            )
 
         if not state.active_agents:
             lines.append(f"  {ColorScheme.GRAY}No active agents{ColorScheme.RESET}")
@@ -390,7 +393,9 @@ class Monitor:
         lines.append("")
 
         # Active locks
-        lines.append(f"{ColorScheme.MAGENTA}Active Locks: {len(state.active_locks)}{ColorScheme.RESET}")
+        lines.append(
+            f"{ColorScheme.MAGENTA}Active Locks: {len(state.active_locks)}{ColorScheme.RESET}"
+        )
         for lock in state.active_locks[:5]:  # Show max 5
             age = int(lock.age_seconds())
             lines.append(
@@ -399,7 +404,9 @@ class Monitor:
             )
 
         if len(state.active_locks) > 5:
-            lines.append(f"  {ColorScheme.GRAY}... and {len(state.active_locks) - 5} more{ColorScheme.RESET}")
+            lines.append(
+                f"  {ColorScheme.GRAY}... and {len(state.active_locks) - 5} more{ColorScheme.RESET}"
+            )
 
         if not state.active_locks:
             lines.append(f"  {ColorScheme.GRAY}No active locks{ColorScheme.RESET}")
@@ -407,7 +414,9 @@ class Monitor:
         lines.append("")
 
         # Pending ACKs
-        lines.append(f"{ColorScheme.YELLOW}Pending ACKs: {len(state.pending_acks)}{ColorScheme.RESET}")
+        lines.append(
+            f"{ColorScheme.YELLOW}Pending ACKs: {len(state.pending_acks)}{ColorScheme.RESET}"
+        )
         if state.pending_acks:
             for ack in state.pending_acks[:3]:  # Show max 3
                 lines.append(
@@ -418,13 +427,15 @@ class Monitor:
             lines.append(f"  {ColorScheme.GRAY}No pending ACKs{ColorScheme.RESET}")
 
         lines.append("")
-        lines.append(f"{ColorScheme.GRAY}Updated: {datetime.now().strftime('%H:%M:%S')}{ColorScheme.RESET}")
+        lines.append(
+            f"{ColorScheme.GRAY}Updated: {datetime.now().strftime('%H:%M:%S')}{ColorScheme.RESET}"
+        )
 
         return lines
 
     def clear_screen(self) -> None:
         """Clear the terminal screen."""
-        os.system('clear' if os.name != 'nt' else 'cls')
+        os.system("clear" if os.name != "nt" else "cls")  # nosec B605 - safe hardcoded commands
 
     def update_display(self) -> None:
         """Update the monitoring display."""
@@ -447,10 +458,7 @@ class Monitor:
         print(f"{ColorScheme.BOLD}{'=' * 80}{ColorScheme.RESET}\n")
 
         # Display recent messages (filtered)
-        messages_to_show = [
-            msg for msg in self.recent_messages
-            if self.message_filter.matches(msg)
-        ]
+        messages_to_show = [msg for msg in self.recent_messages if self.message_filter.matches(msg)]
 
         # Show last 20 messages
         for message in list(messages_to_show)[-20:]:
@@ -503,14 +511,13 @@ class Monitor:
         # Clear message buffer to free memory
         self.recent_messages.clear()
         # Cleanup tailer resources
-        if hasattr(self, 'tailer') and self.tailer is not None:
+        if hasattr(self, "tailer") and self.tailer is not None:
             self.tailer.cleanup()
 
 
 def create_tmux_monitoring_pane(
-    pane_name: str = "monitoring",
-    layout: str = "main-vertical"
-) -> Optional[str]:
+    pane_name: str = "monitoring", layout: str = "main-vertical"
+) -> str | None:
     """Create a dedicated tmux pane for monitoring.
 
     Args:
@@ -520,36 +527,51 @@ def create_tmux_monitoring_pane(
     Returns:
         Pane ID if successful, None otherwise
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     try:
         # Split current pane vertically
         result = subprocess.run(
-            ['tmux', 'split-window', '-h', '-P', '-F', '#{pane_id}'],
+            ["tmux", "split-window", "-h", "-P", "-F", "#{pane_id}"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
 
         if result.returncode != 0:
+            logger.warning(
+                "Failed to create tmux pane: command returned %d, stderr: %s",
+                result.returncode,
+                result.stderr.strip() if result.stderr else "none",
+            )
             return None
 
         pane_id = result.stdout.strip()
 
         # Resize the pane to 30% width
-        subprocess.run(
-            ['tmux', 'resize-pane', '-t', pane_id, '-x', '30%'],
-            timeout=5
-        )
+        subprocess.run(["tmux", "resize-pane", "-t", pane_id, "-x", "30%"], timeout=5)
 
         return pane_id
 
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.TimeoutExpired as e:
+        logger.warning("Failed to create tmux pane: timeout after %s seconds", e.timeout)
+        return None
+    except subprocess.CalledProcessError as e:
+        logger.warning(
+            "Failed to create tmux pane: CalledProcessError (returncode=%d, stderr=%s)",
+            e.returncode,
+            e.stderr.strip() if e.stderr else "none",
+        )
+        return None
+    except FileNotFoundError:
+        logger.warning("Failed to create tmux pane: tmux command not found")
         return None
 
 
 def start_monitoring(
-    filter_type: Optional[str] = None,
-    filter_agent: Optional[str] = None,
-    use_tmux: bool = True
+    filter_type: str | None = None, filter_agent: str | None = None, use_tmux: bool = True
 ) -> None:
     """Start the monitoring dashboard.
 
@@ -601,26 +623,26 @@ def start_monitoring(
     if use_tmux:
         # Check if tmux is available
         try:
-            subprocess.run(
-                ['tmux', 'list-panes'],
-                capture_output=True,
-                timeout=5,
-                check=True
-            )
+            subprocess.run(["tmux", "list-panes"], capture_output=True, timeout=5, check=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
             raise RuntimeError("tmux is not available or not running")
 
         # Create monitoring pane
         pane_id = create_tmux_monitoring_pane()
         if not pane_id:
-            print("Warning: Failed to create tmux pane, running in current terminal", file=sys.stderr)
+            print(
+                "Warning: Failed to create tmux pane, running in current terminal", file=sys.stderr
+            )
         else:
             # Send monitoring command to the new pane
             # Build command safely with proper escaping to prevent command injection
             cmd_parts = [
-                'cd', shlex.quote(str(Path.cwd())),
-                '&&',
-                'python', '-m', 'claudeswarm.monitoring'
+                "cd",
+                shlex.quote(str(Path.cwd())),
+                "&&",
+                "python",
+                "-m",
+                "claudeswarm.monitoring",
             ]
 
             # Validate and add filter_type if provided
@@ -628,10 +650,12 @@ def start_monitoring(
                 # Validate filter_type is a valid MessageType to prevent injection
                 try:
                     MessageType(filter_type)
-                    cmd_parts.extend(['--filter-type', shlex.quote(filter_type)])
+                    cmd_parts.extend(["--filter-type", shlex.quote(filter_type)])
                 except ValueError:
                     print(f"Error: Invalid message type: {filter_type}", file=sys.stderr)
-                    print(f"Valid types: {', '.join(t.value for t in MessageType)}", file=sys.stderr)
+                    print(
+                        f"Valid types: {', '.join(t.value for t in MessageType)}", file=sys.stderr
+                    )
                     sys.exit(1)
 
             # Validate and add filter_agent if provided
@@ -639,17 +663,14 @@ def start_monitoring(
                 # Validate agent_id format to prevent injection
                 try:
                     validate_agent_id(filter_agent)
-                    cmd_parts.extend(['--filter-agent', shlex.quote(filter_agent)])
+                    cmd_parts.extend(["--filter-agent", shlex.quote(filter_agent)])
                 except ValidationError as e:
                     print(f"Error: Invalid agent ID: {e}", file=sys.stderr)
                     sys.exit(1)
 
-            cmd = ' '.join(cmd_parts)
+            cmd = " ".join(cmd_parts)
 
-            subprocess.run(
-                ['tmux', 'send-keys', '-t', pane_id, cmd, 'C-m'],
-                timeout=5
-            )
+            subprocess.run(["tmux", "send-keys", "-t", pane_id, cmd, "C-m"], timeout=5)
 
             print(f"Monitoring dashboard started in tmux pane {pane_id}")
             return
@@ -664,29 +685,19 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Claude Swarm Monitoring Dashboard")
     parser.add_argument(
-        '--filter-type',
-        type=str,
-        help='Filter messages by type (e.g., BLOCKED, QUESTION)'
+        "--filter-type", type=str, help="Filter messages by type (e.g., BLOCKED, QUESTION)"
     )
+    parser.add_argument("--filter-agent", type=str, help="Filter messages by agent ID")
     parser.add_argument(
-        '--filter-agent',
-        type=str,
-        help='Filter messages by agent ID'
-    )
-    parser.add_argument(
-        '--no-tmux',
-        action='store_true',
-        help='Run in current terminal instead of tmux pane'
+        "--no-tmux", action="store_true", help="Run in current terminal instead of tmux pane"
     )
 
     args = parser.parse_args()
 
     start_monitoring(
-        filter_type=args.filter_type,
-        filter_agent=args.filter_agent,
-        use_tmux=not args.no_tmux
+        filter_type=args.filter_type, filter_agent=args.filter_agent, use_tmux=not args.no_tmux
     )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -56,26 +56,33 @@ Example configuration (.claudeswarm.toml):
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Conditional imports for file format support
 try:
     import tomllib  # Python 3.11+
+
     HAS_TOML = True
 except ImportError:
     try:
         import tomli as tomllib  # Fallback for Python 3.10
+
         HAS_TOML = True
     except ImportError:
         HAS_TOML = False
 
 try:
     import yaml
+
     HAS_YAML = True
 except ImportError:
     HAS_YAML = False
+
+# YAML DoS prevention limits
+MAX_CONFIG_FILE_SIZE_BYTES = 1 * 1024 * 1024  # 1MB
+MAX_YAML_NESTING_DEPTH = 10
 
 __all__ = [
     "RateLimitConfig",
@@ -93,6 +100,7 @@ __all__ = [
 
 class ConfigValidationError(Exception):
     """Raised when configuration validation fails."""
+
     pass
 
 
@@ -104,6 +112,7 @@ class RateLimitConfig:
         messages_per_minute: Maximum number of messages an agent can send per window
         window_seconds: Time window for rate limiting in seconds
     """
+
     messages_per_minute: int = 10
     window_seconds: int = 60
 
@@ -118,9 +127,7 @@ class RateLimitConfig:
                 f"messages_per_minute must be > 0, got {self.messages_per_minute}"
             )
         if self.window_seconds <= 0:
-            raise ConfigValidationError(
-                f"window_seconds must be > 0, got {self.window_seconds}"
-            )
+            raise ConfigValidationError(f"window_seconds must be > 0, got {self.window_seconds}")
         if self.messages_per_minute > 1000:
             raise ConfigValidationError(
                 f"messages_per_minute too high (max 1000), got {self.messages_per_minute}"
@@ -140,6 +147,7 @@ class LockingConfig:
         auto_cleanup: Whether to automatically clean up stale locks
         default_reason: Default reason string for lock acquisition
     """
+
     stale_timeout: int = 300
     auto_cleanup: bool = False
     default_reason: str = "working"
@@ -151,9 +159,7 @@ class LockingConfig:
             ConfigValidationError: If validation fails
         """
         if self.stale_timeout <= 0:
-            raise ConfigValidationError(
-                f"stale_timeout must be > 0, got {self.stale_timeout}"
-            )
+            raise ConfigValidationError(f"stale_timeout must be > 0, got {self.stale_timeout}")
         if self.stale_timeout < 60:
             raise ConfigValidationError(
                 f"stale_timeout too low (min 60s for safety), got {self.stale_timeout}"
@@ -182,8 +188,9 @@ class DiscoveryConfig:
             When True, agents from all projects are visible, which may have security
             implications in multi-tenant or shared environments. Use with caution.
     """
+
     stale_threshold: int = 60
-    auto_refresh_interval: Optional[int] = None
+    auto_refresh_interval: int | None = None
     enable_cross_project_coordination: bool = False
 
     def validate(self) -> None:
@@ -193,9 +200,7 @@ class DiscoveryConfig:
             ConfigValidationError: If validation fails
         """
         if self.stale_threshold <= 0:
-            raise ConfigValidationError(
-                f"stale_threshold must be > 0, got {self.stale_threshold}"
-            )
+            raise ConfigValidationError(f"stale_threshold must be > 0, got {self.stale_threshold}")
         if self.stale_threshold < 10:
             raise ConfigValidationError(
                 f"stale_threshold too low (min 10s), got {self.stale_threshold}"
@@ -224,8 +229,9 @@ class OnboardingConfig:
         custom_messages: Optional list of custom onboarding messages
         auto_onboard: Whether to automatically onboard new agents
     """
+
     enabled: bool = True
-    custom_messages: Optional[List[str]] = None
+    custom_messages: list[str] | None = None
     auto_onboard: bool = False
 
     def validate(self) -> None:
@@ -265,6 +271,7 @@ class DashboardConfig:
         auto_open_browser: Whether to open browser automatically
         refresh_interval: Data refresh interval in seconds
     """
+
     enabled: bool = True
     port: int = 8080
     host: str = "localhost"
@@ -278,9 +285,7 @@ class DashboardConfig:
             ConfigValidationError: If validation fails
         """
         if self.port < 1024 or self.port > 65535:
-            raise ConfigValidationError(
-                f"port must be between 1024-65535, got {self.port}"
-            )
+            raise ConfigValidationError(f"port must be between 1024-65535, got {self.port}")
         if self.refresh_interval < 1:
             raise ConfigValidationError(
                 f"refresh_interval must be >= 1, got {self.refresh_interval}"
@@ -301,12 +306,13 @@ class ClaudeSwarmConfig:
         dashboard: Dashboard configuration
         project_root: Project root directory (None = auto-detect)
     """
+
     rate_limiting: RateLimitConfig = field(default_factory=RateLimitConfig)
     locking: LockingConfig = field(default_factory=LockingConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     onboarding: OnboardingConfig = field(default_factory=OnboardingConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
-    project_root: Optional[Path] = None
+    project_root: Path | None = None
 
     def validate(self) -> None:
         """Validate all configuration sections.
@@ -327,15 +333,11 @@ class ClaudeSwarmConfig:
                 )
             project_path = Path(self.project_root)
             if not project_path.exists():
-                raise ConfigValidationError(
-                    f"project_root does not exist: {project_path}"
-                )
+                raise ConfigValidationError(f"project_root does not exist: {project_path}")
             if not project_path.is_dir():
-                raise ConfigValidationError(
-                    f"project_root is not a directory: {project_path}"
-                )
+                raise ConfigValidationError(f"project_root is not a directory: {project_path}")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert configuration to dictionary.
 
         Returns:
@@ -353,7 +355,33 @@ class ClaudeSwarmConfig:
         return result
 
 
-def _find_config_file(start_path: Optional[Path] = None) -> Optional[Path]:
+def _check_yaml_nesting_depth(
+    obj: Any, current_depth: int = 0, max_depth: int = MAX_YAML_NESTING_DEPTH
+) -> None:
+    """Check that YAML object doesn't exceed maximum nesting depth.
+
+    Prevents DoS attacks via deeply nested structures.
+
+    Args:
+        obj: Object to check (typically from yaml.safe_load)
+        current_depth: Current depth in the object tree
+        max_depth: Maximum allowed depth
+
+    Raises:
+        ConfigValidationError: If nesting depth exceeds max_depth
+    """
+    if current_depth > max_depth:
+        raise ConfigValidationError(f"YAML nesting depth exceeds maximum of {max_depth} levels")
+
+    if isinstance(obj, dict):
+        for value in obj.values():
+            _check_yaml_nesting_depth(value, current_depth + 1, max_depth)
+    elif isinstance(obj, list):
+        for item in obj:
+            _check_yaml_nesting_depth(item, current_depth + 1, max_depth)
+
+
+def _find_config_file(start_path: Path | None = None) -> Path | None:
     """Find configuration file in project directory.
 
     Searches for .claudeswarm.yaml or .claudeswarm.toml in the current
@@ -384,7 +412,7 @@ def _find_config_file(start_path: Optional[Path] = None) -> Optional[Path]:
     return None
 
 
-def _load_yaml_config(path: Path) -> Dict[str, Any]:
+def _load_yaml_config(path: Path) -> dict[str, Any]:
     """Load configuration from YAML file.
 
     Args:
@@ -401,17 +429,36 @@ def _load_yaml_config(path: Path) -> Dict[str, Any]:
             "YAML support not available. Install pyyaml: pip install pyyaml"
         )
 
+    # Check file size to prevent large file DoS attacks
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        file_size = path.stat().st_size
+        if file_size > MAX_CONFIG_FILE_SIZE_BYTES:
+            raise ConfigValidationError(
+                f"Configuration file too large: {file_size} bytes "
+                f"(max {MAX_CONFIG_FILE_SIZE_BYTES} bytes)"
+            )
+    except OSError as e:
+        raise ConfigValidationError(f"Failed to check file size for {path}: {e}") from e
+
+    try:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
+
+            # Validate nesting depth to prevent deeply nested structure DoS attacks
+            if data is not None:
+                _check_yaml_nesting_depth(data)
+
             return data if data is not None else {}
     except yaml.YAMLError as e:
         raise ConfigValidationError(f"Failed to parse YAML file {path}: {e}") from e
+    except ConfigValidationError:
+        # Re-raise our own validation errors
+        raise
     except Exception as e:
         raise ConfigValidationError(f"Failed to load YAML file {path}: {e}") from e
 
 
-def _load_toml_config(path: Path) -> Dict[str, Any]:
+def _load_toml_config(path: Path) -> dict[str, Any]:
     """Load configuration from TOML file.
 
     Args:
@@ -435,7 +482,7 @@ def _load_toml_config(path: Path) -> Dict[str, Any]:
         raise ConfigValidationError(f"Failed to load TOML file {path}: {e}") from e
 
 
-def _merge_config_dict(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def _merge_config_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge configuration dictionaries.
 
     Args:
@@ -456,7 +503,7 @@ def _merge_config_dict(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[s
     return result
 
 
-def _dict_to_config(data: Dict[str, Any]) -> ClaudeSwarmConfig:
+def _dict_to_config(data: dict[str, Any]) -> ClaudeSwarmConfig:
     """Convert dictionary to ClaudeSwarmConfig.
 
     Args:
@@ -489,7 +536,9 @@ def _dict_to_config(data: Dict[str, Any]) -> ClaudeSwarmConfig:
         discovery = DiscoveryConfig(
             stale_threshold=discovery_data.get("stale_threshold", 60),
             auto_refresh_interval=discovery_data.get("auto_refresh_interval"),
-            enable_cross_project_coordination=discovery_data.get("enable_cross_project_coordination", False),
+            enable_cross_project_coordination=discovery_data.get(
+                "enable_cross_project_coordination", False
+            ),
         )
 
         # Extract onboarding config
@@ -527,7 +576,7 @@ def _dict_to_config(data: Dict[str, Any]) -> ClaudeSwarmConfig:
         raise ConfigValidationError(f"Failed to convert dictionary to config: {e}") from e
 
 
-def load_config(config_path: Optional[Path] = None) -> ClaudeSwarmConfig:
+def load_config(config_path: Path | None = None) -> ClaudeSwarmConfig:
     """Load configuration from file or use defaults.
 
     Configuration loading order:
@@ -545,10 +594,10 @@ def load_config(config_path: Optional[Path] = None) -> ClaudeSwarmConfig:
         ConfigValidationError: If configuration is invalid
     """
     # Start with default configuration
-    config_dict: Dict[str, Any] = {}
+    config_dict: dict[str, Any] = {}
 
     # Determine which file to load
-    file_to_load: Optional[Path] = None
+    file_to_load: Path | None = None
 
     if config_path is not None:
         # Explicit path provided
@@ -583,7 +632,7 @@ def load_config(config_path: Optional[Path] = None) -> ClaudeSwarmConfig:
 
 
 # Global configuration singleton
-_config_instance: Optional[ClaudeSwarmConfig] = None
+_config_instance: ClaudeSwarmConfig | None = None
 _config_lock = threading.Lock()
 
 
@@ -606,7 +655,7 @@ def get_config() -> ClaudeSwarmConfig:
     return _config_instance
 
 
-def reload_config(config_path: Optional[Path] = None) -> ClaudeSwarmConfig:
+def reload_config(config_path: Path | None = None) -> ClaudeSwarmConfig:
     """Force reload configuration from disk.
 
     Thread-safe. Useful for testing or when configuration file changes.
