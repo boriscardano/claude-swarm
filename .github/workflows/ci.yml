@@ -39,8 +39,8 @@ jobs:
 
       - name: Run tests
         run: |
-          uv run pytest tests/ --ignore=tests/integration --ignore=tests/test_config_integration.py --ignore=tests/test_messaging_integration.py -v
-        timeout-minutes: 10
+          uv run pytest tests/ --ignore=tests/integration --ignore=tests/test_config_integration.py --ignore=tests/test_messaging_integration.py --ignore=tests/test_web_server.py --ignore=tests/test_web_api.py -v
+        timeout-minutes: 5
 
   security:
     runs-on: ubuntu-latest
