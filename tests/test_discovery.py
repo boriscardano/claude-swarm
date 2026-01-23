@@ -9,6 +9,7 @@ import pytest
 from claudeswarm.discovery import (
     Agent,
     AgentRegistry,
+    TmuxNotRunningError,
     _generate_agent_id,
     _has_claude_child_process,
     _is_claude_code_process,
@@ -134,8 +135,9 @@ class TestTmuxParsing:
     @patch("subprocess.run")
     def test_parse_tmux_panes_success(self, mock_run):
         """Test successful parsing of tmux panes."""
+        # Format: session:window.pane|pid|command|tmux_pane_id
         mock_run.return_value = MagicMock(
-            stdout="main:0.0|1234|claude\nmain:0.1|1235|bash\nmain:0.2|1236|claude-code\n",
+            stdout="main:0.0|1234|claude|%0\nmain:0.1|1235|bash|%1\nmain:0.2|1236|claude-code|%2\n",
             stderr="",
             returncode=0,
         )
@@ -147,6 +149,7 @@ class TestTmuxParsing:
         assert panes[0]["pid"] == 1234
         assert panes[0]["command"] == "claude"
         assert panes[0]["session_name"] == "main"
+        assert panes[0]["tmux_pane_id"] == "%0"
 
     @patch("subprocess.run")
     def test_parse_tmux_panes_no_server(self, mock_run):
@@ -155,7 +158,7 @@ class TestTmuxParsing:
             1, ["tmux"], stderr="no server running on /tmp/tmux-1000/default"
         )
 
-        with pytest.raises(RuntimeError, match="tmux server is not running"):
+        with pytest.raises(TmuxNotRunningError, match="Tmux server is not running"):
             _parse_tmux_panes()
 
     @patch("subprocess.run")
@@ -163,7 +166,7 @@ class TestTmuxParsing:
         """Test handling of tmux command timeout."""
         mock_run.side_effect = subprocess.TimeoutExpired(["tmux"], 5)
 
-        with pytest.raises(RuntimeError, match="tmux command timed out"):
+        with pytest.raises(TmuxNotRunningError, match="timed out"):
             _parse_tmux_panes()
 
     @patch("subprocess.run")
@@ -171,7 +174,7 @@ class TestTmuxParsing:
         """Test handling of tmux not installed."""
         mock_run.side_effect = FileNotFoundError()
 
-        with pytest.raises(RuntimeError, match="tmux is not installed"):
+        with pytest.raises(TmuxNotRunningError, match="not installed"):
             _parse_tmux_panes()
 
     @patch("subprocess.run")
@@ -249,12 +252,17 @@ class TestClaudeCodeDetection:
     @patch("subprocess.run")
     def test_has_claude_child_process_detects_real_claude(self, mock_run):
         """Test that actual Claude Code processes are detected."""
+        # Simulate pgrep output with child PIDs
+        pgrep_output = "100\n101"
         # Simulate ps output with real claude process
-        ps_output = """  PID  PPID COMMAND
-  100  1234 claude --dangerously-skip-permissions
-  101  1234 bash"""
+        ps_output = """100 claude --dangerously-skip-permissions
+101 bash"""
 
-        mock_run.return_value = MagicMock(stdout=ps_output, returncode=0)
+        # pgrep returns child PIDs, then ps returns command details
+        mock_run.side_effect = [
+            MagicMock(stdout=pgrep_output, returncode=0),  # pgrep -P
+            MagicMock(stdout=ps_output, returncode=0),  # ps -p ... -o pid=,command=
+        ]
 
         # Should detect claude as Claude Code
         result = _has_claude_child_process(1234)
@@ -263,12 +271,17 @@ class TestClaudeCodeDetection:
     @patch("subprocess.run")
     def test_has_claude_child_process_detects_claude_with_path(self, mock_run):
         """Test detection of Claude Code with full path."""
+        # Simulate pgrep output with child PIDs
+        pgrep_output = "100\n101"
         # Simulate ps output with claude in a path
-        ps_output = """  PID  PPID COMMAND
-  100  1234 /usr/local/bin/claude --dangerously-skip-permissions
-  101  1234 bash"""
+        ps_output = """100 /usr/local/bin/claude --dangerously-skip-permissions
+101 bash"""
 
-        mock_run.return_value = MagicMock(stdout=ps_output, returncode=0)
+        # pgrep returns child PIDs, then ps returns command details
+        mock_run.side_effect = [
+            MagicMock(stdout=pgrep_output, returncode=0),  # pgrep -P
+            MagicMock(stdout=ps_output, returncode=0),  # ps -p ... -o pid=,command=
+        ]
 
         # Should detect /path/to/claude as Claude Code
         result = _has_claude_child_process(1234)

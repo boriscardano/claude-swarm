@@ -1088,6 +1088,18 @@ DOCUMENTATION & HELP:
 • claudeswarm --help - All available commands
 • COORDINATION.md - Sprint goals and current work assignments
 
+═══════════════════════════════════════════════════════════════════
+🤝 SAY HELLO TO YOUR TEAMMATES!
+═══════════════════════════════════════════════════════════════════
+
+Now that you're connected, introduce yourself to the other agents!
+Send a greeting to let them know you're online and ready to collaborate.
+
+Example:
+  claudeswarm broadcast-message INFO "Hello team! I'm agent-X, ready to help!"
+
+This helps establish communication and confirms messaging is working.
+
 COORDINATION READY! 🎉"""]
 
 
@@ -1124,7 +1136,7 @@ def _send_onboarding_messages(
                 sender_id="system",
                 message_type=MessageType.INFO,
                 content=msg,
-                exclude_self=True,  # System doesn't need its own messages
+                exclude_self=False,  # Include all agents, including the calling agent
             )
 
             delivered = sum(result.values())
@@ -1747,8 +1759,19 @@ def _init_check_and_create_config(project_root: Path, auto_yes: bool) -> None:
         # Ask user if they want to create config
         should_create = auto_yes
         if not auto_yes:
-            response = input("  Create default configuration? [Y/n]: ").strip().lower()
-            should_create = not response or response in ["y", "yes"]
+            # Check if stdin is a TTY (interactive terminal)
+            if sys.stdin.isatty():
+                try:
+                    response = input("  Create default configuration? [Y/n]: ").strip().lower()
+                    should_create = not response or response in ["y", "yes"]
+                except EOFError:
+                    # Non-interactive, default to creating config
+                    print("  (non-interactive mode, creating config)")
+                    should_create = True
+            else:
+                # Non-interactive, default to creating config
+                print("  (non-interactive mode, creating config)")
+                should_create = True
 
         if should_create:
             # Create config using existing cmd_config_init
@@ -1763,58 +1786,243 @@ def _init_check_and_create_config(project_root: Path, auto_yes: bool) -> None:
     print()
 
 
-def _init_check_tmux_status() -> None:
-    """Check tmux installation and running status."""
+def _init_check_tmux_status() -> str:
+    """Check tmux installation and running status.
+
+    Returns:
+        Status string: "running", "not_running", "not_installed", or "error"
+    """
     print("Step 3: Checking tmux...")
     try:
         result = subprocess.run(["tmux", "list-sessions"], capture_output=True, timeout=2)
         if result.returncode == 0:
             sessions = result.stdout.decode().strip().split("\n")
             print(f"✓ tmux is running with {len(sessions)} session(s)")
+            print()
+            return "running"
         else:
             print("⚠ tmux is installed but no sessions are running")
             print("  Tip: Start tmux with: tmux new -s myproject")
+            print()
+            return "not_running"
     except FileNotFoundError:
         print("✗ tmux not found - Install it first!")
         print("  macOS: brew install tmux")
         print("  Linux: apt install tmux / yum install tmux")
+        print()
+        return "not_installed"
     except subprocess.TimeoutExpired:
         print("⚠ tmux command timed out")
+        print()
+        return "error"
     except Exception as e:
         print(f"⚠ Error checking tmux: {e}")
+        print()
+        return "error"
 
-    print()
 
-
-def _init_display_next_steps(project_root: Path) -> None:
+def _init_display_next_steps(project_root: Path, tmux_status: str) -> None:
     """Display next steps for user to complete setup.
 
     Args:
         project_root: Path to project root directory
+        tmux_status: Status from tmux check ("running", "not_running", "not_installed", "error")
     """
     print("=== Next Steps ===")
     print()
-    print("1. Set up tmux session (if not already):")
-    print("   tmux new -s myproject")
-    print()
-    print("2. Split panes and start Claude Code agents:")
-    print("   Ctrl+b %    # Split vertically")
-    print('   Ctrl+b "    # Split horizontally')
-    print()
-    print("3. Discover agents:")
+
+    step = 1
+
+    # Only show tmux setup if not running
+    if tmux_status == "not_installed":
+        print(f"{step}. Install tmux:")
+        print("   macOS: brew install tmux")
+        print("   Linux: apt install tmux / yum install tmux")
+        print()
+        step += 1
+        print(f"{step}. Start a tmux session:")
+        print("   tmux new -s myproject")
+        print()
+        step += 1
+    elif tmux_status == "not_running":
+        print(f"{step}. Start a tmux session:")
+        print("   tmux new -s myproject")
+        print()
+        step += 1
+
+    # Only show pane setup tip if tmux is running (user may need more panes)
+    if tmux_status == "running":
+        print(f"{step}. Split panes for multiple agents (if needed):")
+        print("   Ctrl+b %    # Split vertically")
+        print('   Ctrl+b "    # Split horizontally')
+        print()
+        step += 1
+
+    print(f"{step}. Discover agents:")
     print("   claudeswarm discover-agents")
     print()
-    print("4. Onboard agents (send coordination info):")
+    step += 1
+
+    print(f"{step}. Onboard agents (send coordination info):")
     print("   claudeswarm onboard")
     print()
-    print("5. Start web dashboard:")
+    step += 1
+
+    print(f"{step}. Start web dashboard:")
     print("   claudeswarm start-dashboard")
     print()
+
     print(f"📁 Project root: {project_root}")
-    print(f"📋 Files will be created in: {project_root}")
     print()
     print("For more help: claudeswarm --help")
     print("Documentation: https://github.com/borisbanach/claude-swarm")
+
+
+# Hook script content for automatic message checking
+_HOOK_SCRIPT_CONTENT = '''#!/bin/bash
+#
+# Claude Swarm Message Checker Hook
+#
+# This hook automatically checks for new messages from other agents
+# and injects them into the conversation context before each user prompt.
+#
+# Triggered by: UserPromptSubmit hook in Claude Code
+# Output: Automatically injected into agent's conversation as additional context
+
+set -euo pipefail
+
+# Get current agent ID using whoami command
+AGENT_ID=$(claudeswarm whoami 2>/dev/null | grep "Agent ID:" | awk '{print $3}' || echo "")
+
+# Validate agent ID format
+if [ -n "$AGENT_ID" ]; then
+    if ! [[ "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        exit 0
+    fi
+fi
+
+# Exit silently if not in a tmux pane or no agent ID
+if [ -z "$AGENT_ID" ]; then
+  exit 0
+fi
+
+# Optional debug logging
+if [ "${CLAUDESWARM_DEBUG:-0}" = "1" ]; then
+    echo "[DEBUG] check-for-messages.sh executed for agent: $AGENT_ID" >&2
+fi
+
+# Check for messages (only show unread/recent ones)
+# Limit to 3 most recent messages to avoid context bloat
+# Add timeout to prevent hanging
+MESSAGES=$(timeout 5s claudeswarm check-messages --limit 3 2>/dev/null || echo "")
+
+# Only output if there are actual messages
+# Use pattern matching instead of exact string comparison
+if [ -n "$MESSAGES" ] && [[ ! "$MESSAGES" =~ ^No\\ messages ]]; then
+  echo "╔════════════════════════════════════════════════════════════════╗"
+  echo "║  📬 NEW MESSAGES FROM OTHER AGENTS                             ║"
+  echo "╚════════════════════════════════════════════════════════════════╝"
+  echo ""
+  printf '%s\\n' "$MESSAGES"
+  echo ""
+  echo "───────────────────────────────────────────────────────────────"
+fi
+
+exit 0
+'''
+
+
+def _init_setup_hooks(project_root: Path, auto_yes: bool) -> None:
+    """Set up Claude Code hooks for automatic message checking.
+
+    Creates the hooks directory, writes the check-for-messages.sh script,
+    and configures settings.json to trigger the hook on UserPromptSubmit.
+
+    Args:
+        project_root: Path to project root directory
+        auto_yes: Whether to auto-accept prompts
+    """
+    print("Step 4: Setting up message hooks...")
+
+    hooks_dir = project_root / ".claude" / "hooks"
+    hook_script = hooks_dir / "check-for-messages.sh"
+    settings_file = project_root / ".claude" / "settings.json"
+
+    # Check if hooks already exist
+    if hook_script.exists():
+        print(f"✓ Hook script already exists: {hook_script}")
+        # Still check if settings.json has the hook configured
+        _ensure_hook_in_settings(settings_file)
+        print()
+        return
+
+    # Ask user if they want to set up hooks
+    should_setup = auto_yes
+    if not auto_yes:
+        if sys.stdin.isatty():
+            try:
+                response = input("  Set up automatic message checking? [Y/n]: ").strip().lower()
+                should_setup = not response or response in ["y", "yes"]
+            except EOFError:
+                print("  (non-interactive mode, setting up hooks)")
+                should_setup = True
+        else:
+            print("  (non-interactive mode, setting up hooks)")
+            should_setup = True
+
+    if not should_setup:
+        print("  Skipping hook setup")
+        print()
+        return
+
+    # Create hooks directory
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write hook script
+    hook_script.write_text(_HOOK_SCRIPT_CONTENT)
+    hook_script.chmod(0o755)
+    print(f"✓ Created hook script: {hook_script}")
+
+    # Configure settings.json
+    _ensure_hook_in_settings(settings_file)
+    print()
+
+
+def _ensure_hook_in_settings(settings_file: Path) -> None:
+    """Ensure the message hook is configured in settings.json.
+
+    Args:
+        settings_file: Path to .claude/settings.json
+    """
+    hook_entry = {
+        "type": "command",
+        "command": "./.claude/hooks/check-for-messages.sh",
+    }
+
+    if settings_file.exists():
+        try:
+            settings = json.loads(settings_file.read_text())
+        except json.JSONDecodeError:
+            print(f"  Warning: Could not parse {settings_file}, skipping hook config")
+            return
+
+        hooks = settings.setdefault("hooks", {})
+        user_prompt_hooks = hooks.setdefault("UserPromptSubmit", [])
+
+        # Check if hook already exists
+        if any(h.get("command") == hook_entry["command"] for h in user_prompt_hooks):
+            print(f"✓ Hook already configured in {settings_file}")
+            return
+
+        user_prompt_hooks.append(hook_entry)
+        settings_file.write_text(json.dumps(settings, indent=2) + "\n")
+        print(f"✓ Added hook to {settings_file}")
+    else:
+        # Create new settings file with hook
+        settings_file.parent.mkdir(parents=True, exist_ok=True)
+        settings = {"hooks": {"UserPromptSubmit": [hook_entry]}}
+        settings_file.write_text(json.dumps(settings, indent=2) + "\n")
+        print(f"✓ Created {settings_file} with hook config")
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -1823,7 +2031,9 @@ def cmd_init(args: argparse.Namespace) -> None:
     This command helps users set up Claude Swarm by:
     1. Detecting the project root
     2. Creating config file if needed
-    3. Showing next steps
+    3. Checking tmux status
+    4. Setting up message hooks for auto-checking
+    5. Showing next steps
 
     Args:
         args: Parsed command-line arguments
@@ -1842,10 +2052,13 @@ def cmd_init(args: argparse.Namespace) -> None:
     _init_check_and_create_config(project_root, args.yes)
 
     # Step 3: Check tmux status
-    _init_check_tmux_status()
+    tmux_status = _init_check_tmux_status()
 
-    # Step 4: Display next steps
-    _init_display_next_steps(project_root)
+    # Step 4: Set up message hooks
+    _init_setup_hooks(project_root, args.yes)
+
+    # Step 5: Display next steps (adapts based on what's already set up)
+    _init_display_next_steps(project_root, tmux_status)
 
     sys.exit(0)
 

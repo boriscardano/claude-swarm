@@ -380,12 +380,39 @@ def _has_claude_child_process(pid: int) -> bool:
         if result.returncode not in (0, 1):
             return False
 
-        # No child processes found
+        # No child processes found via pgrep - try ps fallback
+        # On macOS, pgrep -P can fail to find children for certain process states
+        # (e.g., foreground processes in the current terminal)
         if not result.stdout.strip():
-            return False
+            # Fallback: use ps to find children
+            ps_fallback = subprocess.run(
+                ["ps", "-o", "pid=,ppid="],
+                capture_output=True,
+                text=True,
+                timeout=PS_BATCH_TIMEOUT_SECONDS,
+                env={**os.environ, "LC_ALL": "C"},
+            )
+            if ps_fallback.returncode != 0:
+                return False
 
-        # Get command line for each child process using ps
-        child_pids = result.stdout.strip().split("\n")
+            child_pids_from_ps = []
+            for line in ps_fallback.stdout.strip().split("\n"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        child_pid, parent_pid = int(parts[0]), int(parts[1])
+                        if parent_pid == pid and child_pid != our_pid:
+                            child_pids_from_ps.append(str(child_pid))
+                    except ValueError:
+                        continue
+
+            if not child_pids_from_ps:
+                return False
+
+            # Use ps fallback results
+            child_pids = child_pids_from_ps
+        else:
+            child_pids = result.stdout.strip().split("\n")
 
         # ========================================================================
         # OPTIMIZED BATCH PS CALL STRATEGY
