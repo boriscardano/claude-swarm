@@ -1088,6 +1088,18 @@ DOCUMENTATION & HELP:
 • claudeswarm --help - All available commands
 • COORDINATION.md - Sprint goals and current work assignments
 
+═══════════════════════════════════════════════════════════════════
+🤝 SAY HELLO TO YOUR TEAMMATES!
+═══════════════════════════════════════════════════════════════════
+
+Now that you're connected, introduce yourself to the other agents!
+Send a greeting to let them know you're online and ready to collaborate.
+
+Example:
+  claudeswarm broadcast-message INFO "Hello team! I'm agent-X, ready to help!"
+
+This helps establish communication and confirms messaging is working.
+
 COORDINATION READY! 🎉"""]
 
 
