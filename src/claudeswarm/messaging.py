@@ -23,6 +23,7 @@ import json
 import shlex
 import subprocess
 import threading
+import time
 import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -614,6 +615,9 @@ class TmuxMessageDelivery:
                     raise TmuxError(f"Failed to send command to pane {pane_id}: {result.stderr}")
 
             # Send Enter key separately to execute the command
+            # Add small delay to ensure message text is processed before Enter
+            time.sleep(0.1)
+
             result = subprocess.run(
                 ["tmux", "send-keys", "-t", pane_id, "Enter"],
                 capture_output=True,
