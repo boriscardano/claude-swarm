@@ -724,7 +724,7 @@ class TestRetryLogic:
         with patch("time.sleep"):  # Speed up test
             import logging
 
-            with caplog.at_level(logging.DEBUG):
+            with caplog.at_level(logging.DEBUG, logger="claudeswarm.locking"):
                 with patch.object(lock_manager, "_write_lock", side_effect=mock_write):
                     success, conflict = lock_manager.acquire_lock(
                         filepath=filepath, agent_id="agent-1", reason="test logging"
