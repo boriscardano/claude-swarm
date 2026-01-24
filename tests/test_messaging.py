@@ -337,16 +337,15 @@ class TestTmuxMessageDelivery:
         with pytest.raises(TmuxError):
             TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
 
-    @patch("subprocess.run")
-    def test_send_to_pane_timeout(self, mock_run):
-        """Test timeout handling in message delivery."""
-        import subprocess
+    @patch.object(TmuxMessageDelivery, "_send_to_pane_once")
+    def test_send_to_pane_timeout(self, mock_send_once):
+        """Test timeout handling in message delivery.
 
-        # First call (verify) succeeds, second call (send-keys) times out
-        mock_run.side_effect = [
-            Mock(returncode=0, stderr="", stdout="session:0.1\n"),  # verify succeeds
-            subprocess.TimeoutExpired("tmux", 5),  # send-keys times out
-        ]
+        Note: We mock _send_to_pane_once because send_to_pane now includes
+        retry logic that would require multiple subprocess.run mocks.
+        """
+        # Simulate timeout on all attempts (exhausts retries)
+        mock_send_once.side_effect = TmuxTimeoutError("Timeout sending to pane")
 
         with pytest.raises(TmuxTimeoutError):
             TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
