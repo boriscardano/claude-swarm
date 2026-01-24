@@ -127,7 +127,8 @@ def _calculate_tmux_backoff(attempt: int) -> float:
     base_delay = TMUX_INITIAL_RETRY_DELAY * (2**attempt)
     base_delay = min(base_delay, TMUX_MAX_RETRY_DELAY)
     jitter = base_delay * TMUX_JITTER_FACTOR * (2 * random.random() - 1)
-    return max(0.01, base_delay + jitter)
+    delay_with_jitter = base_delay + jitter
+    return max(0.01, min(delay_with_jitter, TMUX_MAX_RETRY_DELAY))
 
 
 def _is_transient_tmux_error(error_msg: str) -> bool:
@@ -805,7 +806,7 @@ class TmuxMessageDelivery:
                 return False
 
             # Check if our pane_id is in the list
-            panes = result.stdout.strip().split("\n")
+            panes = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
             exists = pane_id in panes
             logger.debug(f"Pane {pane_id} exists: {exists}")
             return exists
@@ -1243,7 +1244,6 @@ class MessagingSystem:
             )
 
         except Exception as e:
-            str(e)
             logger.error(
                 f"Unexpected error delivering message {message.msg_id} to {recipient_id}: {e}"
             )

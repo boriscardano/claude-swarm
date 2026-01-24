@@ -1367,14 +1367,18 @@ def cmd_acknowledge_message(args: argparse.Namespace) -> None:
 
     msg_id = args.msg_id
 
-    if acknowledge_message(msg_id, agent_id):
-        # Show short ID for display
-        short_id = msg_id[:8] if len(msg_id) > 8 else msg_id
-        print(f"ACK sent for message {short_id}")
-        sys.exit(0)
-    else:
-        short_id = msg_id[:8] if len(msg_id) > 8 else msg_id
-        print(f"Message {short_id} not found in pending ACKs", file=sys.stderr)
+    # Calculate short ID once (fix duplicate calculation)
+    short_id = msg_id[:8] if len(msg_id) > 8 else msg_id
+
+    try:
+        if acknowledge_message(msg_id, agent_id):
+            print(f"ACK sent for message {short_id}")
+            sys.exit(0)
+        else:
+            print(f"Message {short_id} not found in pending ACKs", file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        print(f"Error acknowledging message: {e}", file=sys.stderr)
         sys.exit(1)
 
 
