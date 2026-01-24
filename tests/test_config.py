@@ -783,7 +783,8 @@ class TestYAMLNestingDepthIntegration:
             pytest.skip("YAML not available")
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
-            tmp.write("""
+            tmp.write(
+                """
 rate_limiting:
   messages_per_minute: 20
   window_seconds: 60
@@ -795,7 +796,8 @@ locking:
 
 discovery:
   stale_threshold: 60
-""")
+"""
+            )
             tmp.flush()
             tmp_path = Path(tmp.name)
 
