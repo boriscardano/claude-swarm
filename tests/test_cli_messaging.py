@@ -68,7 +68,7 @@ class TestSendMessageCommand:
         )
 
         captured = capsys.readouterr()
-        assert "Message sent to inbox: agent-2" in captured.out
+        assert "[QUEUED] Message saved to agent-2's inbox" in captured.out
 
     @patch("claudeswarm.messaging.send_message")
     @patch("claudeswarm.cli.validate_agent_id")
