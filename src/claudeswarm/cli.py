@@ -515,6 +515,7 @@ def cmd_send_message(args: argparse.Namespace) -> None:
         args.type: Message type (case-insensitive, supports hyphens and underscores)
         args.content: Message content to send
         args.json: Whether to output JSON format
+        args.ack: Whether to request acknowledgment with automatic retry
 
     Exit Codes:
         0: Success - message sent
@@ -545,6 +546,21 @@ def cmd_send_message(args: argparse.Namespace) -> None:
             print("  (case-insensitive, use hyphens or underscores)", file=sys.stderr)
             sys.exit(1)
 
+        # Check if ACK is requested
+        if getattr(args, "ack", False):
+            from claudeswarm.ack import send_with_ack
+
+            msg_id = send_with_ack(
+                validated_sender, validated_recipient, msg_type, sanitized_content
+            )
+            if msg_id:
+                print(f"[ACK-REQUIRED] Message sent to {args.recipient_id} (ID: {msg_id[:8]})")
+                print("  Will auto-retry if not acknowledged within 30s")
+                sys.exit(0)
+            else:
+                print("Failed to send message with ACK", file=sys.stderr)
+                sys.exit(1)
+
         # Send message (messaging layer validates recipient exists via _get_agent_pane)
         message = send_message(
             sender_id=validated_sender,
@@ -556,10 +572,10 @@ def cmd_send_message(args: argparse.Namespace) -> None:
         if message:
             delivered = message.to_dict().get("delivery_status", {}).get(validated_recipient, False)
             if delivered:
-                print(f"✓ Message delivered to {args.recipient_id} (real-time)")
+                print(f"[DELIVERED] Message sent to {args.recipient_id}")
             else:
-                print(f"✓ Message sent to inbox: {args.recipient_id}")
-                print("  ℹ️  Message logged to inbox (real-time delivery attempted)")
+                print(f"[QUEUED] Message saved to {args.recipient_id}'s inbox")
+                print("  (Will be seen on their next check-messages)")
             if args.json:
                 # Serialize JSON and fail hard if serialization fails
                 try:
@@ -1314,7 +1330,52 @@ def cmd_check_messages(args: argparse.Namespace) -> None:
     if len(my_messages) > limit:
         print(f"({len(my_messages) - limit} older messages not shown. Use --limit to see more)")
 
+    # Process pending ACK retries (runs periodically via check-messages hook)
+    try:
+        from claudeswarm.ack import process_pending_retries
+
+        retried = process_pending_retries()
+        if retried > 0:
+            logger.info(f"Processed {retried} pending message retries")
+    except Exception as e:
+        logger.debug(f"ACK processing skipped: {e}")
+
     sys.exit(0)
+
+
+def cmd_acknowledge_message(args: argparse.Namespace) -> None:
+    """Acknowledge receipt of a message.
+
+    This removes the message from the sender's pending ACK list,
+    preventing automatic retries and escalation.
+
+    Args:
+        args.msg_id: Message ID to acknowledge
+
+    Exit Codes:
+        0: Success - message acknowledged
+        1: Error - message not found or not pending
+    """
+    from claudeswarm.ack import acknowledge_message
+
+    # Get current agent ID
+    agent_id, _ = _detect_current_agent()
+    if not agent_id:
+        print("Error: Could not detect current agent identity", file=sys.stderr)
+        print("Please run 'claudeswarm whoami' to verify registration", file=sys.stderr)
+        sys.exit(1)
+
+    msg_id = args.msg_id
+
+    if acknowledge_message(msg_id, agent_id):
+        # Show short ID for display
+        short_id = msg_id[:8] if len(msg_id) > 8 else msg_id
+        print(f"ACK sent for message {short_id}")
+        sys.exit(0)
+    else:
+        short_id = msg_id[:8] if len(msg_id) > 8 else msg_id
+        print(f"Message {short_id} not found in pending ACKs", file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_whoami(args: argparse.Namespace) -> None:
@@ -2180,6 +2241,11 @@ def main() -> NoReturn:
         help="ID of sending agent (auto-detected if omitted)",
     )
     send_parser.add_argument("--json", action="store_true", help="Output in JSON format")
+    send_parser.add_argument(
+        "--ack",
+        action="store_true",
+        help="Request acknowledgment with automatic retry if unacknowledged",
+    )
     send_parser.set_defaults(func=cmd_send_message)
 
     # broadcast-message command
@@ -2238,6 +2304,14 @@ def main() -> NoReturn:
         help="Agent ID to check messages for (auto-detected if omitted)",
     )
     check_messages_parser.set_defaults(func=cmd_check_messages)
+
+    # acknowledge-message command
+    ack_parser = subparsers.add_parser(
+        "acknowledge-message",
+        help="Acknowledge receipt of a message (stops retry attempts)",
+    )
+    ack_parser.add_argument("msg_id", help="Message ID to acknowledge")
+    ack_parser.set_defaults(func=cmd_acknowledge_message)
 
     # acquire-file-lock command
     acquire_parser = subparsers.add_parser(

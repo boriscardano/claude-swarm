@@ -95,12 +95,64 @@ REGISTRY_READ_LOCK_TIMEOUT_SECONDS = 5.0
 # Prevents accidental DOS from broadcasting to huge agent lists
 MAX_BROADCAST_RECIPIENTS = 100
 
+# Retry configuration for tmux operations
+# Handles transient failures (socket issues, timeouts) with exponential backoff
+MAX_TMUX_RETRIES = 3
+TMUX_INITIAL_RETRY_DELAY = 0.1
+TMUX_MAX_RETRY_DELAY = 1.0
+TMUX_JITTER_FACTOR = 0.25
+
 # Cleanup interval for inactive agent rate limiters (seconds)
 # Remove rate limit tracking for agents inactive for 1 hour
 RATE_LIMITER_CLEANUP_SECONDS = 3600
 
 # Configure logging
 logger = get_logger(__name__)
+
+
+def _calculate_tmux_backoff(attempt: int) -> float:
+    """Calculate retry delay with exponential backoff and jitter.
+
+    Uses exponential backoff (0.1s, 0.2s, 0.4s...) capped at 1s,
+    with random jitter (±25%) to prevent thundering herd.
+
+    Args:
+        attempt: Zero-based attempt number (0 = first retry)
+
+    Returns:
+        Delay in seconds before next retry attempt
+    """
+    import random
+
+    base_delay = TMUX_INITIAL_RETRY_DELAY * (2**attempt)
+    base_delay = min(base_delay, TMUX_MAX_RETRY_DELAY)
+    jitter = base_delay * TMUX_JITTER_FACTOR * (2 * random.random() - 1)
+    return max(0.01, base_delay + jitter)
+
+
+def _is_transient_tmux_error(error_msg: str) -> bool:
+    """Check if error is transient and worth retrying.
+
+    Transient errors are temporary conditions that may resolve on retry:
+    - Server not responding (tmux server busy/overloaded)
+    - Connection refused (socket temporarily unavailable)
+    - Resource temporarily unavailable (system under load)
+    - Timed out (operation took too long)
+
+    Args:
+        error_msg: Error message string to analyze
+
+    Returns:
+        True if error appears transient and retry may succeed
+    """
+    transient_patterns = [
+        "server not responding",
+        "connection refused",
+        "resource temporarily unavailable",
+        "timed out",
+    ]
+    error_lower = error_msg.lower()
+    return any(p in error_lower for p in transient_patterns)
 
 
 # Custom exceptions
@@ -553,10 +605,71 @@ class TmuxMessageDelivery:
     def send_to_pane(
         pane_id: str, message: str, timeout: float = DIRECT_MESSAGE_TIMEOUT_SECONDS
     ) -> bool:
-        """Send message to a specific tmux pane.
+        """Send message to a specific tmux pane with retry on transient failures.
+
+        Wraps _send_to_pane_once with automatic retry logic for transient errors
+        (timeouts, socket errors). Permanent failures (pane not found) are not retried.
 
         Args:
-            pane_id: tmux pane identifier (e.g., "session:0.1")
+            pane_id: tmux pane identifier (e.g., "session:0.1" or "%N")
+            message: Message text to send
+            timeout: Timeout in seconds for tmux operations (default: 10.0)
+
+        Returns:
+            True if successful
+
+        Raises:
+            TmuxPaneNotFoundError: If pane doesn't exist (not retried)
+            TmuxSocketError: If tmux socket is inaccessible after all retries
+            TmuxTimeoutError: If operation times out after all retries
+            TmuxError: For other tmux errors
+        """
+        last_exception: Exception | None = None
+
+        for attempt in range(MAX_TMUX_RETRIES + 1):
+            try:
+                return TmuxMessageDelivery._send_to_pane_once(pane_id, message, timeout)
+            except TmuxPaneNotFoundError:
+                # Permanent failure - pane doesn't exist, don't retry
+                raise
+            except (TmuxTimeoutError, TmuxSocketError) as e:
+                last_exception = e
+                if attempt < MAX_TMUX_RETRIES:
+                    delay = _calculate_tmux_backoff(attempt)
+                    logger.info(
+                        f"Tmux error, retrying ({attempt + 1}/{MAX_TMUX_RETRIES}) "
+                        f"after {delay:.2f}s: {e}"
+                    )
+                    time.sleep(delay)
+            except TmuxError as e:
+                # Check if this is a transient error worth retrying
+                if _is_transient_tmux_error(str(e)) and attempt < MAX_TMUX_RETRIES:
+                    last_exception = e
+                    delay = _calculate_tmux_backoff(attempt)
+                    logger.info(
+                        f"Transient error, retrying ({attempt + 1}/{MAX_TMUX_RETRIES}): {e}"
+                    )
+                    time.sleep(delay)
+                else:
+                    raise
+
+        # All retries exhausted
+        if last_exception:
+            raise last_exception
+        # This shouldn't happen, but satisfy type checker
+        raise TmuxError("Send failed after all retries")
+
+    @staticmethod
+    def _send_to_pane_once(
+        pane_id: str, message: str, timeout: float = DIRECT_MESSAGE_TIMEOUT_SECONDS
+    ) -> bool:
+        """Send message to a specific tmux pane (single attempt, no retry).
+
+        Internal method that performs one delivery attempt. Use send_to_pane()
+        for automatic retry handling.
+
+        Args:
+            pane_id: tmux pane identifier (e.g., "session:0.1" or "%N")
             message: Message text to send
             timeout: Timeout in seconds for tmux operations (default: 10.0)
 
@@ -652,8 +765,12 @@ class TmuxMessageDelivery:
     def verify_pane_exists(pane_id: str, timeout: float = TMUX_VERIFY_TIMEOUT_SECONDS) -> bool:
         """Verify that a tmux pane exists.
 
+        Supports both pane ID formats:
+        - session:window.pane format (e.g., "0:1.0")
+        - %N format (e.g., "%5") - stable internal pane ID
+
         Args:
-            pane_id: tmux pane identifier
+            pane_id: tmux pane identifier in either format
             timeout: Timeout in seconds for tmux operation
 
         Returns:
@@ -664,8 +781,16 @@ class TmuxMessageDelivery:
             to avoid raising exceptions during validation checks.
         """
         try:
+            # Use different format string based on pane_id format
+            if pane_id.startswith("%"):
+                # Use pane_id format (%N) for matching - more stable
+                format_str = "#{pane_id}"
+            else:
+                # Use session:window.pane format for matching
+                format_str = "#{session_name}:#{window_index}.#{pane_index}"
+
             result = subprocess.run(
-                ["tmux", "list-panes", "-a", "-F", "#{session_name}:#{window_index}.#{pane_index}"],
+                ["tmux", "list-panes", "-a", "-F", format_str],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -681,7 +806,7 @@ class TmuxMessageDelivery:
 
             # Check if our pane_id is in the list
             panes = result.stdout.strip().split("\n")
-            exists = pane_id in panes or any(pane_id in p for p in panes)
+            exists = pane_id in panes
             logger.debug(f"Pane {pane_id} exists: {exists}")
             return exists
 
@@ -934,6 +1059,10 @@ class MessagingSystem:
         for agent in registry.agents:
             if agent.id == agent_id:
                 if agent.status == "active":
+                    # Prefer stable tmux_pane_id (%N format) if available
+                    # Falls back to pane_index for backward compatibility
+                    if agent.tmux_pane_id:
+                        return agent.tmux_pane_id
                     return agent.pane_index
                 else:
                     raise AgentNotFoundError(
@@ -1108,9 +1237,9 @@ class MessagingSystem:
         except (TmuxError, TmuxSocketError, TmuxPaneNotFoundError, TmuxTimeoutError) as e:
             # Tmux errors are expected in sandboxed environments
             # Don't raise - just log to file and continue
-            str(e)
-            logger.debug(
-                f"Tmux delivery unavailable for message {message.msg_id} to {recipient_id}: {e}"
+            # Log at INFO level so delivery failures are visible
+            logger.info(
+                f"Real-time delivery failed for {recipient_id}, saved to inbox: {type(e).__name__}"
             )
 
         except Exception as e:
@@ -1307,10 +1436,11 @@ class MessagingSystem:
         for recipient_id in recipients:
             try:
                 # Get pane without raising (handle gracefully for broadcast)
+                # Prefer stable tmux_pane_id (%N format) if available
                 pane_id = None
                 for agent in registry.agents:
                     if agent.id == recipient_id and agent.status == "active":
-                        pane_id = agent.pane_index
+                        pane_id = agent.tmux_pane_id or agent.pane_index
                         break
 
                 if not pane_id:
