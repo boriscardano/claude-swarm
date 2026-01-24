@@ -765,7 +765,7 @@ pip install pyyaml tomli tomli-w
 
 - [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md) - Integration instructions
 - [TUTORIAL.md](TUTORIAL.md) - Step-by-step tutorial
-- [QUICK_REFERENCE.md](QUICK_REFERENCE.md) - Command reference
+- [AGENT_QUICK_REFERENCE.md](AGENT_QUICK_REFERENCE.md) - Command reference
 - [README.md](../README.md) - Main documentation
 
 ---

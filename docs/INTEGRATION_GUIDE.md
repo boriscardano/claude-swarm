@@ -22,10 +22,10 @@ Install directly from GitHub as a Python package:
 
 ```bash
 cd ~/work/your-project
-pip install git+https://github.com/borisbanach/claude-swarm.git
+pip install git+https://github.com/boriscardano/claude-swarm.git
 
 # Or with uv
-uv pip install git+https://github.com/borisbanach/claude-swarm.git
+uv pip install git+https://github.com/boriscardano/claude-swarm.git
 ```
 
 **Pros:**
@@ -44,7 +44,7 @@ Clone claude-swarm in a separate location and install in editable mode:
 ```bash
 # Clone outside your project
 cd ~/tools  # or any directory outside your project
-git clone https://github.com/borisbanach/claude-swarm.git
+git clone https://github.com/boriscardano/claude-swarm.git
 cd claude-swarm
 
 # Install in editable mode
@@ -69,7 +69,7 @@ claudeswarm discover-agents
 
 ```bash
 cd ~/work/your-project
-git clone https://github.com/borisbanach/claude-swarm.git
+git clone https://github.com/boriscardano/claude-swarm.git
 cd claude-swarm
 pip install -e .
 ```
@@ -158,7 +158,7 @@ Here's the fastest way to get started:
 
 ```bash
 # Choose your preferred method (Method 1 recommended)
-pip install git+https://github.com/borisbanach/claude-swarm.git
+pip install git+https://github.com/boriscardano/claude-swarm.git
 ```
 
 ### 2. Update Your .gitignore
@@ -378,7 +378,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install git+https://github.com/borisbanach/claude-swarm.git
+          pip install git+https://github.com/boriscardano/claude-swarm.git
           sudo apt-get install tmux
 
       - name: Run multi-agent tests
@@ -451,12 +451,12 @@ tail -f agent_messages.log
 
 - **Full Protocol**: See [docs/AGENT_PROTOCOL.md](AGENT_PROTOCOL.md)
 - **Tutorial**: See [docs/TUTORIAL.md](TUTORIAL.md)
-- **Quick Reference**: See [docs/QUICK_REFERENCE.md](QUICK_REFERENCE.md)
+- **Quick Reference**: See [docs/AGENT_QUICK_REFERENCE.md](AGENT_QUICK_REFERENCE.md)
 - **Examples**: See [examples/README.md](../examples/README.md)
 
 For issues and contributions:
-- GitHub Issues: https://github.com/borisbanach/claude-swarm/issues
-- GitHub Repo: https://github.com/borisbanach/claude-swarm
+- GitHub Issues: https://github.com/boriscardano/claude-swarm/issues
+- GitHub Repo: https://github.com/boriscardano/claude-swarm
 
 ---
 
@@ -464,7 +464,7 @@ For issues and contributions:
 
 **Recommended Setup:**
 
-1. Install as package: `pip install git+https://github.com/borisbanach/claude-swarm.git`
+1. Install as package: `pip install git+https://github.com/boriscardano/claude-swarm.git`
 2. Update `.gitignore` with coordination files
 3. (Optional) Configure: `claudeswarm config init`
 4. Create tmux session with multiple panes

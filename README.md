@@ -20,7 +20,7 @@ Claude Swarm enables multiple Claude Code agents to work together on the same co
 
 ```bash
 # 1. Install (one command, works immediately!)
-uv tool install git+https://github.com/borisbanach/claude-swarm.git
+uv tool install git+https://github.com/boriscardano/claude-swarm.git
 
 # 2. Go to your project
 cd /path/to/your/project
@@ -67,7 +67,7 @@ Clone and set up for development or testing:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/borisbanach/claude-swarm.git
+git clone https://github.com/boriscardano/claude-swarm.git
 cd claude-swarm
 
 # 2. Install dependencies with uv
@@ -90,13 +90,13 @@ Install globally and use from any directory:
 
 ```bash
 # Option A: Install with uv tool (recommended - works immediately!)
-uv tool install git+https://github.com/borisbanach/claude-swarm.git
+uv tool install git+https://github.com/boriscardano/claude-swarm.git
 
 # Option B: Install with uv pip (requires PATH setup)
-uv pip install --system git+https://github.com/borisbanach/claude-swarm.git
+uv pip install --system git+https://github.com/boriscardano/claude-swarm.git
 
 # Option C: Install with pip
-pip install git+https://github.com/borisbanach/claude-swarm.git
+pip install git+https://github.com/boriscardano/claude-swarm.git
 
 # Verify installation
 claudeswarm --help
@@ -336,7 +336,7 @@ For complete configuration reference, see [Configuration Guide](docs/CONFIGURATI
 
 1. **Install Claude Swarm**
    ```bash
-   uv tool install git+https://github.com/borisbanach/claude-swarm.git
+   uv tool install git+https://github.com/boriscardano/claude-swarm.git
    ```
 
 2. **Update Your .gitignore**
@@ -463,7 +463,7 @@ Current test statistics (as of 2025-11-18):
 - **75% coverage** on discovery module
 - **70% coverage** on messaging module
 
-See [TEST_COVERAGE_SUMMARY.md](TEST_COVERAGE_SUMMARY.md) for the latest test coverage report and [TEST_REPORT.md](TEST_REPORT.md) for detailed test analysis.
+Run `pytest --cov` for the latest test coverage report.
 
 ## Development
 
@@ -682,14 +682,11 @@ For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting
 - **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** - Complete configuration reference and examples
 - **[docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md)** - How to integrate Claude Swarm into your project
 - **[docs/TUTORIAL.md](docs/TUTORIAL.md)** - Step-by-step tutorial from zero to hero
-- **[docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)** - Quick reference card for commands
+- **[docs/AGENT_QUICK_REFERENCE.md](docs/AGENT_QUICK_REFERENCE.md)** - Quick reference card for commands
 - **[docs/api-reference.md](docs/api-reference.md)** - Complete API documentation
 - **[docs/troubleshooting.md](docs/troubleshooting.md)** - Common issues and solutions
 - **[docs/security.md](docs/security.md)** - Security best practices and limitations
 - **[examples/README.md](examples/README.md)** - Demo and usage guide
-- **[TEST_REPORT.md](TEST_REPORT.md)** - Comprehensive test report
-- **[PHASE3_COMPLETION_SUMMARY.md](PHASE3_COMPLETION_SUMMARY.md)** - Integration test deliverables
-- **[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)** - Original multi-agent coordination plan
 
 ## Requirements
 

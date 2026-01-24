@@ -6,8 +6,10 @@ set -e
 echo "🚀 Setting up Claude Swarm with 2 agents..."
 echo ""
 
-# Navigate to project directory
-cd /Users/boris/work/aspire11/claude-swarm
+# Navigate to project directory (script directory)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR"
 
 # Clean up old state
 echo "1. Cleaning up old state..."
@@ -34,11 +36,11 @@ echo ""
 echo "3. Setting up panes..."
 
 # Pane 0 (Agent-0)
-tmux send-keys -t claude-swarm:agents.0 "cd /Users/boris/work/aspire11/claude-swarm" C-m
+tmux send-keys -t claude-swarm:agents.0 "cd $PROJECT_DIR" C-m
 tmux send-keys -t claude-swarm:agents.0 "# Agent-0 Ready - Start Claude Code here"
 
 # Pane 1 (Agent-1)
-tmux send-keys -t claude-swarm:agents.1 "cd /Users/boris/work/aspire11/claude-swarm" C-m
+tmux send-keys -t claude-swarm:agents.1 "cd $PROJECT_DIR" C-m
 tmux send-keys -t claude-swarm:agents.1 "# Agent-1 Ready - Start Claude Code here"
 
 echo "   ✓ Panes configured"
@@ -56,7 +58,7 @@ echo ""
 echo "2. In EACH pane, start Claude Code (not shown here - start manually)"
 echo ""
 echo "3. Once both agents are running, run from outside tmux:"
-echo "   cd /Users/boris/work/aspire11/claude-swarm"
+echo "   cd $PROJECT_DIR"
 echo "   source .venv/bin/activate"
 echo "   claudeswarm discover-agents"
 echo ""

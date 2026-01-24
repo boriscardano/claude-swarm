@@ -380,4 +380,4 @@ pip install pyyaml tomli tomli-w
 - [Configuration Guide](CONFIGURATION.md) - Complete reference
 - [Integration Guide](INTEGRATION_GUIDE.md) - Setup instructions
 - [Tutorial](TUTORIAL.md) - Step-by-step guide
-- [Quick Reference](QUICK_REFERENCE.md) - Command cheat sheet
+- [Quick Reference](AGENT_QUICK_REFERENCE.md) - Command cheat sheet

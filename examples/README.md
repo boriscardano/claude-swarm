@@ -60,48 +60,48 @@ tmux kill-session -t claude-swarm-demo
 
 Discover active agents:
 ```bash
-python -m claudeswarm.cli discover
+claudeswarm discover-agents
 ```
 
 ### Messaging Commands
 
 Send a direct message:
 ```bash
-python -m claudeswarm.cli send --to agent-1 --type INFO --message "Hello!"
+claudeswarm send-to-agent agent-1 INFO "Hello!"
 ```
 
 Broadcast to all agents:
 ```bash
-python -m claudeswarm.cli broadcast --type INFO --message "Team announcement"
+claudeswarm broadcast-to-all INFO "Team announcement"
 ```
 
 ### Locking Commands
 
 Acquire a file lock:
 ```bash
-python -m claudeswarm.cli lock acquire --file src/example.py --reason "Working on feature"
+claudeswarm lock acquire --file src/example.py --reason "Working on feature"
 ```
 
 Release a lock:
 ```bash
-python -m claudeswarm.cli lock release --file src/example.py
+claudeswarm lock release --file src/example.py
 ```
 
 List all active locks:
 ```bash
-python -m claudeswarm.cli lock list
+claudeswarm list-all-locks
 ```
 
 Check who holds a specific lock:
 ```bash
-python -m claudeswarm.cli lock who --file src/example.py
+claudeswarm who-has-lock src/example.py
 ```
 
 ### Monitoring Commands
 
 Start the monitoring dashboard:
 ```bash
-python -m claudeswarm.cli monitor
+claudeswarm start-monitoring
 ```
 
 ## Demo Scenarios
@@ -112,27 +112,27 @@ python -m claudeswarm.cli monitor
 
 1. **Agent 0:** Discover agents and broadcast task
    ```bash
-   python -m claudeswarm.cli discover
-   python -m claudeswarm.cli broadcast --type INFO --message "Starting sprint - check COORDINATION.md"
+   claudeswarm discover-agents
+   claudeswarm broadcast-to-all INFO "Starting sprint - check COORDINATION.md"
    ```
 
 2. **Agent 1 & 2:** Acknowledge
    ```bash
-   python -m claudeswarm.cli send --to agent-0 --type ACK --message "Acknowledged"
+   claudeswarm send-to-agent agent-0 ACK "Acknowledged"
    ```
 
 3. **Agent 1:** Lock file, work, release
    ```bash
-   python -m claudeswarm.cli lock acquire --file src/auth.py --reason "Implementing auth"
+   claudeswarm lock acquire --file src/auth.py --reason "Implementing auth"
    # ... do work ...
-   python -m claudeswarm.cli lock release --file src/auth.py
+   claudeswarm lock release --file src/auth.py
    ```
 
 4. **Agent 2:** Lock for review
    ```bash
-   python -m claudeswarm.cli lock acquire --file src/auth.py --reason "Code review"
-   python -m claudeswarm.cli send --to agent-1 --type REVIEW-REQUEST --message "Looks good!"
-   python -m claudeswarm.cli lock release --file src/auth.py
+   claudeswarm lock acquire --file src/auth.py --reason "Code review"
+   claudeswarm send-to-agent agent-1 REVIEW-REQUEST "Looks good!"
+   claudeswarm lock release --file src/auth.py
    ```
 
 ### Scenario 2: Code Review Workflow
@@ -141,31 +141,31 @@ python -m claudeswarm.cli monitor
 
 1. **Agent 3:** Request review
    ```bash
-   python -m claudeswarm.cli lock acquire --file src/feature.py --reason "New feature"
+   claudeswarm lock acquire --file src/feature.py --reason "New feature"
    echo "def new_feature(): pass" > src/feature.py
-   python -m claudeswarm.cli lock release --file src/feature.py
-   python -m claudeswarm.cli send --to agent-1 --type REVIEW-REQUEST --message "Please review src/feature.py"
+   claudeswarm lock release --file src/feature.py
+   claudeswarm send-to-agent agent-1 REVIEW-REQUEST "Please review src/feature.py"
    ```
 
 2. **Agent 1:** Review and provide feedback
    ```bash
-   python -m claudeswarm.cli send --to agent-3 --type ACK --message "Starting review"
-   python -m claudeswarm.cli lock acquire --file src/feature.py --reason "Code review"
-   python -m claudeswarm.cli send --to agent-3 --type REVIEW-REQUEST --message "Add docstring"
-   python -m claudeswarm.cli lock release --file src/feature.py
+   claudeswarm send-to-agent agent-3 ACK "Starting review"
+   claudeswarm lock acquire --file src/feature.py --reason "Code review"
+   claudeswarm send-to-agent agent-3 REVIEW-REQUEST "Add docstring"
+   claudeswarm lock release --file src/feature.py
    ```
 
 3. **Agent 3:** Address feedback
    ```bash
-   python -m claudeswarm.cli lock acquire --file src/feature.py --reason "Addressing feedback"
+   claudeswarm lock acquire --file src/feature.py --reason "Addressing feedback"
    echo "def new_feature():\n    \"\"\"New feature.\"\"\"\n    pass" > src/feature.py
-   python -m claudeswarm.cli lock release --file src/feature.py
-   python -m claudeswarm.cli send --to agent-1 --type INFO --message "Feedback addressed"
+   claudeswarm lock release --file src/feature.py
+   claudeswarm send-to-agent agent-1 INFO "Feedback addressed"
    ```
 
 4. **Agent 1:** Approve
    ```bash
-   python -m claudeswarm.cli send --to agent-3 --type COMPLETED --message "APPROVED!"
+   claudeswarm send-to-agent agent-3 COMPLETED "APPROVED!"
    ```
 
 ### Scenario 3: Lock Conflict Resolution
@@ -174,29 +174,29 @@ python -m claudeswarm.cli monitor
 
 1. **Agent 1:** Acquire lock
    ```bash
-   python -m claudeswarm.cli lock acquire --file src/shared.py --reason "Refactoring"
+   claudeswarm lock acquire --file src/shared.py --reason "Refactoring"
    ```
 
 2. **Agent 2:** Try to lock (will fail)
    ```bash
-   python -m claudeswarm.cli lock acquire --file src/shared.py --reason "Bug fix"
+   claudeswarm lock acquire --file src/shared.py --reason "Bug fix"
    # This will show a conflict message
    ```
 
 3. **Agent 2:** Send blocked message
    ```bash
-   python -m claudeswarm.cli send --to agent-1 --type BLOCKED --message "Waiting for src/shared.py"
+   claudeswarm send-to-agent agent-1 BLOCKED "Waiting for src/shared.py"
    ```
 
 4. **Agent 1:** Finish and release
    ```bash
-   python -m claudeswarm.cli lock release --file src/shared.py
-   python -m claudeswarm.cli send --to agent-2 --type INFO --message "Lock released"
+   claudeswarm lock release --file src/shared.py
+   claudeswarm send-to-agent agent-2 INFO "Lock released"
    ```
 
 5. **Agent 2:** Acquire and proceed
    ```bash
-   python -m claudeswarm.cli lock acquire --file src/shared.py --reason "Bug fix"
+   claudeswarm lock acquire --file src/shared.py --reason "Bug fix"
    # Now succeeds
    ```
 

@@ -245,4 +245,4 @@ claudeswarm config init
 - Full documentation: [docs/CONFIGURATION.md](../../docs/CONFIGURATION.md)
 - Integration guide: [docs/INTEGRATION_GUIDE.md](../../docs/INTEGRATION_GUIDE.md)
 - Tutorial: [docs/TUTORIAL.md](../../docs/TUTORIAL.md)
-- Issues: [GitHub Issues](https://github.com/borisbanach/claude-swarm/issues)
+- Issues: [GitHub Issues](https://github.com/boriscardano/claude-swarm/issues)

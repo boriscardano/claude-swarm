@@ -86,7 +86,7 @@ Let's get your first multi-agent system running in 5 minutes.
 
 ```bash
 # Clone the repository
-git clone https://github.com/borisbanach/claude-swarm.git
+git clone https://github.com/boriscardano/claude-swarm.git
 cd claude-swarm
 
 # Install dependencies
@@ -1417,9 +1417,9 @@ You've completed the tutorial! You now know how to:
    ```
 
 2. **Read the detailed protocol:**
-   - [AGENT_PROTOCOL.md](/Users/boris/work/aspire11/claude-swarm/AGENT_PROTOCOL.md) - Complete coordination rules
-   - [docs/architecture.md](/Users/boris/work/aspire11/claude-swarm/docs/architecture.md) - System design
-   - [docs/api-reference.md](/Users/boris/work/aspire11/claude-swarm/docs/api-reference.md) - API documentation
+   - [AGENT_PROTOCOL.md](../AGENT_PROTOCOL.md) - Complete coordination rules
+   - [docs/architecture.md](./architecture.md) - System design
+   - [docs/api-reference.md](./api-reference.md) - API documentation
 
 3. **Run integration tests:**
    ```bash
@@ -1502,4 +1502,4 @@ Check → Acquire → Edit → Release → Announce
 
 **Happy coordinating!** May your agents work together seamlessly and your merge conflicts be zero.
 
-For questions, issues, or contributions, see the main [README.md](/Users/boris/work/aspire11/claude-swarm/README.md).
+For questions, issues, or contributions, see the main [README.md](../README.md).

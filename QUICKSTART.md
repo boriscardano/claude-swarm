@@ -28,7 +28,7 @@ tmux new -s myproject
 
 For example:
 ```bash
-./onboard.sh ~/work/aspire11/podcasts-chatbot
+./onboard.sh ~/projects/my-app
 ```
 
 This will:
@@ -52,17 +52,17 @@ They will receive instructions in their message log and can start coordinating i
 Each agent can use these commands (they'll be told this automatically):
 
 ```bash
-# Read messages
-python3 coord.py YOUR_ID read
+# Check for new messages
+claudeswarm check-messages
 
-# Send message
-python3 coord.py YOUR_ID send OTHER_ID "message"
+# Send message to another agent
+claudeswarm send-to-agent RECIPIENT_ID INFO "message"
 
-# Lock file
-python3 coord.py YOUR_ID lock path/to/file "reason"
+# Lock file before editing
+claudeswarm lock acquire --file path/to/file --reason "description"
 
-# Unlock file
-python3 coord.py YOUR_ID unlock path/to/file
+# Unlock file after editing
+claudeswarm lock release --file path/to/file
 ```
 
 ## Monitor
