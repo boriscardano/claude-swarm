@@ -46,7 +46,8 @@ class TestBackoffCalculation:
         """Delay should increase exponentially."""
         # Patch random to neutralize jitter for predictable testing
         import random
-        with patch.object(random, 'random', return_value=0.5):
+
+        with patch.object(random, "random", return_value=0.5):
             actual_0 = _calculate_tmux_backoff(0)
             actual_1 = _calculate_tmux_backoff(1)
             actual_2 = _calculate_tmux_backoff(2)

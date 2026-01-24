@@ -1042,7 +1042,8 @@ def _prepare_onboarding_content(agents: list) -> list[str]:
     agent_list = ", ".join(a.id for a in agents)
 
     # Single comprehensive onboarding message
-    return [f"""=== CLAUDE SWARM COORDINATION ACTIVE ===
+    return [
+        f"""=== CLAUDE SWARM COORDINATION ACTIVE ===
 Multi-agent coordination is now available in this session.
 
 ACTIVE AGENTS: {agent_list}
@@ -1116,7 +1117,8 @@ Example:
 
 This helps establish communication and confirms messaging is working.
 
-COORDINATION READY! 🎉"""]
+COORDINATION READY! 🎉"""
+    ]
 
 
 def _send_onboarding_messages(
@@ -1944,7 +1946,7 @@ def _init_display_next_steps(project_root: Path, tmux_status: str) -> None:
 
 
 # Hook script content for automatic message checking
-_HOOK_SCRIPT_CONTENT = '''#!/bin/bash
+_HOOK_SCRIPT_CONTENT = """#!/bin/bash
 #
 # Claude Swarm Message Checker Hook
 #
@@ -1994,7 +1996,7 @@ if [ -n "$MESSAGES" ] && [[ ! "$MESSAGES" =~ ^No\\ messages ]]; then
 fi
 
 exit 0
-'''
+"""
 
 
 def _init_setup_hooks(project_root: Path, auto_yes: bool) -> None:
@@ -2518,7 +2520,8 @@ def main() -> NoReturn:
 
 def print_help() -> None:
     """Print CLI help message."""
-    print("""
+    print(
+        """
 Claude Swarm - Multi-agent coordination system
 
 Usage:
@@ -2558,7 +2561,8 @@ Other:
 
 For detailed help on each command, run:
     claudeswarm <command> --help
-""")
+"""
+    )
 
 
 def print_version() -> None:
