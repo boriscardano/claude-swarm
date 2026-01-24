@@ -451,7 +451,7 @@ tail -f agent_messages.log
 
 - **Full Protocol**: See [docs/AGENT_PROTOCOL.md](AGENT_PROTOCOL.md)
 - **Tutorial**: See [docs/TUTORIAL.md](TUTORIAL.md)
-- **Quick Reference**: See [docs/QUICK_REFERENCE.md](QUICK_REFERENCE.md)
+- **Quick Reference**: See [docs/AGENT_QUICK_REFERENCE.md](AGENT_QUICK_REFERENCE.md)
 - **Examples**: See [examples/README.md](../examples/README.md)
 
 For issues and contributions:

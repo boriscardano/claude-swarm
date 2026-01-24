@@ -55,7 +55,7 @@ uv --version
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/claude-swarm.git
+git clone https://github.com/boriscardano/claude-swarm.git
 cd claude-swarm
 
 # Sync dependencies

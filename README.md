@@ -682,7 +682,7 @@ For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting
 - **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** - Complete configuration reference and examples
 - **[docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md)** - How to integrate Claude Swarm into your project
 - **[docs/TUTORIAL.md](docs/TUTORIAL.md)** - Step-by-step tutorial from zero to hero
-- **[docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)** - Quick reference card for commands
+- **[docs/AGENT_QUICK_REFERENCE.md](docs/AGENT_QUICK_REFERENCE.md)** - Quick reference card for commands
 - **[docs/api-reference.md](docs/api-reference.md)** - Complete API documentation
 - **[docs/troubleshooting.md](docs/troubleshooting.md)** - Common issues and solutions
 - **[docs/security.md](docs/security.md)** - Security best practices and limitations

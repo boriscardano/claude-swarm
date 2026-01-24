@@ -100,25 +100,25 @@ cat << 'EOF' > /tmp/demo_commands.txt
 === Claude Swarm Demo Commands ===
 
 Agent Discovery:
-  python -m claudeswarm.cli discover
+  claudeswarm discover-agents
 
 Send Message:
-  python -m claudeswarm.cli send --to agent-1 --type INFO --message "Hello!"
+  claudeswarm send-to-agent agent-1 INFO "Hello!"
 
 Broadcast:
-  python -m claudeswarm.cli broadcast --type INFO --message "Team announcement"
+  claudeswarm broadcast-to-all INFO "Team announcement"
 
 Acquire Lock:
-  python -m claudeswarm.cli lock acquire --file src/example.py --reason "Working on feature"
+  claudeswarm lock acquire --file src/example.py --reason "Working on feature"
 
 Release Lock:
-  python -m claudeswarm.cli lock release --file src/example.py
+  claudeswarm lock release --file src/example.py
 
 List Locks:
-  python -m claudeswarm.cli lock list
+  claudeswarm list-all-locks
 
 Start Monitoring:
-  python -m claudeswarm.cli monitor
+  claudeswarm start-monitoring
 
 === Demo Scenarios ===
 
@@ -150,7 +150,7 @@ EOF
 tmux send-keys -t "$SESSION_NAME:0.0" "cat /tmp/demo_commands.txt" C-m
 
 # Set up Agent 7 as monitor (if monitoring is implemented)
-tmux send-keys -t "$SESSION_NAME:0.7" "echo 'Monitor pane - run: python -m claudeswarm.cli monitor'" C-m
+tmux send-keys -t "$SESSION_NAME:0.7" "echo 'Monitor pane - run: claudeswarm start-monitoring'" C-m
 
 # Set pane titles (tmux 3.0+)
 if tmux -V | awk '{print $2}' | awk -F. '{exit ($1 < 3)}' 2>/dev/null; then
