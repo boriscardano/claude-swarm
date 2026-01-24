@@ -348,13 +348,11 @@ class TestConfigReloadingE2E:
         config_path = config_dir / "config.yaml"
 
         # Initial config
-        config_path.write_text(
-            """messaging:
+        config_path.write_text("""messaging:
   rate_limit:
     max_messages: 10
     time_window_seconds: 60
-"""
-        )
+""")
 
         config1 = load_config(config_path)
 
@@ -366,13 +364,11 @@ class TestConfigReloadingE2E:
 
         # Modify config
         time.sleep(0.01)  # Ensure file mtime changes
-        config_path.write_text(
-            """messaging:
+        config_path.write_text("""messaging:
   rate_limit:
     max_messages: 20
     time_window_seconds: 60
-"""
-        )
+""")
 
         config2 = load_config(config_path)
 
@@ -388,13 +384,11 @@ class TestConfigReloadingE2E:
         config_dir.mkdir(parents=True, exist_ok=True)
 
         config_path = config_dir / "config.yaml"
-        config_path.write_text(
-            """messaging:
+        config_path.write_text("""messaging:
   rate_limit:
     max_messages: 10
     time_window_seconds: 60
-"""
-        )
+""")
 
         loader = ConfigLoader(config_path)
         config1 = loader.load()
@@ -402,13 +396,11 @@ class TestConfigReloadingE2E:
 
         # Modify file
         time.sleep(0.01)
-        config_path.write_text(
-            """messaging:
+        config_path.write_text("""messaging:
   rate_limit:
     max_messages: 30
     time_window_seconds: 60
-"""
-        )
+""")
 
         # Reload
         config2 = loader.reload()
@@ -422,16 +414,14 @@ class TestConfigReloadingE2E:
         config_path = config_dir / "config.yaml"
 
         # Start with default config
-        config_path.write_text(
-            """messaging:
+        config_path.write_text("""messaging:
   rate_limit:
     max_messages: 5
     time_window_seconds: 60
 
 locking:
   stale_timeout_seconds: 300
-"""
-        )
+""")
 
         # Create initial system
         config = load_config(config_path)
@@ -449,16 +439,14 @@ locking:
 
         # Simulate config update
         time.sleep(0.01)
-        config_path.write_text(
-            """messaging:
+        config_path.write_text("""messaging:
   rate_limit:
     max_messages: 15
     time_window_seconds: 60
 
 locking:
   stale_timeout_seconds: 600
-"""
-        )
+""")
 
         # Create new instances (simulating restart or new agents)
         new_config = load_config(config_path)
@@ -485,13 +473,11 @@ class TestConfigValidationE2E:
 
         # Invalid config (negative values)
         config_path = config_dir / "config.yaml"
-        config_path.write_text(
-            """messaging:
+        config_path.write_text("""messaging:
   rate_limit:
     max_messages: -10
     time_window_seconds: 60
-"""
-        )
+""")
 
         # Should raise error when loading
         with pytest.raises(Exception):  # ConfigError or ValidationError
@@ -509,16 +495,14 @@ class TestConfigValidationE2E:
 
         # Config with one invalid section
         config_path = config_dir / "config.yaml"
-        config_path.write_text(
-            """messaging:
+        config_path.write_text("""messaging:
   rate_limit:
     max_messages: 10
     time_window_seconds: 60
 
 locking:
   stale_timeout_seconds: -1  # Invalid
-"""
-        )
+""")
 
         # Should raise validation error
         with pytest.raises(Exception):
@@ -554,16 +538,14 @@ class TestRealWorldScenarios:
 
         # Realize we need higher rate limits for this project
         # Update config
-        config_path.write_text(
-            """messaging:
+        config_path.write_text("""messaging:
   rate_limit:
     max_messages: 50
     time_window_seconds: 60
 
 locking:
   stale_timeout_seconds: 600
-"""
-        )
+""")
 
         # Continue working with new config
         new_config = load_config(config_path)
@@ -584,13 +566,11 @@ locking:
         (project1 / ".agent_locks").mkdir()
 
         config1_path = project1 / ".claudeswarm" / "config.yaml"
-        config1_path.write_text(
-            """messaging:
+        config1_path.write_text("""messaging:
   rate_limit:
     max_messages: 10
     time_window_seconds: 60
-"""
-        )
+""")
 
         # Project 2
         project2 = tmp_path / "project2"
@@ -599,13 +579,11 @@ locking:
         (project2 / ".agent_locks").mkdir()
 
         config2_path = project2 / ".claudeswarm" / "config.yaml"
-        config2_path.write_text(
-            """messaging:
+        config2_path.write_text("""messaging:
   rate_limit:
     max_messages: 20
     time_window_seconds: 60
-"""
-        )
+""")
 
         # Load both
         config1 = load_config(config1_path)

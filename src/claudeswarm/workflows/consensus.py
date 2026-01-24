@@ -202,7 +202,9 @@ class ConsensusEngine:
             if success_count == 0:
                 raise MessageDeliveryError("Vote broadcast failed - no agents reachable")
             elif success_count < total_agents // 2:
-                print(f"⚠️  Only {success_count}/{total_agents} agents reached - consensus may fail")
+                print(
+                    f"⚠️  Only {success_count}/{total_agents} agents reached - consensus may fail"
+                )
 
         except MessageDeliveryError:
             # Re-raise delivery errors - don't silently continue

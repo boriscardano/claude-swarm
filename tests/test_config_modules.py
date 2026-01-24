@@ -306,13 +306,11 @@ class TestConfigChangePropagation:
         config_path = temp_config_dir / "config.yaml"
 
         # Initial config
-        config_path.write_text(
-            """messaging:
+        config_path.write_text("""messaging:
   rate_limit:
     max_messages: 10
     time_window_seconds: 60
-"""
-        )
+""")
 
         config1 = load_config(config_path)
 
@@ -323,13 +321,11 @@ class TestConfigChangePropagation:
             assert messaging1.rate_limiter.max_messages == 10
 
         # Update config
-        config_path.write_text(
-            """messaging:
+        config_path.write_text("""messaging:
   rate_limit:
     max_messages: 20
     time_window_seconds: 60
-"""
-        )
+""")
 
         config2 = load_config(config_path)
 
@@ -342,11 +338,9 @@ class TestConfigChangePropagation:
     def test_config_reload_updates_module_behavior(self, temp_config_dir, mock_project_root):
         """Test that reloading config can update module behavior."""
         config_path = temp_config_dir / "config.yaml"
-        config_path.write_text(
-            """locking:
+        config_path.write_text("""locking:
   stale_timeout_seconds: 300
-"""
-        )
+""")
 
         lock_manager = LockManager(
             project_root=str(mock_project_root), config=load_config(config_path)
@@ -355,11 +349,9 @@ class TestConfigChangePropagation:
         assert lock_manager.stale_timeout == 300
 
         # Update config and create new manager
-        config_path.write_text(
-            """locking:
+        config_path.write_text("""locking:
   stale_timeout_seconds: 600
-"""
-        )
+""")
 
         lock_manager2 = LockManager(
             project_root=str(mock_project_root), config=load_config(config_path)
