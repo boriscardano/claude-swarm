@@ -40,7 +40,7 @@ if [ "$SOURCE" = "local" ]; then
     uv tool install --force --editable "$SCRIPT_DIR" > /dev/null 2>&1
     echo "   ✓ Installed from local directory (editable mode)"
 else
-    uv tool install --force git+https://github.com/borisbanach/claude-swarm.git > /dev/null 2>&1
+    uv tool install --force git+https://github.com/boriscardano/claude-swarm.git > /dev/null 2>&1
     echo "   ✓ Installed from GitHub"
 fi
 echo ""

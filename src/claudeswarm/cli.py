@@ -1670,7 +1670,7 @@ def cmd_reload(args: argparse.Namespace) -> None:
                     "tool",
                     "install",
                     "--force",
-                    "git+https://github.com/borisbanach/claude-swarm.git",
+                    "git+https://github.com/boriscardano/claude-swarm.git",
                 ],
                 capture_output=True,
                 text=True,
@@ -1875,7 +1875,7 @@ def _init_display_next_steps(project_root: Path, tmux_status: str) -> None:
     print(f"📁 Project root: {project_root}")
     print()
     print("For more help: claudeswarm --help")
-    print("Documentation: https://github.com/borisbanach/claude-swarm")
+    print("Documentation: https://github.com/boriscardano/claude-swarm")
 
 
 # Hook script content for automatic message checking

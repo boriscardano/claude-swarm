@@ -847,7 +847,8 @@ chmod 400 $timestamp.tar.gz
 If you discover a security vulnerability in Claude Swarm:
 
 1. **Do not file a public issue**
-2. Email security concerns to: security@example.com
+2. Use GitHub's private vulnerability reporting:
+   https://github.com/boriscardano/claude-swarm/security/advisories/new
 3. Include:
    - Description of vulnerability
    - Steps to reproduce

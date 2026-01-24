@@ -18,7 +18,7 @@ trap cleanup_dashboard EXIT INT TERM
 
 if [ -z "$1" ]; then
     echo "Usage: ./onboard.sh /path/to/your/project"
-    echo "Example: ./onboard.sh ~/work/aspire11/podcasts-chatbot"
+    echo "Example: ./onboard.sh ~/projects/my-app"
     exit 1
 fi
 

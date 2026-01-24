@@ -33,6 +33,12 @@ dev = [
     "safety>=3.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/boriscardano/claude-swarm"
+Documentation = "https://github.com/boriscardano/claude-swarm#readme"
+Repository = "https://github.com/boriscardano/claude-swarm.git"
+Issues = "https://github.com/boriscardano/claude-swarm/issues"
+
 [project.scripts]
 claudeswarm = "claudeswarm.cli:main"
 
