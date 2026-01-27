@@ -126,9 +126,12 @@ class AckSystem:
         self._ack_timestamps: dict[str, list[datetime]] = defaultdict(list)
 
         # Escalation tracking: prevents cascading broadcast DOS
-        # Stores (msg_id, timestamp) tuples for deduplication and rate limiting
-        self._escalated_messages: set[str] = set()
+        # Maps msg_id -> timestamp for deduplication with TTL cleanup
+        self._escalated_messages: dict[str, datetime] = {}
         self._escalation_timestamps: list[datetime] = []
+
+        # TTL for escalated message tracking (1 hour)
+        self.ESCALATION_TTL_SECONDS = 3600
 
     def _ensure_pending_file(self) -> None:
         """Ensure PENDING_ACKS.json exists with version tracking."""
@@ -515,6 +518,8 @@ class AckSystem:
     def _check_escalation_rate_limit(self) -> bool:
         """Check if escalation rate limit allows another escalation.
 
+        Also cleans up old entries from _escalated_messages to prevent memory leak.
+
         Returns:
             True if within rate limit, False if exceeded
         """
@@ -525,6 +530,21 @@ class AckSystem:
         self._escalation_timestamps = [
             ts for ts in self._escalation_timestamps if ts > cutoff
         ]
+
+        # Clean up old escalated message IDs (1 hour TTL)
+        ttl_cutoff = now - timedelta(seconds=self.ESCALATION_TTL_SECONDS)
+        expired_msg_ids = [
+            msg_id
+            for msg_id, timestamp in self._escalated_messages.items()
+            if timestamp <= ttl_cutoff
+        ]
+        for msg_id in expired_msg_ids:
+            del self._escalated_messages[msg_id]
+
+        if expired_msg_ids:
+            logger.debug(
+                f"Cleaned up {len(expired_msg_ids)} expired escalated message IDs"
+            )
 
         # Check if rate limit exceeded
         if len(self._escalation_timestamps) >= self.MAX_ESCALATIONS_PER_MINUTE:
@@ -568,9 +588,10 @@ class AckSystem:
             f"{self.MAX_RETRIES} retries"
         )
 
-        # Track this escalation for deduplication
-        self._escalated_messages.add(ack.msg_id)
-        self._escalation_timestamps.append(datetime.now())
+        # Track this escalation for deduplication with timestamp
+        now = datetime.now()
+        self._escalated_messages[ack.msg_id] = now
+        self._escalation_timestamps.append(now)
 
         msg_dict = ack.message
         escalation_content = (
