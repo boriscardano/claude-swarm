@@ -705,8 +705,15 @@ class TmuxMessageDelivery:
             # Format message for display (no escaping needed with -l flag)
             cmd = f"# [MESSAGE] {message}"
 
-            # Send command text to tmux pane using -l for literal interpretation
-            # The -l flag treats the text literally, preventing command injection
+            # IMPROVED MESSAGE DELIVERY:
+            # Send the literal message text first, then immediately send Enter.
+            # We use two separate send-keys calls but with minimal delay.
+            #
+            # NOTE: Cannot combine -l (literal) with Enter key in single command
+            # because -l makes "Enter" be sent as literal characters "E-n-t-e-r"
+            # instead of as a keypress. See: https://github.com/tmux/tmux/issues/1778
+            #
+            # First: Send the message text literally (prevents command injection)
             result = subprocess.run(
                 ["tmux", "send-keys", "-l", "-t", pane_id, cmd],
                 capture_output=True,
@@ -728,10 +735,8 @@ class TmuxMessageDelivery:
                 else:
                     raise TmuxError(f"Failed to send command to pane {pane_id}: {result.stderr}")
 
-            # Send Enter key separately to execute the command
-            # Add small delay to ensure message text is processed before Enter
-            time.sleep(0.1)
-
+            # Second: Send Enter key immediately (no delay - tmux commands are synchronous)
+            # This executes the command we just typed
             result = subprocess.run(
                 ["tmux", "send-keys", "-t", pane_id, "Enter"],
                 capture_output=True,

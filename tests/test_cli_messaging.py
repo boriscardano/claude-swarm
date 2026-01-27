@@ -243,22 +243,26 @@ class TestSendMessageCommand:
 
         with patch.dict(os.environ, {"TMUX_PANE": "%99"}):
             with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
-                with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
-                    with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
-                        with patch("claudeswarm.messaging.send_message") as mock_send:
-                            mock_message = Mock()
-                            mock_message.to_dict.return_value = {
-                                "delivery_status": {"agent-2": True}
-                            }
-                            mock_send.return_value = mock_message
+                with patch("os.kill") as mock_kill:
+                    mock_kill.return_value = None
+                    with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
+                        with patch(
+                            "claudeswarm.cli.validate_message_content", side_effect=lambda x: x
+                        ):
+                            with patch("claudeswarm.messaging.send_message") as mock_send:
+                                mock_message = Mock()
+                                mock_message.to_dict.return_value = {
+                                    "delivery_status": {"agent-2": True}
+                                }
+                                mock_send.return_value = mock_message
 
-                            with pytest.raises(SystemExit) as exc_info:
-                                cmd_send_message(args)
+                                with pytest.raises(SystemExit) as exc_info:
+                                    cmd_send_message(args)
 
-                            assert exc_info.value.code == 0
-                            # Verify auto-detected sender ID was used
-                            call_kwargs = mock_send.call_args[1]
-                            assert call_kwargs["sender_id"] == "agent-auto"
+                                assert exc_info.value.code == 0
+                                # Verify auto-detected sender ID was used
+                                call_kwargs = mock_send.call_args[1]
+                                assert call_kwargs["sender_id"] == "agent-auto"
 
     def test_send_message_auto_detect_fails(self, capsys):
         """Test send-message fails when auto-detect fails."""
@@ -500,18 +504,22 @@ class TestBroadcastMessageCommand:
 
         with patch.dict(os.environ, {"TMUX_PANE": "%99"}):
             with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
-                with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
-                    with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
-                        with patch("claudeswarm.messaging.broadcast_message") as mock_broadcast:
-                            mock_broadcast.return_value = {"agent-2": True}
+                with patch("os.kill") as mock_kill:
+                    mock_kill.return_value = None
+                    with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
+                        with patch(
+                            "claudeswarm.cli.validate_message_content", side_effect=lambda x: x
+                        ):
+                            with patch("claudeswarm.messaging.broadcast_message") as mock_broadcast:
+                                mock_broadcast.return_value = {"agent-2": True}
 
-                            with pytest.raises(SystemExit) as exc_info:
-                                cmd_broadcast_message(args)
+                                with pytest.raises(SystemExit) as exc_info:
+                                    cmd_broadcast_message(args)
 
-                            assert exc_info.value.code == 0
-                            # Verify auto-detected sender ID was used
-                            call_kwargs = mock_broadcast.call_args[1]
-                            assert call_kwargs["sender_id"] == "agent-auto"
+                                assert exc_info.value.code == 0
+                                # Verify auto-detected sender ID was used
+                                call_kwargs = mock_broadcast.call_args[1]
+                                assert call_kwargs["sender_id"] == "agent-auto"
 
     def test_broadcast_message_auto_detect_fails(self, capsys):
         """Test broadcast-message fails when auto-detect fails."""

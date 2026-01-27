@@ -94,7 +94,7 @@ class AckSystem:
     Manages:
     - Tracking pending ACKs in PENDING_ACKS.json
     - Retry logic with exponential backoff (30s, 60s, 120s)
-    - Escalation after max retries
+    - Escalation after max retries (with cascade prevention)
     - ACK reception and matching
     - Rate limiting for ACK requests to prevent DoS
     """
@@ -106,6 +106,11 @@ class AckSystem:
     # Rate limiting configuration
     MAX_ACKS_PER_AGENT_PER_MINUTE = 100
     RATE_LIMIT_WINDOW_SECONDS = 60
+
+    # Escalation limits (prevents cascading broadcast DOS)
+    # Track escalated message IDs to prevent re-escalation
+    MAX_ESCALATIONS_PER_MINUTE = 5
+    ESCALATION_WINDOW_SECONDS = 60
 
     def __init__(self, pending_file: Path | None = None):
         """Initialize ACK system.
@@ -119,6 +124,14 @@ class AckSystem:
 
         # Rate limiting tracking: agent_id -> list of timestamps
         self._ack_timestamps: dict[str, list[datetime]] = defaultdict(list)
+
+        # Escalation tracking: prevents cascading broadcast DOS
+        # Maps msg_id -> timestamp for deduplication with TTL cleanup
+        self._escalated_messages: dict[str, datetime] = {}
+        self._escalation_timestamps: list[datetime] = []
+
+        # TTL for escalated message tracking (1 hour)
+        self.ESCALATION_TTL_SECONDS = 3600
 
     def _ensure_pending_file(self) -> None:
         """Ensure PENDING_ACKS.json exists with version tracking."""
@@ -238,6 +251,28 @@ class AckSystem:
             acks.append(pending_ack)
             self._save_pending_acks(acks, expected_version=version)
 
+        # Helper function to clean up orphaned ACK with retry
+        def _cleanup_orphaned_ack(msg_id: str, max_retries: int = 3) -> None:
+            """Clean up orphaned ACK entry with retry on version conflict."""
+            for attempt in range(max_retries):
+                with self._lock:
+                    acks, version = self._load_pending_acks()
+                    original_count = len(acks)
+                    acks = [ack for ack in acks if ack.msg_id != msg_id]
+                    if len(acks) < original_count:
+                        if self._save_pending_acks(acks, expected_version=version):
+                            logger.debug(f"Cleaned up orphaned ACK {msg_id}")
+                            return
+                        # Version conflict, retry
+                        logger.debug(
+                            f"Version conflict cleaning up ACK {msg_id}, "
+                            f"retry {attempt + 1}/{max_retries}"
+                        )
+                    else:
+                        # ACK not found (already cleaned up), we're done
+                        return
+            logger.warning(f"Failed to clean up orphaned ACK {msg_id} after {max_retries} retries")
+
         # Send the message
         try:
             message = send_message(sender_id, recipient_id, msg_type, ack_content)
@@ -245,21 +280,30 @@ class AckSystem:
             if not message:
                 logger.error(f"Failed to send message from {sender_id} to {recipient_id}")
                 # Clean up the pending ACK since send failed
-                with self._lock:
-                    acks, version = self._load_pending_acks()
-                    acks = [ack for ack in acks if ack.msg_id != temp_msg_id]
-                    self._save_pending_acks(acks, expected_version=version)
+                _cleanup_orphaned_ack(temp_msg_id)
                 return None
 
             # Update the pending ACK with actual message info
-            with self._lock:
-                acks, version = self._load_pending_acks()
-                for ack in acks:
-                    if ack.msg_id == temp_msg_id:
-                        ack.msg_id = message.msg_id
-                        ack.message = message.to_dict()
+            # Retry on version conflict to ensure update succeeds
+            update_success = False
+            for attempt in range(3):
+                with self._lock:
+                    acks, version = self._load_pending_acks()
+                    for ack in acks:
+                        if ack.msg_id == temp_msg_id:
+                            ack.msg_id = message.msg_id
+                            ack.message = message.to_dict()
+                            break
+                    if self._save_pending_acks(acks, expected_version=version):
+                        update_success = True
                         break
-                self._save_pending_acks(acks, expected_version=version)
+                    logger.debug(f"Version conflict updating ACK, retry {attempt + 1}/3")
+
+            if not update_success:
+                logger.warning(
+                    f"Failed to update ACK {temp_msg_id} -> {message.msg_id}, "
+                    f"message sent but may not be tracked properly"
+                )
 
             logger.info(
                 f"Message {message.msg_id} sent with ACK requirement: "
@@ -270,11 +314,8 @@ class AckSystem:
 
         except Exception as e:
             logger.error(f"Exception while sending message: {e}")
-            # Clean up the pending ACK
-            with self._lock:
-                acks, version = self._load_pending_acks()
-                acks = [ack for ack in acks if ack.msg_id != temp_msg_id]
-                self._save_pending_acks(acks, expected_version=version)
+            # Clean up the pending ACK with retry
+            _cleanup_orphaned_ack(temp_msg_id)
             raise
 
     def _check_rate_limit(self, agent_id: str) -> bool:
@@ -331,13 +372,16 @@ class AckSystem:
             # Find matching pending ACK
             for i, ack in enumerate(acks):
                 if ack.msg_id == msg_id:
-                    # Verify acknowledger is the expected recipient
+                    # SECURITY: Verify acknowledger is the expected recipient
+                    # This prevents ACK spoofing where any agent could acknowledge
+                    # any message by providing the correct msg_id
                     if ack.recipient_id != agent_id:
                         logger.warning(
-                            f"ACK from unexpected agent: expected {ack.recipient_id}, "
-                            f"got {agent_id} for message {msg_id}"
+                            f"ACK spoofing attempt detected: agent {agent_id} tried to "
+                            f"acknowledge message {msg_id} intended for {ack.recipient_id}"
                         )
-                        # Still accept the ACK
+                        # Reject the spoofed ACK - do not remove from pending
+                        return False
 
                     # Remove from pending
                     acks.pop(i)
@@ -467,18 +511,76 @@ class AckSystem:
             retry_content,
         )
 
+    def _check_escalation_rate_limit(self) -> bool:
+        """Check if escalation rate limit allows another escalation.
+
+        Also cleans up old entries from _escalated_messages to prevent memory leak.
+
+        Returns:
+            True if within rate limit, False if exceeded
+        """
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=self.ESCALATION_WINDOW_SECONDS)
+
+        # Clean up old timestamps
+        self._escalation_timestamps = [ts for ts in self._escalation_timestamps if ts > cutoff]
+
+        # Clean up old escalated message IDs (1 hour TTL)
+        ttl_cutoff = now - timedelta(seconds=self.ESCALATION_TTL_SECONDS)
+        expired_msg_ids = [
+            msg_id
+            for msg_id, timestamp in self._escalated_messages.items()
+            if timestamp <= ttl_cutoff
+        ]
+        for msg_id in expired_msg_ids:
+            del self._escalated_messages[msg_id]
+
+        if expired_msg_ids:
+            logger.debug(f"Cleaned up {len(expired_msg_ids)} expired escalated message IDs")
+
+        # Check if rate limit exceeded
+        if len(self._escalation_timestamps) >= self.MAX_ESCALATIONS_PER_MINUTE:
+            logger.warning(
+                f"Escalation rate limit exceeded: {len(self._escalation_timestamps)} "
+                f"escalations in {self.ESCALATION_WINDOW_SECONDS}s window"
+            )
+            return False
+
+        return True
+
     def _escalate_message(self, ack: PendingAck) -> None:
         """Escalate an unacknowledged message to all agents.
 
         After max retries, broadcasts the message to all agents
-        requesting assistance.
+        requesting assistance. Includes protections against cascading
+        broadcast DOS attacks:
+        - Deduplication: same message is never escalated twice
+        - Rate limiting: max N escalations per time window
 
         Args:
             ack: PendingAck entry to escalate
         """
+        # SECURITY: Prevent duplicate escalations (cascade prevention)
+        if ack.msg_id in self._escalated_messages:
+            logger.debug(f"Message {ack.msg_id} already escalated, skipping to prevent cascade")
+            return
+
+        # SECURITY: Check escalation rate limit (DOS prevention)
+        if not self._check_escalation_rate_limit():
+            logger.warning(
+                f"Skipping escalation of message {ack.msg_id} due to rate limit. "
+                f"This prevents cascading broadcast DOS attacks."
+            )
+            return
+
         logger.warning(
             f"Escalating unacknowledged message {ack.msg_id} after " f"{self.MAX_RETRIES} retries"
         )
+
+        # Track this escalation for deduplication with timestamp
+        now = datetime.now()
+        self._escalated_messages[ack.msg_id] = now
+        self._escalation_timestamps.append(now)
 
         msg_dict = ack.message
         escalation_content = (

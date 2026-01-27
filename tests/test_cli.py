@@ -170,18 +170,21 @@ class TestAcquireFileLock:
 
         with patch.dict(os.environ, {"TMUX_PANE": "%99"}):
             with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
-                with patch("claudeswarm.cli.LockManager") as mock_manager_class:
-                    mock_manager = Mock()
-                    mock_manager.acquire_lock.return_value = (True, None)
-                    mock_manager_class.return_value = mock_manager
+                # Mock os.kill to simulate that the agent's PID (12345) is alive
+                with patch("os.kill") as mock_kill:
+                    mock_kill.return_value = None  # Simulate process exists
+                    with patch("claudeswarm.cli.LockManager") as mock_manager_class:
+                        mock_manager = Mock()
+                        mock_manager.acquire_lock.return_value = (True, None)
+                        mock_manager_class.return_value = mock_manager
 
-                    with pytest.raises(SystemExit) as exc_info:
-                        cmd_acquire_file_lock(args)
+                        with pytest.raises(SystemExit) as exc_info:
+                            cmd_acquire_file_lock(args)
 
-                    assert exc_info.value.code == 0
-                    # Verify auto-detected agent ID was used
-                    call_kwargs = mock_manager.acquire_lock.call_args[1]
-                    assert call_kwargs["agent_id"] == "agent-auto"
+                        assert exc_info.value.code == 0
+                        # Verify auto-detected agent ID was used
+                        call_kwargs = mock_manager.acquire_lock.call_args[1]
+                        assert call_kwargs["agent_id"] == "agent-auto"
 
     def test_acquire_lock_auto_detect_fails(self, capsys):
         """Test lock acquisition fails when auto-detect fails."""
@@ -277,18 +280,21 @@ class TestReleaseFileLock:
 
         with patch.dict(os.environ, {"TMUX_PANE": "%99"}):
             with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
-                with patch("claudeswarm.cli.LockManager") as mock_manager_class:
-                    mock_manager = Mock()
-                    mock_manager.release_lock.return_value = True
-                    mock_manager_class.return_value = mock_manager
+                # Mock os.kill to simulate that the agent's PID (12345) is alive
+                with patch("os.kill") as mock_kill:
+                    mock_kill.return_value = None  # Simulate process exists
+                    with patch("claudeswarm.cli.LockManager") as mock_manager_class:
+                        mock_manager = Mock()
+                        mock_manager.release_lock.return_value = True
+                        mock_manager_class.return_value = mock_manager
 
-                    with pytest.raises(SystemExit) as exc_info:
-                        cmd_release_file_lock(args)
+                        with pytest.raises(SystemExit) as exc_info:
+                            cmd_release_file_lock(args)
 
-                    assert exc_info.value.code == 0
-                    # Verify auto-detected agent ID was used
-                    call_kwargs = mock_manager.release_lock.call_args[1]
-                    assert call_kwargs["agent_id"] == "agent-auto"
+                        assert exc_info.value.code == 0
+                        # Verify auto-detected agent ID was used
+                        call_kwargs = mock_manager.release_lock.call_args[1]
+                        assert call_kwargs["agent_id"] == "agent-auto"
 
     def test_release_lock_auto_detect_fails(self, capsys):
         """Test lock release fails when auto-detect fails."""
