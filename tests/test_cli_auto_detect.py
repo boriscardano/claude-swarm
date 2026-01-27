@@ -480,10 +480,14 @@ class TestAutoDetectInMessagingCommands:
             with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
                 with mock_pid_alive():
                     with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
-                        with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
+                        with patch(
+                            "claudeswarm.cli.validate_message_content", side_effect=lambda x: x
+                        ):
                             with patch("claudeswarm.messaging.send_message") as mock_send:
                                 mock_msg = Mock()
-                                mock_msg.to_dict.return_value = {"delivery_status": {"agent-2": True}}
+                                mock_msg.to_dict.return_value = {
+                                    "delivery_status": {"agent-2": True}
+                                }
                                 mock_send.return_value = mock_msg
 
                                 with pytest.raises(SystemExit) as exc_info:
@@ -546,7 +550,9 @@ class TestAutoDetectInMessagingCommands:
             with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
                 with mock_pid_alive():
                     with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
-                        with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
+                        with patch(
+                            "claudeswarm.cli.validate_message_content", side_effect=lambda x: x
+                        ):
                             with patch("claudeswarm.messaging.broadcast_message") as mock_broadcast:
                                 mock_broadcast.return_value = {"agent-2": True}
 

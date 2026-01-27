@@ -246,7 +246,9 @@ class TestSendMessageCommand:
                 with patch("os.kill") as mock_kill:
                     mock_kill.return_value = None
                     with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
-                        with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
+                        with patch(
+                            "claudeswarm.cli.validate_message_content", side_effect=lambda x: x
+                        ):
                             with patch("claudeswarm.messaging.send_message") as mock_send:
                                 mock_message = Mock()
                                 mock_message.to_dict.return_value = {
@@ -505,7 +507,9 @@ class TestBroadcastMessageCommand:
                 with patch("os.kill") as mock_kill:
                     mock_kill.return_value = None
                     with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
-                        with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
+                        with patch(
+                            "claudeswarm.cli.validate_message_content", side_effect=lambda x: x
+                        ):
                             with patch("claudeswarm.messaging.broadcast_message") as mock_broadcast:
                                 mock_broadcast.return_value = {"agent-2": True}
 

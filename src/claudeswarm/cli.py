@@ -482,9 +482,7 @@ def _detect_current_agent() -> tuple[str | None, dict | None]:
         if agent.get("tmux_pane_id") == tmux_pane_id:
             # Validate agent status to prevent identity confusion
             if agent.get("status") != "active":
-                logger.debug(
-                    f"Skipping non-active agent {agent.get('id')} with matching pane ID"
-                )
+                logger.debug(f"Skipping non-active agent {agent.get('id')} with matching pane ID")
                 continue
 
             # Verify PID is still running if available (prevents reused pane ID confusion)

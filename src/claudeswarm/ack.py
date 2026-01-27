@@ -271,9 +271,7 @@ class AckSystem:
                     else:
                         # ACK not found (already cleaned up), we're done
                         return
-            logger.warning(
-                f"Failed to clean up orphaned ACK {msg_id} after {max_retries} retries"
-            )
+            logger.warning(f"Failed to clean up orphaned ACK {msg_id} after {max_retries} retries")
 
         # Send the message
         try:
@@ -299,9 +297,7 @@ class AckSystem:
                     if self._save_pending_acks(acks, expected_version=version):
                         update_success = True
                         break
-                    logger.debug(
-                        f"Version conflict updating ACK, retry {attempt + 1}/3"
-                    )
+                    logger.debug(f"Version conflict updating ACK, retry {attempt + 1}/3")
 
             if not update_success:
                 logger.warning(
@@ -527,9 +523,7 @@ class AckSystem:
         cutoff = now - timedelta(seconds=self.ESCALATION_WINDOW_SECONDS)
 
         # Clean up old timestamps
-        self._escalation_timestamps = [
-            ts for ts in self._escalation_timestamps if ts > cutoff
-        ]
+        self._escalation_timestamps = [ts for ts in self._escalation_timestamps if ts > cutoff]
 
         # Clean up old escalated message IDs (1 hour TTL)
         ttl_cutoff = now - timedelta(seconds=self.ESCALATION_TTL_SECONDS)
@@ -542,9 +536,7 @@ class AckSystem:
             del self._escalated_messages[msg_id]
 
         if expired_msg_ids:
-            logger.debug(
-                f"Cleaned up {len(expired_msg_ids)} expired escalated message IDs"
-            )
+            logger.debug(f"Cleaned up {len(expired_msg_ids)} expired escalated message IDs")
 
         # Check if rate limit exceeded
         if len(self._escalation_timestamps) >= self.MAX_ESCALATIONS_PER_MINUTE:
@@ -570,9 +562,7 @@ class AckSystem:
         """
         # SECURITY: Prevent duplicate escalations (cascade prevention)
         if ack.msg_id in self._escalated_messages:
-            logger.debug(
-                f"Message {ack.msg_id} already escalated, skipping to prevent cascade"
-            )
+            logger.debug(f"Message {ack.msg_id} already escalated, skipping to prevent cascade")
             return
 
         # SECURITY: Check escalation rate limit (DOS prevention)
@@ -584,8 +574,7 @@ class AckSystem:
             return
 
         logger.warning(
-            f"Escalating unacknowledged message {ack.msg_id} after "
-            f"{self.MAX_RETRIES} retries"
+            f"Escalating unacknowledged message {ack.msg_id} after " f"{self.MAX_RETRIES} retries"
         )
 
         # Track this escalation for deduplication with timestamp
