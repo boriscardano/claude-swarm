@@ -17,18 +17,8 @@ import argparse
 import json
 import os
 import subprocess
-from pathlib import Path
 from contextlib import contextmanager
-
-
-@contextmanager
-def mock_pid_alive():
-    """Context manager to mock os.kill to simulate that test PIDs are alive."""
-    from unittest.mock import patch
-
-    with patch("os.kill") as mock_kill:
-        mock_kill.return_value = None  # Simulate process exists
-        yield mock_kill
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -40,6 +30,14 @@ from claudeswarm.cli import (
     cmd_release_file_lock,
     cmd_send_message,
 )
+
+
+@contextmanager
+def mock_pid_alive():
+    """Context manager to mock os.kill to simulate that test PIDs are alive."""
+    with patch("os.kill") as mock_kill:
+        mock_kill.return_value = None  # Simulate process exists
+        yield mock_kill
 
 
 class TestDetectCurrentAgent:
