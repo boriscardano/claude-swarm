@@ -18,6 +18,17 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from contextlib import contextmanager
+
+
+@contextmanager
+def mock_pid_alive():
+    """Context manager to mock os.kill to simulate that test PIDs are alive."""
+    from unittest.mock import patch
+
+    with patch("os.kill") as mock_kill:
+        mock_kill.return_value = None  # Simulate process exists
+        yield mock_kill
 from unittest.mock import Mock, patch
 
 import pytest
@@ -66,10 +77,12 @@ class TestDetectCurrentAgent:
         registry_path = tmp_path / "ACTIVE_AGENTS.json"
         registry_path.write_text(json.dumps(registry_data))
 
-        # Mock environment and path
+        # Mock environment, path, and os.kill to simulate that the agent's PID is alive
         with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
             with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
-                agent_id, agent_dict = _detect_current_agent()
+                with patch("os.kill") as mock_kill:
+                    mock_kill.return_value = None  # Simulate process exists
+                    agent_id, agent_dict = _detect_current_agent()
 
         assert agent_id == "agent-1"
         assert agent_dict is not None
@@ -264,7 +277,8 @@ class TestDetectCurrentAgent:
 
         with patch.dict(os.environ, {"TMUX_PANE": "%3"}):
             with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
-                agent_id, agent_dict = _detect_current_agent()
+                with mock_pid_alive():
+                    agent_id, agent_dict = _detect_current_agent()
 
         assert agent_id == "agent-2"
         assert agent_dict["tmux_pane_id"] == "%3"
@@ -321,19 +335,20 @@ class TestAutoDetectInLockCommands:
 
         with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
             with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
-                with patch("claudeswarm.cli.LockManager") as mock_manager_class:
-                    mock_manager = Mock()
-                    mock_manager.acquire_lock.return_value = (True, None)
-                    mock_manager_class.return_value = mock_manager
+                with mock_pid_alive():
+                    with patch("claudeswarm.cli.LockManager") as mock_manager_class:
+                        mock_manager = Mock()
+                        mock_manager.acquire_lock.return_value = (True, None)
+                        mock_manager_class.return_value = mock_manager
 
-                    with pytest.raises(SystemExit) as exc_info:
-                        cmd_acquire_file_lock(args)
+                        with pytest.raises(SystemExit) as exc_info:
+                            cmd_acquire_file_lock(args)
 
-                    assert exc_info.value.code == 0
-                    # Verify the call used auto-detected agent ID
-                    mock_manager.acquire_lock.assert_called_once()
-                    call_kwargs = mock_manager.acquire_lock.call_args[1]
-                    assert call_kwargs["agent_id"] == "agent-1"
+                        assert exc_info.value.code == 0
+                        # Verify the call used auto-detected agent ID
+                        mock_manager.acquire_lock.assert_called_once()
+                        call_kwargs = mock_manager.acquire_lock.call_args[1]
+                        assert call_kwargs["agent_id"] == "agent-1"
 
     def test_acquire_lock_auto_detect_failure(self, capsys):
         """Test acquire-file-lock fails when auto-detection fails."""
@@ -379,19 +394,20 @@ class TestAutoDetectInLockCommands:
 
         with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
             with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
-                with patch("claudeswarm.cli.LockManager") as mock_manager_class:
-                    mock_manager = Mock()
-                    mock_manager.release_lock.return_value = True
-                    mock_manager_class.return_value = mock_manager
+                with mock_pid_alive():
+                    with patch("claudeswarm.cli.LockManager") as mock_manager_class:
+                        mock_manager = Mock()
+                        mock_manager.release_lock.return_value = True
+                        mock_manager_class.return_value = mock_manager
 
-                    with pytest.raises(SystemExit) as exc_info:
-                        cmd_release_file_lock(args)
+                        with pytest.raises(SystemExit) as exc_info:
+                            cmd_release_file_lock(args)
 
-                    assert exc_info.value.code == 0
-                    # Verify the call used auto-detected agent ID
-                    mock_manager.release_lock.assert_called_once()
-                    call_kwargs = mock_manager.release_lock.call_args[1]
-                    assert call_kwargs["agent_id"] == "agent-1"
+                        assert exc_info.value.code == 0
+                        # Verify the call used auto-detected agent ID
+                        mock_manager.release_lock.assert_called_once()
+                        call_kwargs = mock_manager.release_lock.call_args[1]
+                        assert call_kwargs["agent_id"] == "agent-1"
 
     def test_release_lock_auto_detect_failure(self, capsys):
         """Test release-file-lock fails when auto-detection fails."""
@@ -464,20 +480,21 @@ class TestAutoDetectInMessagingCommands:
 
         with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
             with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
-                with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
-                    with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
-                        with patch("claudeswarm.messaging.send_message") as mock_send:
-                            mock_msg = Mock()
-                            mock_msg.to_dict.return_value = {"delivery_status": {"agent-2": True}}
-                            mock_send.return_value = mock_msg
+                with mock_pid_alive():
+                    with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
+                        with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
+                            with patch("claudeswarm.messaging.send_message") as mock_send:
+                                mock_msg = Mock()
+                                mock_msg.to_dict.return_value = {"delivery_status": {"agent-2": True}}
+                                mock_send.return_value = mock_msg
 
-                            with pytest.raises(SystemExit) as exc_info:
-                                cmd_send_message(args)
+                                with pytest.raises(SystemExit) as exc_info:
+                                    cmd_send_message(args)
 
-                            assert exc_info.value.code == 0
-                            # Verify the call used auto-detected sender ID
-                            call_kwargs = mock_send.call_args[1]
-                            assert call_kwargs["sender_id"] == "agent-1"
+                                assert exc_info.value.code == 0
+                                # Verify the call used auto-detected sender ID
+                                call_kwargs = mock_send.call_args[1]
+                                assert call_kwargs["sender_id"] == "agent-1"
 
     def test_send_message_auto_detect_failure(self, capsys):
         """Test send-message fails when auto-detection fails."""
@@ -529,18 +546,19 @@ class TestAutoDetectInMessagingCommands:
 
         with patch.dict(os.environ, {"TMUX_PANE": "%2"}):
             with patch("claudeswarm.project.get_active_agents_path", return_value=registry_path):
-                with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
-                    with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
-                        with patch("claudeswarm.messaging.broadcast_message") as mock_broadcast:
-                            mock_broadcast.return_value = {"agent-2": True}
+                with mock_pid_alive():
+                    with patch("claudeswarm.cli.validate_agent_id", side_effect=lambda x: x):
+                        with patch("claudeswarm.cli.validate_message_content", side_effect=lambda x: x):
+                            with patch("claudeswarm.messaging.broadcast_message") as mock_broadcast:
+                                mock_broadcast.return_value = {"agent-2": True}
 
-                            with pytest.raises(SystemExit) as exc_info:
-                                cmd_broadcast_message(args)
+                                with pytest.raises(SystemExit) as exc_info:
+                                    cmd_broadcast_message(args)
 
-                            assert exc_info.value.code == 0
-                            # Verify the call used auto-detected sender ID
-                            call_kwargs = mock_broadcast.call_args[1]
-                            assert call_kwargs["sender_id"] == "agent-1"
+                                assert exc_info.value.code == 0
+                                # Verify the call used auto-detected sender ID
+                                call_kwargs = mock_broadcast.call_args[1]
+                                assert call_kwargs["sender_id"] == "agent-1"
 
     def test_broadcast_message_auto_detect_failure(self, capsys):
         """Test broadcast-message fails when auto-detection fails."""

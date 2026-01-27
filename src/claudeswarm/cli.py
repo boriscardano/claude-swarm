@@ -476,8 +476,39 @@ def _detect_current_agent() -> tuple[str | None, dict | None]:
     agents = registry.get("agents", [])
 
     # Try matching by TMUX_PANE env var (works in sandboxed environments!)
+    # SECURITY: Also validate that the agent's PID is still valid to prevent
+    # identity confusion when tmux pane IDs are reused after panes close.
     for agent in agents:
         if agent.get("tmux_pane_id") == tmux_pane_id:
+            # Validate agent status to prevent identity confusion
+            if agent.get("status") != "active":
+                logger.debug(
+                    f"Skipping non-active agent {agent.get('id')} with matching pane ID"
+                )
+                continue
+
+            # Verify PID is still running if available (prevents reused pane ID confusion)
+            # If no PID is recorded, we skip this check for backward compatibility
+            agent_pid = agent.get("pid")
+            if agent_pid:
+                try:
+                    os.kill(agent_pid, 0)  # Check if process exists
+                except ProcessLookupError:
+                    # PID no longer exists - this is a stale registry entry
+                    logger.debug(
+                        f"Agent {agent.get('id')} PID {agent_pid} no longer running, "
+                        f"skipping stale registry entry"
+                    )
+                    continue
+                except PermissionError:
+                    pass  # Process exists but we can't signal it - that's OK
+                except OSError:
+                    # Other OS error - be lenient and allow the match
+                    logger.debug(
+                        f"Could not verify PID {agent_pid} for agent {agent.get('id')}, "
+                        f"allowing match anyway"
+                    )
+
             return agent.get("id"), agent
 
     # Fallback: Try converting TMUX_PANE to pane index format

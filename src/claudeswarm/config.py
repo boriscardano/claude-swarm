@@ -475,6 +475,17 @@ def _load_toml_config(path: Path) -> dict[str, Any]:
             "TOML support not available. Requires Python 3.11+ or install tomli: pip install tomli"
         )
 
+    # Check file size to prevent large file DoS attacks (same as YAML)
+    try:
+        file_size = path.stat().st_size
+        if file_size > MAX_CONFIG_FILE_SIZE_BYTES:
+            raise ConfigValidationError(
+                f"Configuration file too large: {file_size} bytes "
+                f"(max {MAX_CONFIG_FILE_SIZE_BYTES} bytes)"
+            )
+    except OSError as e:
+        raise ConfigValidationError(f"Failed to check file size for {path}: {e}") from e
+
     try:
         with open(path, "rb") as f:
             return tomllib.load(f)

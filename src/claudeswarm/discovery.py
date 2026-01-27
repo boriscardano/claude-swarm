@@ -152,7 +152,8 @@ class AgentRegistry:
     """Registry of all discovered agents.
 
     Attributes:
-        session_name: Name of the tmux session being monitored
+        session_name: Primary tmux session name (for backward compatibility)
+        session_names: Set of all tmux session names containing agents
         updated_at: Timestamp of last registry update
         agents: List of discovered agents
     """
@@ -160,20 +161,34 @@ class AgentRegistry:
     session_name: str
     updated_at: str  # ISO 8601 format
     agents: list[Agent]
+    session_names: set[str] | None = None  # Multi-session support
 
     def to_dict(self) -> dict:
         """Convert registry to dictionary for JSON serialization."""
-        return {
+        result = {
             "session_name": self.session_name,
             "updated_at": self.updated_at,
             "agents": [agent.to_dict() for agent in self.agents],
         }
+        # Include all session names for multi-session support
+        if self.session_names:
+            result["session_names"] = sorted(self.session_names)
+        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> "AgentRegistry":
         """Create AgentRegistry from dictionary."""
         agents = [Agent.from_dict(a) for a in data.get("agents", [])]
-        return cls(session_name=data["session_name"], updated_at=data["updated_at"], agents=agents)
+        # Support both old format (session_name only) and new format (session_names)
+        session_names = None
+        if "session_names" in data:
+            session_names = set(data["session_names"])
+        return cls(
+            session_name=data["session_name"],
+            updated_at=data["updated_at"],
+            agents=agents,
+            session_names=session_names,
+        )
 
 
 def get_registry_path(project_root: Path | None = None) -> Path:
@@ -761,6 +776,47 @@ def _is_in_project(pid: int, project_root: Path) -> bool:
         return False
 
 
+def _is_process_alive(pid: int) -> bool:
+    """Check if a process with given PID is still running.
+
+    Args:
+        pid: Process ID to check
+
+    Returns:
+        True if process exists, False otherwise
+    """
+    try:
+        # Signal 0 doesn't actually send a signal, just checks if process exists
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Process exists but we don't have permission to signal it
+        return True
+    except OSError:
+        return False
+
+
+def _validate_pid_still_claude(pid: int) -> bool:
+    """Validate that a recorded PID still corresponds to a Claude process.
+
+    This prevents PID reuse attacks where a new process gets an old PID
+    after the original Claude process terminates.
+
+    Args:
+        pid: Process ID to validate
+
+    Returns:
+        True if PID is still running Claude Code, False otherwise
+    """
+    if not _is_process_alive(pid):
+        return False
+
+    # Check if the process or its children are running Claude Code
+    return _has_claude_child_process(pid)
+
+
 def _is_claude_code_process(command: str, pid: int) -> bool:
     """Check if a process appears to be Claude Code.
 
@@ -993,15 +1049,30 @@ def discover_agents(
                 age_seconds = (current_time - last_seen).total_seconds()
 
                 if age_seconds < stale_threshold:
-                    # Keep as stale
-                    agent.status = "stale"
-                    discovered_agents.append(agent)
+                    # SECURITY: Validate PID is still running Claude Code
+                    # This prevents PID reuse attacks where a recycled PID
+                    # could be confused with a terminated agent
+                    if _validate_pid_still_claude(agent.pid):
+                        # Keep as stale
+                        agent.status = "stale"
+                        discovered_agents.append(agent)
+                    else:
+                        logger.debug(
+                            f"Agent {agent.id} with PID {agent.pid} no longer running "
+                            f"Claude Code, marking as dead"
+                        )
                 # else: agent is too old, don't include (dead)
             except (ValueError, TypeError):
                 # Invalid timestamp, skip this agent
                 pass
 
-    # Determine session name for registry
+    # Collect all unique session names from discovered agents
+    all_session_names: set[str] = set()
+    for agent in discovered_agents:
+        if agent.session_name:
+            all_session_names.add(agent.session_name)
+
+    # Determine primary session name for registry (backward compatibility)
     if session_name:
         registry_session = session_name
     elif discovered_agents:
@@ -1011,9 +1082,12 @@ def discover_agents(
         # No agents found, use a default
         registry_session = "unknown"
 
-    # Create and save registry
+    # Create and save registry with multi-session support
     registry = AgentRegistry(
-        session_name=registry_session, updated_at=current_time.isoformat(), agents=discovered_agents
+        session_name=registry_session,
+        updated_at=current_time.isoformat(),
+        agents=discovered_agents,
+        session_names=all_session_names if all_session_names else None,
     )
 
     return registry

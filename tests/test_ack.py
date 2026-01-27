@@ -259,11 +259,19 @@ class TestAckSystem:
 
         ack_system._save_pending_acks([ack])
 
-        # ACK from different agent
+        # ACK from different agent - should be REJECTED to prevent spoofing
         result = ack_system.receive_ack("test-msg-id", "agent-3")
-        assert result is True  # Still accepts
+        assert result is False  # Spoofed ACK is rejected
 
-        # Verify ACK was removed
+        # Verify ACK was NOT removed (still pending)
+        pending = ack_system.check_pending_acks()
+        assert len(pending) == 1
+
+        # ACK from correct recipient should still work
+        result = ack_system.receive_ack("test-msg-id", "agent-2")
+        assert result is True
+
+        # Now it should be removed
         pending = ack_system.check_pending_acks()
         assert len(pending) == 0
 

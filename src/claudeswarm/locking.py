@@ -765,3 +765,98 @@ class LockManager:
             logger.info(f"Cleaned up {count} lock(s) for agent {agent_id}")
 
         return count
+
+    def cleanup_orphaned_locks(self, known_agent_ids: set[str] | None = None) -> int:
+        """Clean up locks from crashed or terminated agents.
+
+        This method identifies and removes locks that are orphaned:
+        1. Stale locks older than configured timeout
+        2. Locks from agents not in the known_agent_ids set (if provided)
+        3. Locks from agents whose PIDs no longer exist (dead processes)
+
+        This is more thorough than cleanup_agent_locks() which only cleans up
+        locks for a specific known agent. This method discovers and removes
+        locks from unknown/crashed agents.
+
+        Args:
+            known_agent_ids: Optional set of active agent IDs. If provided,
+                           locks from agents NOT in this set will be removed.
+                           If None, only PID-based orphan detection is used.
+
+        Returns:
+            Number of orphaned locks cleaned up
+        """
+        count = 0
+
+        for lock_file in self.lock_dir.glob("*.lock"):
+            lock = self._read_lock(lock_file)
+            if not lock:
+                # Corrupted lock file, remove it
+                try:
+                    lock_file.unlink()
+                    count += 1
+                    logger.debug(f"Removed corrupted lock file: {lock_file}")
+                except (FileNotFoundError, OSError):
+                    pass
+                continue
+
+            should_remove = False
+            removal_reason = ""
+
+            # Check 1: Stale locks
+            if lock.is_stale():
+                should_remove = True
+                removal_reason = f"stale (age: {lock.age_seconds():.1f}s)"
+
+            # Check 2: Unknown agent (if known_agent_ids provided)
+            elif known_agent_ids is not None and lock.agent_id not in known_agent_ids:
+                should_remove = True
+                removal_reason = f"unknown agent {lock.agent_id}"
+
+            # Check 3: Dead process detection
+            # Try to detect if the lock holder's process is still running
+            # This uses a heuristic: if we can find a process ID pattern in
+            # the lock file path or agent_id, check if that PID is alive
+            # Note: This is best-effort as we don't always have PID info
+            if not should_remove:
+                # Try to get PID from discovery registry if available
+                try:
+                    from .discovery import get_agent_by_id
+
+                    agent = get_agent_by_id(lock.agent_id)
+                    if agent and agent.pid:
+                        try:
+                            os.kill(agent.pid, 0)  # Check if process exists
+                        except ProcessLookupError:
+                            # Process no longer exists - lock is orphaned
+                            should_remove = True
+                            removal_reason = f"holder PID {agent.pid} no longer exists"
+                        except PermissionError:
+                            # Process exists but we can't signal it - leave lock alone
+                            pass
+                        except OSError:
+                            # Other OS error - process probably doesn't exist
+                            should_remove = True
+                            removal_reason = f"holder PID {agent.pid} inaccessible"
+                except Exception:
+                    # Discovery not available or other error - skip PID check
+                    pass
+
+            if should_remove:
+                try:
+                    lock_file.unlink()
+                    count += 1
+                    logger.info(
+                        f"Removed orphaned lock on '{lock.filepath}' from {lock.agent_id}: "
+                        f"{removal_reason}"
+                    )
+                except FileNotFoundError:
+                    # Lock was already deleted by another process
+                    pass
+                except OSError as e:
+                    logger.warning(f"Failed to remove orphaned lock {lock_file}: {e}")
+
+        if count > 0:
+            logger.info(f"Cleaned up {count} orphaned lock(s)")
+
+        return count

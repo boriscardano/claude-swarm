@@ -292,7 +292,7 @@ class TestTmuxMessageDelivery:
     @patch("subprocess.run")
     def test_send_to_pane_success(self, mock_run):
         """Test successful message delivery to pane."""
-        # Mock for both verify_pane_exists and send_keys calls
+        # Mock for verify_pane_exists, send message, and send Enter calls
         mock_run.return_value = Mock(
             returncode=0, stderr="", stdout="session:0.1\n"  # For verify_pane_exists
         )
@@ -300,7 +300,7 @@ class TestTmuxMessageDelivery:
         result = TmuxMessageDelivery.send_to_pane("session:0.1", "Test message")
 
         assert result is True
-        # Should be called three times: verify, send command, send Enter key
+        # Should be called three times: verify, send message (literal), send Enter
         assert mock_run.call_count == 3
 
         # First call: verify pane exists (list-panes)
@@ -308,22 +308,22 @@ class TestTmuxMessageDelivery:
         assert verify_call_args[0] == "tmux"
         assert verify_call_args[1] == "list-panes"
 
-        # Second call: send the command with -l flag
-        first_call_args = mock_run.call_args_list[1][0][0]
-        assert first_call_args[0] == "tmux"
-        assert first_call_args[1] == "send-keys"
-        assert first_call_args[2] == "-l"  # Literal interpretation flag
-        assert first_call_args[3] == "-t"
-        assert first_call_args[4] == "session:0.1"
-        assert first_call_args[5].startswith("# [MESSAGE]")
+        # Second call: send the message with -l flag (literal)
+        message_call_args = mock_run.call_args_list[1][0][0]
+        assert message_call_args[0] == "tmux"
+        assert message_call_args[1] == "send-keys"
+        assert message_call_args[2] == "-l"  # Literal interpretation flag
+        assert message_call_args[3] == "-t"
+        assert message_call_args[4] == "session:0.1"
+        assert message_call_args[5].startswith("# [MESSAGE]")
 
-        # Third call: send Enter key
-        second_call_args = mock_run.call_args_list[2][0][0]
-        assert second_call_args[0] == "tmux"
-        assert second_call_args[1] == "send-keys"
-        assert second_call_args[2] == "-t"
-        assert second_call_args[3] == "session:0.1"
-        assert second_call_args[4] == "Enter"
+        # Third call: send Enter key (not literal)
+        enter_call_args = mock_run.call_args_list[2][0][0]
+        assert enter_call_args[0] == "tmux"
+        assert enter_call_args[1] == "send-keys"
+        assert enter_call_args[2] == "-t"
+        assert enter_call_args[3] == "session:0.1"
+        assert enter_call_args[4] == "Enter"
 
     @patch("subprocess.run")
     def test_send_to_pane_failure(self, mock_run):
