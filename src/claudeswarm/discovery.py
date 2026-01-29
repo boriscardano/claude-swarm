@@ -36,6 +36,7 @@ import threading
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .config import get_config
 from .file_lock import FileLock, FileLockTimeout
@@ -1360,7 +1361,7 @@ def list_agents_with_skills(
     return results
 
 
-def get_agent_with_card(agent_id: str) -> tuple[Agent | None, "AgentCard | None"]:
+def get_agent_with_card(agent_id: str) -> tuple[Agent | None, Any]:
     """Get an agent along with its capability card.
 
     Args:
@@ -1370,7 +1371,7 @@ def get_agent_with_card(agent_id: str) -> tuple[Agent | None, "AgentCard | None"
         Tuple of (Agent, AgentCard), either may be None
     """
     try:
-        from .agent_cards import AgentCard, AgentCardRegistry
+        from .agent_cards import AgentCardRegistry
     except ImportError:
         return get_agent_by_id(agent_id), None
 

@@ -275,7 +275,7 @@ class TaskInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TaskInfo":
+    def from_dict(cls, data: dict) -> TaskInfo:
         """Create from dictionary."""
         return cls(
             objective=data.get("objective", ""),

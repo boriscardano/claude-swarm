@@ -60,7 +60,6 @@ def atomic_write(filepath: Path, content: str) -> None:
         >>> atomic_write(Path("data.json"), '{"key": "value"}')
         >>> # File is guaranteed to be complete, never partially written
     """
-    import os
     import tempfile
 
     # Ensure parent directory exists
