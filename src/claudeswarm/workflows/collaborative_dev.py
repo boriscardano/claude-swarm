@@ -7,7 +7,7 @@ Multi-agent workflow for collaborative feature development:
 3. Agent 3 (Frontend): Implements frontend changes
 4. Agent 4 (QA): Writes tests, validates, commits & pushes
 
-This workflow showcases true multi-agent coordination for the E2B hackathon.
+This workflow showcases true multi-agent coordination.
 """
 
 import asyncio

@@ -578,7 +578,67 @@ class TmuxMessageDelivery:
     """Handles message delivery via tmux send-keys.
 
     Provides proper escaping and error handling for tmux integration.
+    Includes pane existence caching to avoid repeated failed lookups.
     """
+
+    # Cache of pane existence checks: pane_id -> (exists: bool, timestamp: float)
+    # Negative results (pane not found) are cached for a short time to avoid repeated failures
+    _pane_cache: dict[str, tuple[bool, float]] = {}
+    _pane_cache_lock = threading.Lock()
+    _PANE_CACHE_TTL_SECONDS = 30.0  # Cache negative results for 30 seconds
+    _PANE_CACHE_POSITIVE_TTL_SECONDS = 300.0  # Cache positive results for 5 minutes
+
+    @classmethod
+    def _get_cached_pane_exists(cls, pane_id: str) -> bool | None:
+        """Check if pane existence is cached and still valid.
+
+        Args:
+            pane_id: The tmux pane identifier
+
+        Returns:
+            True if pane exists (cached), False if pane doesn't exist (cached),
+            None if not in cache or cache expired
+        """
+        with cls._pane_cache_lock:
+            if pane_id in cls._pane_cache:
+                exists, timestamp = cls._pane_cache[pane_id]
+                age = time.time() - timestamp
+                ttl = cls._PANE_CACHE_POSITIVE_TTL_SECONDS if exists else cls._PANE_CACHE_TTL_SECONDS
+                if age < ttl:
+                    return exists
+                # Cache expired, remove entry
+                del cls._pane_cache[pane_id]
+            return None
+
+    @classmethod
+    def _cache_pane_exists(cls, pane_id: str, exists: bool) -> None:
+        """Cache the pane existence result.
+
+        Args:
+            pane_id: The tmux pane identifier
+            exists: Whether the pane exists
+        """
+        with cls._pane_cache_lock:
+            cls._pane_cache[pane_id] = (exists, time.time())
+
+    @classmethod
+    def clear_pane_cache(cls) -> None:
+        """Clear the pane existence cache.
+
+        Useful for testing or when panes may have changed.
+        """
+        with cls._pane_cache_lock:
+            cls._pane_cache.clear()
+
+    @classmethod
+    def invalidate_pane(cls, pane_id: str) -> None:
+        """Invalidate a specific pane from the cache.
+
+        Args:
+            pane_id: The tmux pane identifier to invalidate
+        """
+        with cls._pane_cache_lock:
+            cls._pane_cache.pop(pane_id, None)
 
     @staticmethod
     def escape_for_tmux(text: str) -> str:
@@ -767,17 +827,23 @@ class TmuxMessageDelivery:
         except Exception as e:
             raise TmuxError(f"Unexpected error sending to pane {pane_id}: {e}") from e
 
-    @staticmethod
-    def verify_pane_exists(pane_id: str, timeout: float = TMUX_VERIFY_TIMEOUT_SECONDS) -> bool:
+    @classmethod
+    def verify_pane_exists(
+        cls, pane_id: str, timeout: float = TMUX_VERIFY_TIMEOUT_SECONDS, use_cache: bool = True
+    ) -> bool:
         """Verify that a tmux pane exists.
 
         Supports both pane ID formats:
         - session:window.pane format (e.g., "0:1.0")
         - %N format (e.g., "%5") - stable internal pane ID
 
+        Uses caching to avoid repeated failures for non-existent panes.
+        Negative results are cached for 30 seconds, positive for 5 minutes.
+
         Args:
             pane_id: tmux pane identifier in either format
             timeout: Timeout in seconds for tmux operation
+            use_cache: Whether to use cached results (default: True)
 
         Returns:
             True if pane exists, False otherwise
@@ -786,6 +852,13 @@ class TmuxMessageDelivery:
             Returns False for any errors (socket issues, timeouts, etc.)
             to avoid raising exceptions during validation checks.
         """
+        # Check cache first
+        if use_cache:
+            cached = cls._get_cached_pane_exists(pane_id)
+            if cached is not None:
+                logger.debug(f"Pane {pane_id} exists (cached): {cached}")
+                return cached
+
         try:
             # Use different format string based on pane_id format
             if pane_id.startswith("%"):
@@ -808,22 +881,31 @@ class TmuxMessageDelivery:
                     logger.debug("Tmux server not running")
                 elif "operation not permitted" in stderr or "permission denied" in stderr:
                     logger.warning(f"Permission denied accessing tmux socket: {result.stderr}")
+                # Cache the negative result
+                cls._cache_pane_exists(pane_id, False)
                 return False
 
             # Check if our pane_id is in the list
             panes = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
             exists = pane_id in panes
             logger.debug(f"Pane {pane_id} exists: {exists}")
+
+            # Cache the result
+            cls._cache_pane_exists(pane_id, exists)
             return exists
 
         except subprocess.TimeoutExpired:
-            logger.warning(f"Timeout verifying pane {pane_id}")
+            logger.debug(f"Timeout verifying pane {pane_id}")
+            # Cache negative result on timeout
+            cls._cache_pane_exists(pane_id, False)
             return False
         except FileNotFoundError:
-            logger.warning("tmux command not found")
+            logger.debug("tmux command not found")
             return False
         except Exception as e:
-            logger.error(f"Error verifying pane {pane_id}: {e}")
+            logger.debug(f"Error verifying pane {pane_id}: {e}")
+            # Cache negative result on error
+            cls._cache_pane_exists(pane_id, False)
             return False
 
 
@@ -1241,10 +1323,8 @@ class MessagingSystem:
             logger.info(f"Message {message.msg_id} delivered to {recipient_id}")
 
         except (TmuxError, TmuxSocketError, TmuxPaneNotFoundError, TmuxTimeoutError) as e:
-            # Tmux errors are expected in sandboxed environments
-            # Don't raise - just log to file and continue
-            # Log at INFO level so delivery failures are visible
-            logger.info(
+            # Tmux delivery failed - message will be saved to inbox
+            logger.debug(
                 f"Real-time delivery failed for {recipient_id}, saved to inbox: {type(e).__name__}"
             )
 
@@ -1254,21 +1334,21 @@ class MessagingSystem:
             )
             raise MessageDeliveryError(f"Message delivery failed: {e}") from e
 
-        finally:
-            # Always record rate limit if we got past the rate limit check
-            # (even if delivery failed, we attempted to send)
-            self.rate_limiter.record_message(sender_id)
+        # Always execute these operations regardless of path taken above
+        # Record rate limit if we got past the rate limit check
+        # (even if delivery failed, we attempted to send)
+        self.rate_limiter.record_message(sender_id)
 
-            # Always log the message attempt (inbox delivery)
-            delivery_status = {recipient_id: success}
+        # Always log the message attempt (inbox delivery)
+        delivery_status = {recipient_id: success}
 
-            # Store delivery status in message for CLI access
-            message.delivery_status = delivery_status
+        # Store delivery status in message for CLI access
+        message.delivery_status = delivery_status
 
-            try:
-                self.message_logger.log_message(message, delivery_status)
-            except Exception as log_error:
-                logger.warning(f"Failed to log message: {log_error}")
+        try:
+            self.message_logger.log_message(message, delivery_status)
+        except Exception as log_error:
+            logger.warning(f"Failed to log message: {log_error}")
 
         return message
 
@@ -1449,7 +1529,7 @@ class MessagingSystem:
                         break
 
                 if not pane_id:
-                    logger.warning(f"Pane not found for recipient {recipient_id}")
+                    logger.debug(f"Pane not found for recipient {recipient_id}")
                     delivery_status[recipient_id] = False
                     continue
 
@@ -1461,11 +1541,11 @@ class MessagingSystem:
                 logger.debug(f"Broadcast delivered to {recipient_id}")
 
             except (TmuxPaneNotFoundError, TmuxSocketError) as e:
-                logger.warning(f"Failed to deliver broadcast to {recipient_id}: {e}")
+                logger.debug(f"Failed to deliver broadcast to {recipient_id}: {e}")
                 delivery_status[recipient_id] = False
 
             except TmuxTimeoutError as e:
-                logger.warning(f"Timeout delivering broadcast to {recipient_id}: {e}")
+                logger.debug(f"Timeout delivering broadcast to {recipient_id}: {e}")
                 delivery_status[recipient_id] = False
 
             except Exception as e:

@@ -12,6 +12,7 @@ the claudeswarm package, including:
 from __future__ import annotations
 
 import json
+import os
 import secrets
 from datetime import datetime
 from pathlib import Path

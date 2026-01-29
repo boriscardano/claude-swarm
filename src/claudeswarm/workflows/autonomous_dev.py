@@ -14,7 +14,7 @@ Core phases:
 7. Deployment (Agent 3) - Create GitHub PR with changes
 
 Author: agent-1
-Created: 2025-11-19 (E2B Hackathon Prep)
+Created: 2025-11-19
 """
 
 import asyncio
@@ -479,8 +479,8 @@ class AutonomousDevelopmentLoop:
         agent_id = "agent-0"
         print(f"  [{agent_id}] Running test suite...")
 
-        # TODO: Execute real tests in E2B sandbox
-        # result = await sandbox.execute_command("pytest tests/")
+        # TODO: Execute real tests
+        # result = await subprocess.run(["pytest", "tests/"])
 
         # Simulate test results
         test_results = {
