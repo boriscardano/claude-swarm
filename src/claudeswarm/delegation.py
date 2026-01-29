@@ -35,7 +35,7 @@ from .agent_cards import AgentCard, AgentCardRegistry
 from .file_lock import FileLock, FileLockTimeout
 from .logging_config import get_logger
 from .project import get_project_root
-from .tasks import Task, TaskManager, TaskPriority, TaskStatus
+from .tasks import Task, TaskManager, TaskPriority
 
 __all__ = [
     "DelegationManager",
@@ -180,7 +180,7 @@ class DelegationResult:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "DelegationResult":
+    def from_dict(cls, data: dict[str, Any]) -> DelegationResult:
         """Create from dictionary."""
         return cls(**data)
 

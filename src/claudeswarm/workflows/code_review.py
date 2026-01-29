@@ -15,8 +15,11 @@ Author: agent-1
 Created: 2025-11-19
 """
 
+import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
+from enum import Enum
+from typing import Any
 
 from claudeswarm.messaging import MessageType, MessagingSystem
 
@@ -44,7 +47,7 @@ class ReviewFeedback:
     suggestions: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
     approved: bool = False
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
@@ -433,11 +436,6 @@ REVIEW_CHECKLIST_GENERAL = [
 # standards are met. Agents review each other's work and iterate until approval.
 
 
-from enum import Enum
-from typing import Any
-import uuid
-
-
 class ReviewResult(Enum):
     """Result of a code review."""
 
@@ -468,7 +466,7 @@ class ReviewIteration:
     feedback: str = ""
     issues_found: list[str] = field(default_factory=list)
     suggestions: list[str] = field(default_factory=list)
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self):
         if isinstance(self.result, str):
@@ -502,7 +500,7 @@ class AutonomousReviewSession:
     iterations: list[ReviewIteration] = field(default_factory=list)
     status: str = "pending"  # pending, in_progress, approved, failed
     max_iterations: int = 5
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
     def add_iteration(self, iteration: ReviewIteration) -> None:
@@ -512,10 +510,10 @@ class AutonomousReviewSession:
 
         if iteration.result == ReviewResult.APPROVED:
             self.status = "approved"
-            self.completed_at = datetime.now()
+            self.completed_at = datetime.now(UTC)
         elif len(self.iterations) >= self.max_iterations:
             self.status = "failed"
-            self.completed_at = datetime.now()
+            self.completed_at = datetime.now(UTC)
 
     @property
     def current_iteration(self) -> int:
@@ -582,9 +580,10 @@ class AutonomousCodeReview:
             Best reviewer agent ID, or None if none available
         """
         try:
+            from pathlib import Path
+
             from claudeswarm.agent_cards import AgentCardRegistry
             from claudeswarm.delegation import FILE_EXTENSION_SKILLS
-            from pathlib import Path
 
             # Determine required skills from file extensions
             required_skills = set()
@@ -695,7 +694,7 @@ class AutonomousCodeReview:
             last = session.iterations[-1]
             if last.issues_found:
                 previous_feedback = (
-                    f"\n\nPrevious issues to verify:\n"
+                    "\n\nPrevious issues to verify:\n"
                     + "\n".join(f"- {issue}" for issue in last.issues_found)
                 )
 

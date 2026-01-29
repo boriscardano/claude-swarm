@@ -29,6 +29,7 @@ Example memory:
 from __future__ import annotations
 
 import json
+import re
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -88,7 +89,7 @@ class TaskMemory:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TaskMemory":
+    def from_dict(cls, data: dict[str, Any]) -> TaskMemory:
         """Create from dictionary."""
         return cls(**data)
 
@@ -137,7 +138,7 @@ class LearnedPattern:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "LearnedPattern":
+    def from_dict(cls, data: dict[str, Any]) -> LearnedPattern:
         """Create from dictionary."""
         return cls(**data)
 
@@ -215,7 +216,7 @@ class AgentRelationship:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AgentRelationship":
+    def from_dict(cls, data: dict[str, Any]) -> AgentRelationship:
         """Create from dictionary."""
         return cls(**data)
 
@@ -421,11 +422,7 @@ class AgentMemory:
         Returns:
             List of trusted agent IDs
         """
-        return [
-            rel.agent_id
-            for rel in self.relationships.values()
-            if rel.trust_score >= min_trust
-        ]
+        return [rel.agent_id for rel in self.relationships.values() if rel.trust_score >= min_trust]
 
     def get_best_agents_for_skill(self, skill: str) -> list[tuple[str, float]]:
         """Get agents known to be good at a skill.
@@ -456,9 +453,7 @@ class AgentMemory:
             "agent_id": self.agent_id,
             "task_history": [t.to_dict() for t in self.task_history],
             "patterns": [p.to_dict() for p in self.patterns],
-            "relationships": {
-                k: v.to_dict() for k, v in self.relationships.items()
-            },
+            "relationships": {k: v.to_dict() for k, v in self.relationships.items()},
             "knowledge": self.knowledge,
             "preferences": self.preferences,
             "created_at": self.created_at,
@@ -466,19 +461,14 @@ class AgentMemory:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AgentMemory":
+    def from_dict(cls, data: dict[str, Any]) -> AgentMemory:
         """Create from dictionary."""
         return cls(
             agent_id=data["agent_id"],
-            task_history=[
-                TaskMemory.from_dict(t) for t in data.get("task_history", [])
-            ],
-            patterns=[
-                LearnedPattern.from_dict(p) for p in data.get("patterns", [])
-            ],
+            task_history=[TaskMemory.from_dict(t) for t in data.get("task_history", [])],
+            patterns=[LearnedPattern.from_dict(p) for p in data.get("patterns", [])],
             relationships={
-                k: AgentRelationship.from_dict(v)
-                for k, v in data.get("relationships", {}).items()
+                k: AgentRelationship.from_dict(v) for k, v in data.get("relationships", {}).items()
             },
             knowledge=data.get("knowledge", {}),
             preferences=data.get("preferences", {}),
@@ -529,10 +519,34 @@ class MemoryStore:
 
         Returns:
             Path to the memory file
+
+        Raises:
+            ValueError: If agent_id contains invalid characters or path traversal attempts
         """
-        # Sanitize agent_id for filename
-        safe_id = agent_id.replace("/", "_").replace("\\", "_")
-        return self.memory_dir / f"{safe_id}.json"
+        # Validate agent_id matches expected pattern
+        if not re.match(r"^[a-zA-Z0-9_-]+$", agent_id):
+            raise ValueError(
+                f"Invalid agent_id '{agent_id}': must contain only alphanumeric characters, underscores, and hyphens"
+            )
+
+        # Build the path
+        memory_file = self.memory_dir / f"{agent_id}.json"
+
+        # Resolve to absolute path and verify it's within memory_dir
+        try:
+            resolved_file = memory_file.resolve()
+            resolved_dir = self.memory_dir.resolve()
+
+            # Check if the resolved file is actually within memory_dir
+            # This prevents path traversal attacks using .. or symlinks
+            if not str(resolved_file).startswith(str(resolved_dir)):
+                raise ValueError(
+                    f"Path traversal attempt detected: agent_id '{agent_id}' resolves outside memory directory"
+                )
+        except (OSError, RuntimeError) as e:
+            raise ValueError(f"Invalid path for agent_id '{agent_id}': {e}")
+
+        return memory_file
 
     def _read_memory(self, agent_id: str) -> AgentMemory | None:
         """Read an agent's memory from file.

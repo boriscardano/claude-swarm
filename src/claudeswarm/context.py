@@ -78,7 +78,7 @@ class ContextDecision:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ContextDecision":
+    def from_dict(cls, data: dict[str, Any]) -> ContextDecision:
         """Create from dictionary."""
         return cls(**data)
 
@@ -161,9 +161,21 @@ class SharedContext:
         Args:
             filepath: Path to the file
             agent_id: Agent touching the file
+
+        Raises:
+            ValueError: If filepath is absolute or contains path traversal attempts
         """
-        # Normalize path
-        normalized = str(Path(filepath))
+        # Validate filepath
+        path = Path(filepath)
+
+        # Reject absolute paths
+        if path.is_absolute():
+            raise ValueError(f"Absolute paths not allowed: {filepath}")
+
+        # Normalize and check for path traversal
+        normalized = str(path)
+        if ".." in Path(normalized).parts:
+            raise ValueError(f"Path traversal not allowed: {filepath}")
 
         if normalized not in self.files_touched:
             if len(self.files_touched) >= MAX_FILES_PER_CONTEXT:
@@ -235,13 +247,12 @@ class SharedContext:
         data = asdict(self)
         # Convert decisions
         data["decisions"] = [
-            d.to_dict() if isinstance(d, ContextDecision) else d
-            for d in self.decisions
+            d.to_dict() if isinstance(d, ContextDecision) else d for d in self.decisions
         ]
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SharedContext":
+    def from_dict(cls, data: dict[str, Any]) -> SharedContext:
         """Create from dictionary."""
         # Convert decisions
         decisions = [
@@ -308,9 +319,7 @@ class ContextStore:
             return {}
 
         try:
-            with FileLock(
-                self.contexts_path, timeout=CONTEXT_LOCK_TIMEOUT_SECONDS, shared=True
-            ):
+            with FileLock(self.contexts_path, timeout=CONTEXT_LOCK_TIMEOUT_SECONDS, shared=True):
                 with open(self.contexts_path, encoding="utf-8") as f:
                     data = json.load(f)
 
@@ -341,9 +350,7 @@ class ContextStore:
         }
 
         try:
-            with FileLock(
-                self.contexts_path, timeout=CONTEXT_LOCK_TIMEOUT_SECONDS, shared=False
-            ):
+            with FileLock(self.contexts_path, timeout=CONTEXT_LOCK_TIMEOUT_SECONDS, shared=False):
                 temp_path = self.contexts_path.with_suffix(".json.tmp")
                 with open(temp_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, indent=2)

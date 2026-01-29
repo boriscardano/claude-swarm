@@ -131,7 +131,7 @@ class SkillMetrics:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SkillMetrics":
+    def from_dict(cls, data: dict[str, Any]) -> SkillMetrics:
         """Create from dictionary."""
         return cls(**data)
 
@@ -306,7 +306,7 @@ class AgentPerformance:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AgentPerformance":
+    def from_dict(cls, data: dict[str, Any]) -> AgentPerformance:
         """Create from dictionary."""
         # Convert skill_metrics dicts to SkillMetrics objects
         skill_metrics = {}
@@ -483,9 +483,8 @@ class LearningSystem:
 
             perf = agents[agent_id]
 
-            # Decrement in-progress count
-            if perf.tasks_in_progress > 0:
-                perf.tasks_in_progress -= 1
+            # Decrement in-progress count (prevent negative values)
+            perf.tasks_in_progress = max(0, perf.tasks_in_progress - 1)
 
             # Record the outcome
             perf.record_task_outcome(

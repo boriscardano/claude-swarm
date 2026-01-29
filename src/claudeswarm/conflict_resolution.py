@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -35,7 +34,6 @@ from typing import Any
 from .file_lock import FileLock, FileLockTimeout
 from .locking import LockConflict, LockManager
 from .logging_config import get_logger
-from .messaging import Message, MessageType, MessagingSystem
 from .project import get_project_root
 from .tasks import Task, TaskManager, TaskPriority
 
@@ -114,7 +112,7 @@ class NegotiationMessage:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "NegotiationMessage":
+    def from_dict(cls, data: dict[str, Any]) -> NegotiationMessage:
         """Create from dictionary."""
         return cls(**data)
 
@@ -141,7 +139,7 @@ class Conflict:
     resource: str
     detected_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     status: str = "pending"  # pending, resolving, resolved, escalated
-    resolution: "Resolution | None" = None
+    resolution: Resolution | None = None
     negotiations: list[NegotiationMessage] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -167,16 +165,13 @@ class Conflict:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Conflict":
+    def from_dict(cls, data: dict[str, Any]) -> Conflict:
         """Create from dictionary."""
         resolution = None
         if "resolution" in data and data["resolution"]:
             resolution = Resolution.from_dict(data["resolution"])
 
-        negotiations = [
-            NegotiationMessage.from_dict(n)
-            for n in data.get("negotiations", [])
-        ]
+        negotiations = [NegotiationMessage.from_dict(n) for n in data.get("negotiations", [])]
 
         return cls(
             conflict_id=data["conflict_id"],
@@ -234,7 +229,7 @@ class Resolution:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Resolution":
+    def from_dict(cls, data: dict[str, Any]) -> Resolution:
         """Create from dictionary."""
         return cls(**data)
 
@@ -425,7 +420,6 @@ class ConflictResolver:
         if req_priority < hold_priority:
             # Requesting agent has higher priority
             winner = conflict.agents_involved[0]  # Requester
-            loser = conflict.agents_involved[1]  # Holder
             reason = (
                 f"Task priority: {requesting_task.priority.value} > {holding_task.priority.value}"
             )
@@ -433,7 +427,6 @@ class ConflictResolver:
         elif hold_priority < req_priority:
             # Holder has higher priority
             winner = conflict.agents_involved[1]  # Holder
-            loser = conflict.agents_involved[0]  # Requester
             reason = (
                 f"Task priority: {holding_task.priority.value} > {requesting_task.priority.value}"
             )
@@ -464,7 +457,6 @@ class ConflictResolver:
         """
         # The holder (second agent) was there first
         winner = conflict.agents_involved[1]
-        loser = conflict.agents_involved[0]
 
         return Resolution(
             conflict_id=conflict.conflict_id,
@@ -527,9 +519,7 @@ class ConflictResolver:
 
         for strategy in strategies:
             if strategy == ResolutionStrategy.PRIORITY:
-                resolution = self.resolve_by_priority(
-                    conflict, requesting_task, holding_task
-                )
+                resolution = self.resolve_by_priority(conflict, requesting_task, holding_task)
             elif strategy == ResolutionStrategy.SENIORITY:
                 resolution = self.resolve_by_seniority(conflict)
             elif strategy == ResolutionStrategy.YIELD:

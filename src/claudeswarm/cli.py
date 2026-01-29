@@ -18,27 +18,24 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import NoReturn
 
+from claudeswarm.agent_cards import AgentCard, AgentCardRegistry
 from claudeswarm.config import (
     ConfigValidationError,
     _find_config_file,
     get_config,
     load_config,
 )
+from claudeswarm.conflict_resolution import ConflictResolver
+from claudeswarm.context import ContextDecision, ContextStore, SharedContext
+from claudeswarm.delegation import DelegationManager
 from claudeswarm.discovery import list_active_agents, refresh_registry
+from claudeswarm.learning import LearningSystem
 from claudeswarm.locking import LockManager
 from claudeswarm.logging_config import get_logger, setup_logging
+from claudeswarm.memory import MemoryStore
 from claudeswarm.monitoring import start_monitoring
 from claudeswarm.project import find_project_root
-
-# A2A-inspired modules
-from claudeswarm.agent_cards import AgentCard, AgentCardRegistry
-from claudeswarm.tasks import Task, TaskManager, TaskStatus, TaskPriority
-from claudeswarm.delegation import DelegationManager
-from claudeswarm.context import SharedContext, ContextStore, ContextDecision
-from claudeswarm.memory import MemoryStore
-from claudeswarm.learning import LearningSystem
-from claudeswarm.conflict_resolution import ConflictResolver
-
+from claudeswarm.tasks import Task, TaskManager, TaskPriority, TaskStatus
 from claudeswarm.validators import (
     ValidationError,
     validate_agent_id,
@@ -2149,14 +2146,16 @@ def cmd_cards_list(args: argparse.Namespace) -> None:
                 print(f"=== Agent Cards ({len(cards)}) ===")
                 for card in cards:
                     status_symbol = (
-                        "✓" if card.availability == "active"
-                        else "⚠" if card.availability == "busy"
-                        else "✗"
+                        "✓"
+                        if card.availability == "active"
+                        else "⚠" if card.availability == "busy" else "✗"
                     )
                     skills_str = ", ".join(card.skills[:3])
                     if len(card.skills) > 3:
                         skills_str += f" (+{len(card.skills) - 3} more)"
-                    print(f"  {status_symbol} {card.agent_id:<12} | {card.name:<20} | Skills: {skills_str}")
+                    print(
+                        f"  {status_symbol} {card.agent_id:<12} | {card.name:<20} | Skills: {skills_str}"
+                    )
 
         sys.exit(0)
 
@@ -2289,7 +2288,9 @@ def cmd_tasks_list(args: argparse.Namespace) -> None:
                         TaskPriority.LOW: "⚪",
                     }.get(task.priority, "⚪")
                     assignee = task.assignee or "unassigned"
-                    print(f"  {priority_symbol} [{task.status.value:<10}] {task.id[:8]}... | {task.objective[:40]} | {assignee}")
+                    print(
+                        f"  {priority_symbol} [{task.status.value:<10}] {task.id[:8]}... | {task.objective[:40]} | {assignee}"
+                    )
 
         sys.exit(0)
 
@@ -2413,7 +2414,7 @@ def cmd_delegate(args: argparse.Namespace) -> None:
         result = delegation_manager.delegate_task(task)
 
         if result:
-            print(f"Task delegated successfully!")
+            print("Task delegated successfully!")
             print(f"  Task: {task.id}")
             print(f"  Assigned to: {result['agent_id']}")
             print(f"  Match score: {result['score']:.2f}")
@@ -2496,7 +2497,9 @@ def cmd_context_list(args: argparse.Namespace) -> None:
                 for ctx in contexts:
                     files_count = len(ctx.files_touched)
                     decisions_count = len(ctx.decisions)
-                    print(f"  {ctx.context_id:<20} | {ctx.summary[:40]} | {files_count} files, {decisions_count} decisions")
+                    print(
+                        f"  {ctx.context_id:<20} | {ctx.summary[:40]} | {files_count} files, {decisions_count} decisions"
+                    )
 
         sys.exit(0)
 
@@ -2623,7 +2626,9 @@ def cmd_memory_get(args: argparse.Namespace) -> None:
             if memory.relationships:
                 print("\n  Agent Relationships:")
                 for agent_id, rel in list(memory.relationships.items())[:3]:
-                    print(f"    - {agent_id}: trust={rel.trust_score:.2f}, collaborations={rel.collaboration_count}")
+                    print(
+                        f"    - {agent_id}: trust={rel.trust_score:.2f}, collaborations={rel.collaboration_count}"
+                    )
 
         sys.exit(0)
 
@@ -2671,10 +2676,11 @@ def cmd_learning_stats(args: argparse.Namespace) -> None:
             if performance.skill_metrics:
                 print("\n  Skill Performance:")
                 for skill, metrics in sorted(
-                    performance.skill_metrics.items(),
-                    key=lambda x: -x[1].success_rate
+                    performance.skill_metrics.items(), key=lambda x: -x[1].success_rate
                 )[:5]:
-                    print(f"    {skill}: {metrics.success_rate:.1%} ({metrics.success_count}/{metrics.total_count})")
+                    print(
+                        f"    {skill}: {metrics.success_rate:.1%} ({metrics.success_count}/{metrics.total_count})"
+                    )
 
         sys.exit(0)
 
@@ -3207,7 +3213,16 @@ def main() -> NoReturn:
     )
     tasks_list_parser.add_argument(
         "--status",
-        choices=["pending", "assigned", "working", "review", "completed", "blocked", "failed", "cancelled"],
+        choices=[
+            "pending",
+            "assigned",
+            "working",
+            "review",
+            "completed",
+            "blocked",
+            "failed",
+            "cancelled",
+        ],
         help="Filter by status",
     )
     tasks_list_parser.add_argument("--assignee", help="Filter by assignee")
@@ -3253,7 +3268,16 @@ def main() -> NoReturn:
     tasks_update_parser.add_argument("task_id", help="Task ID to update")
     tasks_update_parser.add_argument(
         "--status",
-        choices=["pending", "assigned", "working", "review", "completed", "blocked", "failed", "cancelled"],
+        choices=[
+            "pending",
+            "assigned",
+            "working",
+            "review",
+            "completed",
+            "blocked",
+            "failed",
+            "cancelled",
+        ],
         help="New status",
     )
     tasks_update_parser.add_argument("--assignee", help="New assignee agent ID")
@@ -3282,7 +3306,9 @@ def main() -> NoReturn:
         "context",
         help="Shared context management",
     )
-    context_subparsers = context_parser.add_subparsers(dest="context_command", help="Context command")
+    context_subparsers = context_parser.add_subparsers(
+        dest="context_command", help="Context command"
+    )
 
     # context list
     context_list_parser = context_subparsers.add_parser(
@@ -3365,7 +3391,9 @@ def main() -> NoReturn:
         "learning",
         help="Capability learning statistics",
     )
-    learning_subparsers = learning_parser.add_subparsers(dest="learning_command", help="Learning command")
+    learning_subparsers = learning_parser.add_subparsers(
+        dest="learning_command", help="Learning command"
+    )
 
     # learning stats
     learning_stats_parser = learning_subparsers.add_parser(
