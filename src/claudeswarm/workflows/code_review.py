@@ -424,3 +424,497 @@ REVIEW_CHECKLIST_GENERAL = [
     "No security vulnerabilities",
     "Performance acceptable",
 ]
+
+
+# ============================================================================
+# AUTONOMOUS REVIEW ITERATION SYSTEM
+# ============================================================================
+# This section implements autonomous code review with iteration until quality
+# standards are met. Agents review each other's work and iterate until approval.
+
+
+from enum import Enum
+from typing import Any
+import uuid
+
+
+class ReviewResult(Enum):
+    """Result of a code review."""
+
+    APPROVED = "approved"  # Good to merge
+    REQUEST_CHANGES = "changes"  # Specific fixes needed
+    NEEDS_DISCUSSION = "discuss"  # Unclear, need sync
+
+
+@dataclass
+class ReviewIteration:
+    """A single iteration of the review cycle.
+
+    Attributes:
+        iteration_number: Which iteration this is (1-based)
+        reviewer_id: Agent performing the review
+        author_id: Agent who wrote the code
+        result: Review result
+        feedback: Detailed feedback
+        issues_found: List of issues that need fixing
+        suggestions: Improvement suggestions
+        timestamp: When the review was performed
+    """
+
+    iteration_number: int
+    reviewer_id: str
+    author_id: str
+    result: ReviewResult
+    feedback: str = ""
+    issues_found: list[str] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
+    timestamp: datetime = field(default_factory=datetime.now)
+
+    def __post_init__(self):
+        if isinstance(self.result, str):
+            self.result = ReviewResult(self.result)
+
+
+@dataclass
+class AutonomousReviewSession:
+    """Tracks a complete autonomous review session with iterations.
+
+    Attributes:
+        session_id: Unique session identifier
+        task_id: Related task ID (if any)
+        context_id: Related context ID (if any)
+        author_id: Agent who wrote the code
+        reviewer_id: Agent performing review
+        files: Files being reviewed
+        iterations: List of review iterations
+        status: Current status (pending, in_progress, approved, failed)
+        max_iterations: Maximum allowed iterations
+        created_at: When the session started
+        completed_at: When the session completed
+    """
+
+    session_id: str
+    author_id: str
+    reviewer_id: str
+    files: list[str]
+    task_id: str | None = None
+    context_id: str | None = None
+    iterations: list[ReviewIteration] = field(default_factory=list)
+    status: str = "pending"  # pending, in_progress, approved, failed
+    max_iterations: int = 5
+    created_at: datetime = field(default_factory=datetime.now)
+    completed_at: datetime | None = None
+
+    def add_iteration(self, iteration: ReviewIteration) -> None:
+        """Add a review iteration."""
+        self.iterations.append(iteration)
+        self.status = "in_progress"
+
+        if iteration.result == ReviewResult.APPROVED:
+            self.status = "approved"
+            self.completed_at = datetime.now()
+        elif len(self.iterations) >= self.max_iterations:
+            self.status = "failed"
+            self.completed_at = datetime.now()
+
+    @property
+    def current_iteration(self) -> int:
+        """Get the current iteration number."""
+        return len(self.iterations)
+
+    @property
+    def is_complete(self) -> bool:
+        """Check if the session is complete."""
+        return self.status in ("approved", "failed")
+
+    @property
+    def is_approved(self) -> bool:
+        """Check if the code was approved."""
+        return self.status == "approved"
+
+
+class AutonomousCodeReview:
+    """Manages autonomous code review with iteration until approval.
+
+    This class coordinates:
+    - Finding the best reviewer using skill matching
+    - Iterating review cycles until approval
+    - Tracking review history
+    - Enforcing maximum iteration limits
+
+    Example:
+        auto_review = AutonomousCodeReview()
+        session = await auto_review.start_review(
+            author_id="agent-0",
+            files=["src/auth.py"],
+            task_id="task-123"
+        )
+        # The system will iterate until approved or max iterations reached
+    """
+
+    DEFAULT_MAX_ITERATIONS = 5
+
+    def __init__(self, max_iterations: int = DEFAULT_MAX_ITERATIONS):
+        """Initialize the autonomous code review system.
+
+        Args:
+            max_iterations: Maximum review iterations before failing
+        """
+        self.max_iterations = max_iterations
+        self.sessions: dict[str, AutonomousReviewSession] = {}
+        self.messaging = MessagingSystem()
+
+    def _find_best_reviewer(
+        self,
+        author_id: str,
+        files: list[str],
+    ) -> str | None:
+        """Find the best reviewer for the given files.
+
+        Uses skill matching from agent cards if available,
+        otherwise falls back to round-robin selection.
+
+        Args:
+            author_id: Author to exclude from reviewers
+            files: Files being reviewed (used to determine required skills)
+
+        Returns:
+            Best reviewer agent ID, or None if none available
+        """
+        try:
+            from claudeswarm.agent_cards import AgentCardRegistry
+            from claudeswarm.delegation import FILE_EXTENSION_SKILLS
+            from pathlib import Path
+
+            # Determine required skills from file extensions
+            required_skills = set()
+            for filepath in files:
+                ext = Path(filepath).suffix.lower()
+                if ext in FILE_EXTENSION_SKILLS:
+                    required_skills.update(FILE_EXTENSION_SKILLS[ext])
+
+            # Add code-review as a skill to look for
+            required_skills.add("code-review")
+
+            card_registry = AgentCardRegistry()
+
+            # Find agents with relevant skills
+            best_reviewer = None
+            best_score = 0.0
+
+            for card in card_registry.list_cards(availability="active"):
+                if card.agent_id == author_id:
+                    continue
+
+                # Calculate skill match score
+                score = 0.0
+                for skill in required_skills:
+                    proficiency = card.get_skill_proficiency(skill)
+                    score += proficiency
+
+                if score > best_score:
+                    best_score = score
+                    best_reviewer = card.agent_id
+
+            if best_reviewer:
+                return best_reviewer
+
+        except ImportError:
+            pass  # Agent cards not available
+
+        # Fallback: Get active agents from discovery
+        try:
+            from claudeswarm.discovery import list_active_agents
+
+            agents = list_active_agents()
+            for agent in agents:
+                if agent.id != author_id:
+                    return agent.id
+        except Exception:
+            pass
+
+        return None
+
+    async def start_review(
+        self,
+        author_id: str,
+        files: list[str],
+        reviewer_id: str | None = None,
+        task_id: str | None = None,
+        context_id: str | None = None,
+    ) -> AutonomousReviewSession:
+        """Start an autonomous review session.
+
+        Args:
+            author_id: Agent who wrote the code
+            files: Files to review
+            reviewer_id: Specific reviewer (auto-selected if None)
+            task_id: Related task ID
+            context_id: Related context ID
+
+        Returns:
+            Created AutonomousReviewSession
+        """
+        # Find reviewer if not specified
+        if reviewer_id is None:
+            reviewer_id = self._find_best_reviewer(author_id, files)
+            if reviewer_id is None:
+                raise ValueError("No available reviewer found")
+
+        session_id = f"review-{uuid.uuid4().hex[:12]}"
+
+        session = AutonomousReviewSession(
+            session_id=session_id,
+            author_id=author_id,
+            reviewer_id=reviewer_id,
+            files=files,
+            task_id=task_id,
+            context_id=context_id,
+            max_iterations=self.max_iterations,
+        )
+
+        self.sessions[session_id] = session
+
+        # Send initial review request
+        await self._send_review_request(session)
+
+        print(f"🔄 Started autonomous review session {session_id}")
+        print(f"   Author: {author_id}")
+        print(f"   Reviewer: {reviewer_id}")
+        print(f"   Files: {', '.join(files)}")
+        print(f"   Max iterations: {self.max_iterations}")
+
+        return session
+
+    async def _send_review_request(self, session: AutonomousReviewSession) -> None:
+        """Send a review request to the reviewer."""
+        iteration = session.current_iteration + 1
+        previous_feedback = ""
+
+        if session.iterations:
+            last = session.iterations[-1]
+            if last.issues_found:
+                previous_feedback = (
+                    f"\n\nPrevious issues to verify:\n"
+                    + "\n".join(f"- {issue}" for issue in last.issues_found)
+                )
+
+        message = (
+            f"Review Request (Iteration {iteration}/{session.max_iterations}):\n"
+            f"Files: {', '.join(session.files)}\n"
+            f"Author: {session.author_id}"
+            f"{previous_feedback}"
+        )
+
+        try:
+            self.messaging.send_message(
+                sender_id=session.author_id,
+                recipient_id=session.reviewer_id,
+                msg_type=MessageType.REVIEW_REQUEST,
+                content=message,
+            )
+        except Exception as e:
+            print(f"⚠️  Failed to send review request: {e}")
+
+    async def submit_review(
+        self,
+        session_id: str,
+        result: ReviewResult,
+        feedback: str = "",
+        issues_found: list[str] | None = None,
+        suggestions: list[str] | None = None,
+    ) -> ReviewIteration:
+        """Submit a review for an iteration.
+
+        Args:
+            session_id: Session identifier
+            result: Review result
+            feedback: Detailed feedback
+            issues_found: Issues that need fixing
+            suggestions: Improvement suggestions
+
+        Returns:
+            Created ReviewIteration
+        """
+        if session_id not in self.sessions:
+            raise ValueError(f"Session not found: {session_id}")
+
+        session = self.sessions[session_id]
+
+        if session.is_complete:
+            raise ValueError(f"Session {session_id} is already complete")
+
+        iteration = ReviewIteration(
+            iteration_number=session.current_iteration + 1,
+            reviewer_id=session.reviewer_id,
+            author_id=session.author_id,
+            result=result,
+            feedback=feedback,
+            issues_found=issues_found or [],
+            suggestions=suggestions or [],
+        )
+
+        session.add_iteration(iteration)
+
+        # Notify author of review result
+        await self._send_review_feedback(session, iteration)
+
+        if result == ReviewResult.APPROVED:
+            print(f"✅ Review approved on iteration {iteration.iteration_number}")
+            await self._handle_approval(session)
+        elif result == ReviewResult.REQUEST_CHANGES:
+            if session.is_complete:
+                print(f"❌ Review failed after {self.max_iterations} iterations")
+                await self._handle_failure(session)
+            else:
+                print(f"🔄 Changes requested (iteration {iteration.iteration_number})")
+                # Request next iteration after author addresses feedback
+        else:  # NEEDS_DISCUSSION
+            print(f"💬 Discussion needed on iteration {iteration.iteration_number}")
+
+        return iteration
+
+    async def _send_review_feedback(
+        self,
+        session: AutonomousReviewSession,
+        iteration: ReviewIteration,
+    ) -> None:
+        """Send review feedback to the author."""
+        status_emoji = {
+            ReviewResult.APPROVED: "✅",
+            ReviewResult.REQUEST_CHANGES: "⚠️",
+            ReviewResult.NEEDS_DISCUSSION: "💬",
+        }
+
+        message = (
+            f"{status_emoji[iteration.result]} Review Feedback "
+            f"(Iteration {iteration.iteration_number}):\n\n"
+            f"Result: {iteration.result.value}\n"
+        )
+
+        if iteration.feedback:
+            message += f"\nFeedback:\n{iteration.feedback}\n"
+
+        if iteration.issues_found:
+            message += "\nIssues to fix:\n"
+            for issue in iteration.issues_found:
+                message += f"  - {issue}\n"
+
+        if iteration.suggestions:
+            message += "\nSuggestions:\n"
+            for suggestion in iteration.suggestions:
+                message += f"  - {suggestion}\n"
+
+        try:
+            msg_type = (
+                MessageType.INFO
+                if iteration.result == ReviewResult.APPROVED
+                else MessageType.REVIEW_REQUEST
+            )
+            self.messaging.send_message(
+                sender_id=session.reviewer_id,
+                recipient_id=session.author_id,
+                msg_type=msg_type,
+                content=message,
+            )
+        except Exception as e:
+            print(f"⚠️  Failed to send review feedback: {e}")
+
+    async def _handle_approval(self, session: AutonomousReviewSession) -> None:
+        """Handle successful review approval."""
+        try:
+            # Update learning system if available
+            from claudeswarm.learning import LearningSystem
+
+            learning = LearningSystem()
+            # Record positive interaction
+            learning.record_task_completed(
+                task=None,  # Would need task object
+                success=True,
+                skills=["code-review"],
+            )
+        except ImportError:
+            pass
+
+        # Update context if available
+        if session.context_id:
+            try:
+                from claudeswarm.context import ContextStore
+
+                store = ContextStore()
+                store.add_decision(
+                    session.context_id,
+                    decision=f"Code review approved for {', '.join(session.files)}",
+                    by=session.reviewer_id,
+                    reason=f"Approved after {len(session.iterations)} iterations",
+                )
+            except ImportError:
+                pass
+
+    async def _handle_failure(self, session: AutonomousReviewSession) -> None:
+        """Handle review failure after max iterations."""
+        message = (
+            f"❌ Code review failed after {self.max_iterations} iterations.\n"
+            f"Files: {', '.join(session.files)}\n"
+            f"Consider manual review or breaking down changes."
+        )
+
+        try:
+            self.messaging.send_message(
+                sender_id=session.reviewer_id,
+                recipient_id=session.author_id,
+                msg_type=MessageType.BLOCKED,
+                content=message,
+            )
+        except Exception as e:
+            print(f"⚠️  Failed to send failure notification: {e}")
+
+    async def request_next_iteration(self, session_id: str) -> None:
+        """Request the next review iteration after author addresses feedback.
+
+        Args:
+            session_id: Session identifier
+        """
+        if session_id not in self.sessions:
+            raise ValueError(f"Session not found: {session_id}")
+
+        session = self.sessions[session_id]
+
+        if session.is_complete:
+            raise ValueError(f"Session {session_id} is already complete")
+
+        # Send another review request
+        await self._send_review_request(session)
+        print(f"🔄 Requested iteration {session.current_iteration + 1} for {session_id}")
+
+    def get_session(self, session_id: str) -> AutonomousReviewSession | None:
+        """Get a review session by ID."""
+        return self.sessions.get(session_id)
+
+    def get_active_sessions(self) -> list[AutonomousReviewSession]:
+        """Get all active (non-completed) review sessions."""
+        return [s for s in self.sessions.values() if not s.is_complete]
+
+    def get_session_summary(self, session_id: str) -> dict[str, Any] | None:
+        """Get a summary of a review session."""
+        session = self.sessions.get(session_id)
+        if not session:
+            return None
+
+        total_issues = sum(len(i.issues_found) for i in session.iterations)
+        total_suggestions = sum(len(i.suggestions) for i in session.iterations)
+
+        return {
+            "session_id": session.session_id,
+            "author": session.author_id,
+            "reviewer": session.reviewer_id,
+            "files": session.files,
+            "status": session.status,
+            "iterations": session.current_iteration,
+            "max_iterations": session.max_iterations,
+            "total_issues_found": total_issues,
+            "total_suggestions": total_suggestions,
+            "approved": session.is_approved,
+            "created_at": session.created_at.isoformat(),
+            "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+        }

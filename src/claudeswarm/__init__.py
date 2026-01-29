@@ -9,12 +9,22 @@ agents to work together on shared projects through:
 - Real-time monitoring and visibility
 - Shared coordination file management
 - Centralized configuration management
+
+New A2A Protocol-inspired features:
+- Agent Cards for capability discovery
+- Task lifecycle management
+- Skill-based task delegation
+- Capability learning over time
+- Autonomous conflict resolution
+- Shared context preservation
+- Agent memory system
 """
 
 __version__ = "0.1.0"
 
 __all__ = [
     "__version__",
+    # Core modules
     "discovery",
     "messaging",
     "locking",
@@ -25,4 +35,12 @@ __all__ = [
     "utils",
     "config",
     "logging_config",
+    # A2A-inspired modules
+    "agent_cards",
+    "tasks",
+    "delegation",
+    "learning",
+    "conflict_resolution",
+    "context",
+    "memory",
 ]

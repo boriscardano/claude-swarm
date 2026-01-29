@@ -1188,3 +1188,194 @@ def list_active_agents() -> list[Agent]:
     except Exception as e:
         logger.error(f"Error reading registry: {e}")
         return []
+
+
+# ============================================================================
+# AGENT CARD INTEGRATION
+# ============================================================================
+# These functions integrate the discovery system with the agent cards system,
+# enabling automatic registration and availability updates for discovered agents.
+
+
+def sync_agents_to_cards(registry: AgentRegistry | None = None) -> int:
+    """Synchronize discovered agents to agent cards.
+
+    For each discovered agent, ensures there is a corresponding agent card
+    with the correct availability status. Creates default cards for new agents.
+
+    Args:
+        registry: Optional registry to sync (loads current if not provided)
+
+    Returns:
+        Number of cards created or updated
+    """
+    try:
+        from .agent_cards import AgentCardRegistry
+    except ImportError:
+        logger.debug("Agent cards module not available")
+        return 0
+
+    if registry is None:
+        existing = _load_existing_registry()
+        if existing is None:
+            return 0
+        registry = existing
+
+    card_registry = AgentCardRegistry()
+    updated_count = 0
+
+    # Track which agents are active
+    active_agent_ids = set()
+
+    for agent in registry.agents:
+        if agent.status == "active":
+            active_agent_ids.add(agent.id)
+
+            # Check if card exists
+            existing_card = card_registry.get_card(agent.id)
+
+            if existing_card is None:
+                # Create default card for new agent
+                card_registry.register_agent(
+                    agent_id=agent.id,
+                    name=agent.id,
+                    skills=[],  # Will be learned over time
+                    tools=[],  # Could be detected from process
+                    metadata={
+                        "session_name": agent.session_name,
+                        "pane_index": agent.pane_index,
+                        "pid": agent.pid,
+                    },
+                )
+                logger.info(f"Created agent card for newly discovered agent {agent.id}")
+                updated_count += 1
+
+            elif existing_card.availability != "active":
+                # Update availability to active
+                card_registry.set_availability(agent.id, "active")
+                logger.debug(f"Set agent {agent.id} availability to active")
+                updated_count += 1
+
+        elif agent.status in ("stale", "dead"):
+            # Mark as offline if card exists
+            existing_card = card_registry.get_card(agent.id)
+            if existing_card and existing_card.availability != "offline":
+                card_registry.set_availability(agent.id, "offline")
+                logger.debug(f"Set agent {agent.id} availability to offline (status: {agent.status})")
+                updated_count += 1
+
+    # Also mark any cards not in registry as offline
+    all_cards = card_registry.list_cards()
+    for card in all_cards:
+        if card.agent_id not in active_agent_ids and card.availability == "active":
+            card_registry.set_availability(card.agent_id, "offline")
+            logger.debug(f"Set agent {card.agent_id} availability to offline (not in registry)")
+            updated_count += 1
+
+    return updated_count
+
+
+def refresh_registry_with_cards(stale_threshold: int | None = None) -> AgentRegistry:
+    """Refresh the agent registry and sync to agent cards.
+
+    This is an enhanced version of refresh_registry that also updates
+    the agent cards system with discovered agent information.
+
+    Args:
+        stale_threshold: Seconds after which an agent is considered stale
+
+    Returns:
+        Updated AgentRegistry
+
+    Raises:
+        TmuxNotRunningError: If tmux is not running
+        TmuxPermissionError: If permission denied
+        RegistryLockError: If cannot acquire lock
+        DiscoveryError: For other errors
+    """
+    registry = refresh_registry(stale_threshold=stale_threshold)
+
+    # Sync to agent cards
+    try:
+        updated = sync_agents_to_cards(registry)
+        if updated > 0:
+            logger.info(f"Synced {updated} agent cards with registry")
+    except Exception as e:
+        logger.warning(f"Failed to sync agent cards: {e}")
+
+    return registry
+
+
+def list_agents_with_skills(
+    skill: str,
+    min_proficiency: float = 0.0,
+    active_only: bool = True,
+) -> list[tuple[Agent, float]]:
+    """List agents that have a specific skill.
+
+    Combines discovery registry with agent cards to find agents
+    with specific capabilities.
+
+    Args:
+        skill: Skill to search for
+        min_proficiency: Minimum proficiency level (0.0-1.0)
+        active_only: Only return active agents
+
+    Returns:
+        List of (Agent, proficiency) tuples sorted by proficiency
+    """
+    try:
+        from .agent_cards import AgentCardRegistry
+    except ImportError:
+        logger.debug("Agent cards module not available")
+        return []
+
+    # Get active agents from registry
+    agents = list_active_agents() if active_only else []
+    if not active_only:
+        registry_path = get_registry_path()
+        if registry_path.exists():
+            try:
+                with FileLock(registry_path, timeout=REGISTRY_LOCK_TIMEOUT_SECONDS, shared=True):
+                    with open(registry_path) as f:
+                        data = json.load(f)
+                    registry = AgentRegistry.from_dict(data)
+                    agents = registry.agents
+            except Exception:
+                pass
+
+    # Get skill proficiency from cards
+    card_registry = AgentCardRegistry()
+    results = []
+
+    for agent in agents:
+        card = card_registry.get_card(agent.id)
+        if card:
+            proficiency = card.get_skill_proficiency(skill)
+            if proficiency >= min_proficiency:
+                results.append((agent, proficiency))
+
+    # Sort by proficiency descending
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results
+
+
+def get_agent_with_card(agent_id: str) -> tuple[Agent | None, "AgentCard | None"]:
+    """Get an agent along with its capability card.
+
+    Args:
+        agent_id: Agent identifier
+
+    Returns:
+        Tuple of (Agent, AgentCard), either may be None
+    """
+    try:
+        from .agent_cards import AgentCard, AgentCardRegistry
+    except ImportError:
+        return get_agent_by_id(agent_id), None
+
+    agent = get_agent_by_id(agent_id)
+    card_registry = AgentCardRegistry()
+    card = card_registry.get_card(agent_id)
+
+    return agent, card
