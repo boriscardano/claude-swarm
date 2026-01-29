@@ -41,13 +41,9 @@ COORDINATION.md
 
 # Claude Code settings (user-specific)
 .claude/settings.json
-.e2b_session
-e2b_shell.py
-e2b_tmux_shell.py
 
 # Runtime state files
 ACTIVE_AGENTS.json
-.e2b_session
 *.log
 
 # Agent instructions (generated)

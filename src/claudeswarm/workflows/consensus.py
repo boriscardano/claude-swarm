@@ -12,7 +12,7 @@ Key features:
 - Audit trail of all decisions
 
 Author: agent-1
-Created: 2025-11-19 (E2B Hackathon Prep)
+Created: 2025-11-19
 """
 
 from dataclasses import dataclass, field

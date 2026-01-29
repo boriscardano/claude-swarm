@@ -11,7 +11,7 @@ Key responsibilities:
 - Monitor task progress and handle reassignment if needed
 
 Author: agent-1
-Created: 2025-11-19 (E2B Hackathon Prep)
+Created: 2025-11-19
 """
 
 import asyncio

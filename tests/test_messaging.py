@@ -361,6 +361,8 @@ class TestTmuxMessageDelivery:
     @patch("subprocess.run")
     def test_verify_pane_not_exists(self, mock_run):
         """Test pane non-existence detection."""
+        # Clear cache to ensure fresh lookup
+        TmuxMessageDelivery.clear_pane_cache()
         mock_run.return_value = Mock(returncode=0, stdout="session:0.0\nsession:0.2\n")
 
         result = TmuxMessageDelivery.verify_pane_exists("session:0.1")
