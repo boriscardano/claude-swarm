@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import NoReturn
 
-from claudeswarm.agent_cards import AgentCard, AgentCardRegistry
+from claudeswarm.agent_cards import AgentCardRegistry
 from claudeswarm.config import (
     ConfigValidationError,
     _find_config_file,
@@ -26,7 +26,7 @@ from claudeswarm.config import (
     load_config,
 )
 from claudeswarm.conflict_resolution import ConflictResolver
-from claudeswarm.context import ContextDecision, ContextStore, SharedContext
+from claudeswarm.context import ContextDecision, ContextStore
 from claudeswarm.delegation import DelegationManager
 from claudeswarm.discovery import list_active_agents, refresh_registry
 from claudeswarm.learning import LearningSystem
@@ -35,7 +35,7 @@ from claudeswarm.logging_config import get_logger, setup_logging
 from claudeswarm.memory import MemoryStore
 from claudeswarm.monitoring import start_monitoring
 from claudeswarm.project import find_project_root
-from claudeswarm.tasks import Task, TaskManager, TaskPriority, TaskStatus
+from claudeswarm.tasks import TaskManager, TaskPriority, TaskStatus
 from claudeswarm.validators import (
     ValidationError,
     validate_agent_id,
@@ -2135,7 +2135,7 @@ def cmd_cards_list(args: argparse.Namespace) -> None:
     """List all registered agent cards."""
     try:
         registry = AgentCardRegistry(project_root=args.project_root)
-        cards = registry.list_all_cards()
+        cards = registry.list_cards()
 
         if args.json:
             print(json.dumps([card.to_dict() for card in cards], indent=2))
@@ -2180,7 +2180,7 @@ def cmd_cards_get(args: argparse.Namespace) -> None:
             print(f"=== Agent Card: {card.agent_id} ===")
             print(f"  Name: {card.name}")
             print(f"  Description: {card.description}")
-            print(f"  Availability: {card.availability.value}")
+            print(f"  Availability: {card.availability}")
             print(f"  Skills: {', '.join(card.skills)}")
             print(f"  Tools: {', '.join(card.tools)}")
             if card.success_rates:
@@ -2202,17 +2202,13 @@ def cmd_cards_register(args: argparse.Namespace) -> None:
         skills = args.skills.split(",") if args.skills else []
         tools = args.tools.split(",") if args.tools else []
 
-        card = AgentCard(
+        registry = AgentCardRegistry(project_root=args.project_root)
+        card = registry.register_agent(
             agent_id=validated_agent_id,
             name=args.name or validated_agent_id,
-            description=args.description or "",
             skills=skills,
             tools=tools,
-            availability="active",
         )
-
-        registry = AgentCardRegistry(project_root=args.project_root)
-        registry.register_card(card)
 
         print(f"Agent card registered: {validated_agent_id}")
         print(f"  Name: {card.name}")
@@ -2270,7 +2266,7 @@ def cmd_tasks_list(args: argparse.Namespace) -> None:
         manager = TaskManager(project_root=args.project_root)
         tasks = manager.list_tasks(
             status=TaskStatus(args.status) if args.status else None,
-            assignee=args.assignee,
+            assigned_to=args.assignee,
         )
 
         if args.json:
@@ -2287,9 +2283,9 @@ def cmd_tasks_list(args: argparse.Namespace) -> None:
                         TaskPriority.NORMAL: "🟢",
                         TaskPriority.LOW: "⚪",
                     }.get(task.priority, "⚪")
-                    assignee = task.assignee or "unassigned"
+                    assignee = task.assigned_to or "unassigned"
                     print(
-                        f"  {priority_symbol} [{task.status.value:<10}] {task.id[:8]}... | {task.objective[:40]} | {assignee}"
+                        f"  {priority_symbol} [{task.status.value:<10}] {task.task_id[:8]}... | {task.objective[:40]} | {assignee}"
                     )
 
         sys.exit(0)
@@ -2312,12 +2308,12 @@ def cmd_tasks_get(args: argparse.Namespace) -> None:
         if args.json:
             print(json.dumps(task.to_dict(), indent=2))
         else:
-            print(f"=== Task: {task.id} ===")
+            print(f"=== Task: {task.task_id} ===")
             print(f"  Objective: {task.objective}")
             print(f"  Status: {task.status.value}")
             print(f"  Priority: {task.priority.value}")
-            print(f"  Creator: {task.creator}")
-            print(f"  Assignee: {task.assignee or 'unassigned'}")
+            print(f"  Creator: {task.created_by}")
+            print(f"  Assignee: {task.assigned_to or 'unassigned'}")
             if task.constraints:
                 print(f"  Constraints: {', '.join(task.constraints)}")
             if task.files:
@@ -2325,8 +2321,7 @@ def cmd_tasks_get(args: argparse.Namespace) -> None:
             if task.blocked_by:
                 print(f"  Blocked by: {', '.join(task.blocked_by)}")
             print(f"  Created: {task.created_at}")
-            if task.completed_at:
-                print(f"  Completed: {task.completed_at}")
+            print(f"  Updated: {task.updated_at}")
 
         sys.exit(0)
 
@@ -2343,22 +2338,20 @@ def cmd_tasks_create(args: argparse.Namespace) -> None:
         constraints = args.constraints.split(",") if args.constraints else []
         files = args.files.split(",") if args.files else []
 
-        task = Task.create(
+        manager = TaskManager(project_root=args.project_root)
+        task = manager.create_task(
             objective=args.objective,
-            creator=validated_agent_id,
+            created_by=validated_agent_id,
             priority=TaskPriority(args.priority) if args.priority else TaskPriority.NORMAL,
             constraints=constraints,
             files=files,
             context_id=args.context_id,
         )
 
-        manager = TaskManager(project_root=args.project_root)
-        manager.save_task(task)
-
-        print(f"Task created: {task.id}")
+        print(f"Task created: {task.task_id}")
         print(f"  Objective: {task.objective}")
         print(f"  Priority: {task.priority.value}")
-        print(f"  Creator: {task.creator}")
+        print(f"  Creator: {task.created_by}")
 
         sys.exit(0)
 
@@ -2382,13 +2375,13 @@ def cmd_tasks_update(args: argparse.Namespace) -> None:
             task.transition_to(new_status)
 
         if args.assignee:
-            task.assignee = args.assignee
+            task.assigned_to = args.assignee
 
         manager.save_task(task)
-        print(f"Task updated: {task.id}")
+        print(f"Task updated: {task.task_id}")
         print(f"  Status: {task.status.value}")
-        if task.assignee:
-            print(f"  Assignee: {task.assignee}")
+        if task.assigned_to:
+            print(f"  Assignee: {task.assigned_to}")
 
         sys.exit(0)
 
@@ -2415,7 +2408,7 @@ def cmd_delegate(args: argparse.Namespace) -> None:
 
         if result:
             print("Task delegated successfully!")
-            print(f"  Task: {task.id}")
+            print(f"  Task: {task.task_id}")
             print(f"  Assigned to: {result['agent_id']}")
             print(f"  Match score: {result['score']:.2f}")
             print(f"  Matched skills: {', '.join(result['matched_skills'])}")
@@ -2438,18 +2431,17 @@ def cmd_find_agent(args: argparse.Namespace) -> None:
         if args.skill:
             # Find agents with specific skill
             registry = AgentCardRegistry(project_root=args.project_root)
-            agents = registry.find_agents_with_skill(args.skill)
+            agent_tuples = registry.find_agents_with_skill(args.skill)
 
             if args.json:
-                print(json.dumps([a.to_dict() for a in agents], indent=2))
+                print(json.dumps([a.to_dict() for a, _ in agent_tuples], indent=2))
             else:
-                if not agents:
+                if not agent_tuples:
                     print(f"No agents found with skill: {args.skill}")
                 else:
-                    print(f"=== Agents with '{args.skill}' skill ({len(agents)}) ===")
-                    for agent in agents:
-                        rate = agent.success_rates.get(args.skill, 0.0)
-                        print(f"  {agent.agent_id:<12} | Success rate: {rate:.1%}")
+                    print(f"=== Agents with '{args.skill}' skill ({len(agent_tuples)}) ===")
+                    for agent, proficiency in agent_tuples:
+                        print(f"  {agent.agent_id:<12} | Proficiency: {proficiency:.1%}")
         else:
             # Find best agent for a task description
             if not args.objective:
@@ -2457,20 +2449,34 @@ def cmd_find_agent(args: argparse.Namespace) -> None:
                 sys.exit(1)
 
             # Create a temporary task to find best agent
-            temp_task = Task.create(
+            manager = TaskManager(project_root=args.project_root)
+            temp_task = manager.create_task(
                 objective=args.objective,
-                creator="cli",
+                created_by="cli",
             )
-            result = delegation_manager.find_best_agent(temp_task)
+            agent, score, skill_matches = delegation_manager.find_best_agent(temp_task)
 
             if args.json:
-                print(json.dumps(result, indent=2) if result else "{}")
+                if agent:
+                    print(
+                        json.dumps(
+                            {
+                                "agent_id": agent.agent_id,
+                                "score": score,
+                                "skill_matches": skill_matches,
+                            },
+                            indent=2,
+                        )
+                    )
+                else:
+                    print("{}")
             else:
-                if result:
+                if agent:
                     print(f"Best agent for: {args.objective}")
-                    print(f"  Agent: {result['agent_id']}")
-                    print(f"  Score: {result['score']:.2f}")
-                    print(f"  Matched skills: {', '.join(result['matched_skills'])}")
+                    print(f"  Agent: {agent.agent_id}")
+                    print(f"  Score: {score:.2f}")
+                    matched = [f"{k}: {v:.1%}" for k, v in skill_matches.items()]
+                    print(f"  Matched skills: {', '.join(matched) or 'none'}")
                 else:
                     print("No suitable agent found.")
 
@@ -2544,16 +2550,17 @@ def cmd_context_get(args: argparse.Namespace) -> None:
 def cmd_context_create(args: argparse.Namespace) -> None:
     """Create a new shared context."""
     try:
+        validated_agent_id = _require_agent_id(args, "creator")
         related = args.related.split(",") if args.related else []
 
-        ctx = SharedContext(
-            context_id=args.context_id,
+        store = ContextStore(project_root=args.project_root)
+        ctx = store.create_context(
+            name=args.context_id,
+            created_by=validated_agent_id,
             summary=args.summary,
+            context_id=args.context_id,
             related_contexts=related,
         )
-
-        store = ContextStore(project_root=args.project_root)
-        store.save_context(ctx)
 
         print(f"Context created: {ctx.context_id}")
         print(f"  Summary: {ctx.summary}")
@@ -3334,6 +3341,9 @@ def main() -> NoReturn:
     )
     context_create_parser.add_argument("context_id", help="Context ID (e.g., feature-auth)")
     context_create_parser.add_argument("summary", help="Context summary")
+    context_create_parser.add_argument(
+        "--creator", default=None, help="Creator agent ID (auto-detected if omitted)"
+    )
     context_create_parser.add_argument("--related", help="Comma-separated related context IDs")
     context_create_parser.set_defaults(func=cmd_context_create)
 

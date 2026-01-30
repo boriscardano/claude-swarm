@@ -103,6 +103,7 @@ class AgentCard:
 
     agent_id: str
     name: str = ""
+    description: str = ""
     skills: list[str] = field(default_factory=list)
     tools: list[str] = field(default_factory=list)
     availability: str = "active"  # active, busy, offline
@@ -231,6 +232,7 @@ class AgentCard:
         return cls(
             agent_id=data["agent_id"],
             name=data.get("name", ""),
+            description=data.get("description", ""),
             skills=data.get("skills", []),
             tools=data.get("tools", []),
             availability=data.get("availability", "active"),
