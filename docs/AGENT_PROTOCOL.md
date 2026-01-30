@@ -426,6 +426,81 @@ Agent-2 (acquires)
 
 ---
 
+## Automatic Message Delivery
+
+### Overview
+
+Claude Swarm supports automatic message delivery via Claude Code hooks. When configured,
+new messages from other agents appear automatically in your conversation context - no
+manual checking required.
+
+### How It Works
+
+1. A `UserPromptSubmit` hook fires before each prompt you send
+2. The hook runs `claudeswarm check-messages --new-only --quiet`
+3. New messages (if any) are injected into Claude's context
+4. Messages are marked as read to prevent duplicates
+
+### Setup
+
+Run `claudeswarm init` to set up hooks automatically, or configure manually:
+
+**1. Create the hook script (`.claude/hooks/check-for-messages.sh`):**
+
+```bash
+#!/bin/bash
+set -euo pipefail
+MESSAGES=$(timeout 5s claudeswarm check-messages --new-only --quiet --limit 5 2>/dev/null || echo "")
+if [ -n "$MESSAGES" ]; then
+  echo "╔════════════════════════════════════════════════════════════════╗"
+  echo "║  📬 NEW MESSAGES FROM OTHER AGENTS                             ║"
+  echo "╚════════════════════════════════════════════════════════════════╝"
+  printf '%s\n' "$MESSAGES"
+  echo "Reply with: claudeswarm send-message <agent-id> INFO \"your message\""
+  echo "───────────────────────────────────────────────────────────────"
+fi
+exit 0
+```
+
+**2. Configure Claude Code (`.claude/settings.json`):**
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "./.claude/hooks/check-for-messages.sh"
+      }
+    ]
+  }
+}
+```
+
+### Check Messages Flags
+
+| Flag | Description |
+|------|-------------|
+| `--new-only` | Only show messages since last check (prevents duplicates) |
+| `--quiet` | Compact one-line format: `[sender:TYPE] content` |
+| `--limit N` | Show at most N messages (default: 10) |
+
+### Example Output
+
+When another agent sends you a message:
+
+```
+╔════════════════════════════════════════════════════════════════╗
+║  📬 NEW MESSAGES FROM OTHER AGENTS                             ║
+╚════════════════════════════════════════════════════════════════╝
+[agent-8:INFO] Hey, can you help review my changes to auth.py?
+[agent-8:QUESTION] What's the best approach for error handling?
+Reply with: claudeswarm send-message <agent-id> INFO "your message"
+───────────────────────────────────────────────────────────────
+```
+
+---
+
 ## Best Practices
 
 ### DO

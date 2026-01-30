@@ -200,6 +200,60 @@ claudeswarm start-monitoring
    # Now succeeds
    ```
 
+## Automatic Message Delivery with Hooks
+
+Claude Swarm can automatically deliver messages to agents using Claude Code hooks.
+When configured, messages from other agents appear automatically in your conversation.
+
+### Quick Setup
+
+Run `claudeswarm init` in your project - it will offer to set up hooks automatically.
+
+### Manual Setup
+
+1. Copy the hook script to your project:
+
+```bash
+mkdir -p .claude/hooks
+cat > .claude/hooks/check-for-messages.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+MESSAGES=$(timeout 5s claudeswarm check-messages --new-only --quiet --limit 5 2>/dev/null || echo "")
+if [ -n "$MESSAGES" ]; then
+  echo "╔════════════════════════════════════════════════════════════════╗"
+  echo "║  📬 NEW MESSAGES FROM OTHER AGENTS                             ║"
+  echo "╚════════════════════════════════════════════════════════════════╝"
+  echo ""
+  printf '%s\n' "$MESSAGES"
+  echo "Reply with: claudeswarm send-message <agent-id> INFO \"your message\""
+  echo "───────────────────────────────────────────────────────────────"
+fi
+exit 0
+EOF
+chmod +x .claude/hooks/check-for-messages.sh
+```
+
+2. Configure Claude Code settings (`.claude/settings.json`):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "./.claude/hooks/check-for-messages.sh"
+      }
+    ]
+  }
+}
+```
+
+### Command Flags
+
+- `--new-only`: Only show messages since last check (prevents duplicates)
+- `--quiet`: Compact one-line format (ideal for hooks)
+- `--limit N`: Show at most N messages (default: 10)
+
 ## System Files
 
 The system creates several files during operation:

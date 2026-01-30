@@ -375,7 +375,9 @@ def cmd_discover_agents(args: argparse.Namespace) -> None:
                             status_symbol = (
                                 "✓"
                                 if agent.status == "active"
-                                else "⚠" if agent.status == "stale" else "✗"
+                                else "⚠"
+                                if agent.status == "stale"
+                                else "✗"
                             )
                             print(
                                 f"  {status_symbol} {agent.id:<12} | {agent.pane_index:<20} | PID: {agent.pid:<8} | {agent.status}"
@@ -406,7 +408,9 @@ def cmd_discover_agents(args: argparse.Namespace) -> None:
                         status_symbol = (
                             "✓"
                             if agent.status == "active"
-                            else "⚠" if agent.status == "stale" else "✗"
+                            else "⚠"
+                            if agent.status == "stale"
+                            else "✗"
                         )
                         print(
                             f"  {status_symbol} {agent.id:<12} | {agent.pane_index:<20} | PID: {agent.pid:<8} | {agent.status}"
@@ -1078,7 +1082,8 @@ def _prepare_onboarding_content(agents: list) -> list[str]:
     agent_list = ", ".join(a.id for a in agents)
 
     # Single comprehensive onboarding message
-    return [f"""=== CLAUDE SWARM COORDINATION ACTIVE ===
+    return [
+        f"""=== CLAUDE SWARM COORDINATION ACTIVE ===
 Multi-agent coordination is now available in this session.
 
 ACTIVE AGENTS: {agent_list}
@@ -1152,7 +1157,8 @@ Example:
 
 This helps establish communication and confirms messaging is working.
 
-COORDINATION READY! 🎉"""]
+COORDINATION READY! 🎉"""
+    ]
 
 
 def _send_onboarding_messages(
@@ -1292,11 +1298,15 @@ def cmd_check_messages(args: argparse.Namespace) -> None:
     sent to this agent. Works in sandboxed environments by reading from file
     instead of relying on tmux delivery.
 
+    Flags:
+        --new-only: Only show messages since last check (unread)
+        --quiet: Compact output suitable for hooks (one line per message)
+
     Exit Codes:
         0: Success
         1: Error (not an agent, file not found, etc.)
     """
-    from claudeswarm.project import get_messages_log_path
+    from claudeswarm.project import get_messages_log_path, get_project_root
 
     # Auto-detect current agent (or use explicit agent-id for testing)
     agent_id = getattr(args, "agent_id", None)
@@ -1305,22 +1315,42 @@ def cmd_check_messages(args: argparse.Namespace) -> None:
         if detected_id:
             agent_id = detected_id
         else:
-            print("Error: Could not auto-detect agent identity", file=sys.stderr)
-            print("Please run 'claudeswarm whoami' to verify registration", file=sys.stderr)
+            if not getattr(args, "quiet", False):
+                print("Error: Could not auto-detect agent identity", file=sys.stderr)
+                print("Please run 'claudeswarm whoami' to verify registration", file=sys.stderr)
             sys.exit(1)
+
+    # Get flags
+    new_only = getattr(args, "new_only", False)
+    quiet = getattr(args, "quiet", False)
 
     # Read messages log
     messages_log = get_messages_log_path()
     if not messages_log.exists():
-        print("No messages found (log file doesn't exist)")
+        if not quiet:
+            print("No messages found (log file doesn't exist)")
         sys.exit(0)
 
     try:
         with open(messages_log, encoding="utf-8") as f:
             lines = f.readlines()
     except OSError as e:
-        print(f"Error reading messages: {e}", file=sys.stderr)
+        if not quiet:
+            print(f"Error reading messages: {e}", file=sys.stderr)
         sys.exit(1)
+
+    # Load last read timestamp if using --new-only
+    project_root = get_project_root(getattr(args, "project_root", None))
+    last_read_file = project_root / ".swarm" / "last_read_messages.json"
+    last_read_timestamp = None
+    if new_only:
+        try:
+            if last_read_file.exists():
+                with open(last_read_file, encoding="utf-8") as f:
+                    last_read_data = json.load(f)
+                    last_read_timestamp = last_read_data.get(agent_id)
+        except (OSError, json.JSONDecodeError):
+            pass  # Ignore errors reading last read file
 
     # Parse and filter messages for this agent
     my_messages = []
@@ -1335,36 +1365,69 @@ def cmd_check_messages(args: argparse.Namespace) -> None:
             # Check if this message is for us
             recipients = msg.get("recipients", [])
             if agent_id in recipients or "all" in recipients:
+                # Filter by timestamp if --new-only
+                if new_only and last_read_timestamp:
+                    msg_timestamp = msg.get("timestamp", "")
+                    if msg_timestamp <= last_read_timestamp:
+                        continue  # Skip already-read messages
                 my_messages.append(msg)
         except json.JSONDecodeError:
             continue
 
+    # Update last read timestamp (always, even with --new-only, to mark as read)
+    if my_messages:
+        latest_timestamp = max(msg.get("timestamp", "") for msg in my_messages)
+        try:
+            last_read_data = {}
+            if last_read_file.exists():
+                with open(last_read_file, encoding="utf-8") as f:
+                    last_read_data = json.load(f)
+            last_read_data[agent_id] = latest_timestamp
+            last_read_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(last_read_file, "w", encoding="utf-8") as f:
+                json.dump(last_read_data, f, indent=2)
+        except OSError:
+            pass  # Ignore errors saving last read file
+
     # Display messages
     if not my_messages:
-        print(f"No messages for {agent_id}")
+        if not quiet:
+            if new_only:
+                print(f"No new messages for {agent_id}")
+            else:
+                print(f"No messages for {agent_id}")
         sys.exit(0)
 
     # Show last N messages (default 10)
     limit = args.limit if hasattr(args, "limit") and args.limit else 10
     recent_messages = my_messages[-limit:]
 
-    print(f"=== Messages for {agent_id} ({len(recent_messages)} recent) ===")
-    print()
-
-    for msg in recent_messages:
-        sender = msg.get("sender", "unknown")
-        timestamp = msg.get("timestamp", "unknown")
-        msg_type = msg.get("msg_type", "INFO")
-        content = msg.get("content", "")
-        msg_id = msg.get("msg_id", "")[:8]  # Short ID
-
-        print(f"[{timestamp}] From: {sender} ({msg_type})")
-        print(f"  {content}")
-        print(f"  (ID: {msg_id})")
+    if quiet:
+        # Compact output for hooks - one line per message
+        for msg in recent_messages:
+            sender = msg.get("sender", "unknown")
+            msg_type = msg.get("msg_type", "INFO")
+            content = msg.get("content", "").replace("\n", " ")
+            print(f"[{sender}:{msg_type}] {content}")
+    else:
+        # Standard output
+        print(f"=== Messages for {agent_id} ({len(recent_messages)} recent) ===")
         print()
 
-    if len(my_messages) > limit:
-        print(f"({len(my_messages) - limit} older messages not shown. Use --limit to see more)")
+        for msg in recent_messages:
+            sender = msg.get("sender", "unknown")
+            timestamp = msg.get("timestamp", "unknown")
+            msg_type = msg.get("msg_type", "INFO")
+            content = msg.get("content", "")
+            msg_id = msg.get("msg_id", "")[:8]  # Short ID
+
+            print(f"[{timestamp}] From: {sender} ({msg_type})")
+            print(f"  {content}")
+            print(f"  (ID: {msg_id})")
+            print()
+
+        if len(my_messages) > limit:
+            print(f"({len(my_messages) - limit} older messages not shown. Use --limit to see more)")
 
     # Process pending ACK retries (runs periodically via check-messages hook)
     try:
@@ -1984,48 +2047,47 @@ _HOOK_SCRIPT_CONTENT = """#!/bin/bash
 #
 # Claude Swarm Message Checker Hook
 #
-# This hook automatically checks for new messages from other agents
+# This hook automatically checks for NEW (unread) messages from other agents
 # and injects them into the conversation context before each user prompt.
+#
+# Uses --new-only to only show messages since last check (avoids duplicates)
+# Uses --quiet for compact one-line format suitable for hook injection
 #
 # Triggered by: UserPromptSubmit hook in Claude Code
 # Output: Automatically injected into agent's conversation as additional context
 
-set -euo pipefail
-
-# Get current agent ID using whoami command
-AGENT_ID=$(claudeswarm whoami 2>/dev/null | grep "Agent ID:" | awk '{print $3}' || echo "")
-
-# Validate agent ID format
-if [ -n "$AGENT_ID" ]; then
-    if ! [[ "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        exit 0
-    fi
-fi
-
-# Exit silently if not in a tmux pane or no agent ID
-if [ -z "$AGENT_ID" ]; then
-  exit 0
-fi
+# Don't exit on errors - we handle them gracefully
+set +e
 
 # Optional debug logging
 if [ "${CLAUDESWARM_DEBUG:-0}" = "1" ]; then
-    echo "[DEBUG] check-for-messages.sh executed for agent: $AGENT_ID" >&2
+    echo "[DEBUG] check-for-messages.sh executed" >&2
 fi
 
-# Check for messages (only show unread/recent ones)
-# Limit to 3 most recent messages to avoid context bloat
-# Add timeout to prevent hanging
-MESSAGES=$(timeout 5s claudeswarm check-messages --limit 3 2>/dev/null || echo "")
+# Check for NEW messages only (unread since last check)
+# Try uv run first (dev mode), fall back to direct claudeswarm (installed)
+MESSAGES=""
+if command -v uv &> /dev/null; then
+  MESSAGES=$(uv run claudeswarm check-messages --new-only --quiet --limit 5 2>&1) || true
+fi
 
-# Only output if there are actual messages
-# Use pattern matching instead of exact string comparison
-if [ -n "$MESSAGES" ] && [[ ! "$MESSAGES" =~ ^No\\ messages ]]; then
+# Fall back to direct claudeswarm if uv failed or not available
+if [ -z "$MESSAGES" ] && command -v claudeswarm &> /dev/null; then
+  MESSAGES=$(claudeswarm check-messages --new-only --quiet --limit 5 2>&1) || true
+fi
+
+# Filter out error messages (keep only lines starting with [)
+MESSAGES=$(echo "$MESSAGES" | grep '^\\[' || true)
+
+# Only output if there are actual new messages
+if [ -n "$MESSAGES" ]; then
   echo "╔════════════════════════════════════════════════════════════════╗"
   echo "║  📬 NEW MESSAGES FROM OTHER AGENTS                             ║"
   echo "╚════════════════════════════════════════════════════════════════╝"
   echo ""
   printf '%s\\n' "$MESSAGES"
   echo ""
+  echo "Reply with: claudeswarm send-message <agent-id> INFO \\"your message\\""
   echo "───────────────────────────────────────────────────────────────"
 fi
 
@@ -2148,7 +2210,9 @@ def cmd_cards_list(args: argparse.Namespace) -> None:
                     status_symbol = (
                         "✓"
                         if card.availability == "active"
-                        else "⚠" if card.availability == "busy" else "✗"
+                        else "⚠"
+                        if card.availability == "busy"
+                        else "✗"
                     )
                     skills_str = ", ".join(card.skills[:3])
                     if len(card.skills) > 3:
@@ -2957,6 +3021,17 @@ def main() -> NoReturn:
         dest="agent_id",
         default=None,
         help="Agent ID to check messages for (auto-detected if omitted)",
+    )
+    check_messages_parser.add_argument(
+        "--new-only",
+        action="store_true",
+        help="Only show unread messages (messages since last check)",
+    )
+    check_messages_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Compact output suitable for hooks (one line per message)",
     )
     check_messages_parser.set_defaults(func=cmd_check_messages)
 
