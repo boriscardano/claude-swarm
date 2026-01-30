@@ -1164,7 +1164,7 @@ COORDINATION READY! 🎉"""
 def _send_onboarding_messages(
     agents: list, messages: list[str], args: argparse.Namespace
 ) -> tuple[int, int]:
-    """Send onboarding messages to all agents.
+    """Send onboarding messages to all agents (except self, which is sent later).
 
     Args:
         agents: List of agents to send messages to
@@ -1190,11 +1190,13 @@ def _send_onboarding_messages(
         sys.stdout.flush()
 
         try:
+            # Exclude self from initial broadcast - we'll send to self at the end
+            # after all command output is done, to avoid Enter key being swallowed
             result = broadcast_message(
                 sender_id="system",
                 message_type=MessageType.INFO,
                 content=msg,
-                exclude_self=False,  # Include all agents, including the calling agent
+                exclude_self=True,
             )
 
             delivered = sum(result.values())
@@ -1260,6 +1262,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     1. Discovers all active Claude Code agents via tmux
     2. Broadcasts onboarding messages to all discovered agents
     3. Provides coordination protocol documentation
+    4. Sends onboarding to self at the end (after all output)
 
     Args:
         args: Parsed command-line arguments
@@ -1273,6 +1276,8 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         0: Success - all agents onboarded
         1: Error - discovery failed or no agents found
     """
+    import time
+
     print("=== Claude Swarm Agent Onboarding ===")
     print()
 
@@ -1282,11 +1287,37 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     # Step 2: Prepare onboarding content
     messages = _prepare_onboarding_content(agents)
 
-    # Step 3: Send onboarding messages
+    # Step 3: Send onboarding messages (to others, excluding self)
     messages_sent, failed_messages = _send_onboarding_messages(agents, messages, args)
 
     # Step 4: Report results
     _report_onboarding_results(agents, messages_sent, failed_messages, len(messages))
+
+    # Step 5: Send onboarding to self AFTER all output is done
+    # This ensures the Enter key isn't swallowed while the command is still printing.
+    # When tmux send-keys sends an Enter key while the CLI is still printing output,
+    # the Enter can be "swallowed" by the terminal's input buffer, causing the message
+    # to not execute. The delay ensures terminal rendering completes before self-messaging.
+    self_agent_id, _ = _detect_current_agent()
+    if self_agent_id:
+        from claudeswarm.messaging import MessageType, send_message
+
+        # Delay to ensure all stdout is flushed and terminal rendering completes
+        sys.stdout.flush()
+        sys.stderr.flush()
+        time.sleep(0.5)
+
+        for msg in messages:
+            try:
+                send_message(
+                    sender_id="system",
+                    recipient_id=self_agent_id,
+                    message_type=MessageType.INFO,
+                    content=msg,
+                )
+            except Exception as e:
+                # Log but don't fail - self-message delivery is best effort
+                logger.debug(f"Failed to send onboarding message to self: {e}")
 
     sys.exit(0)
 
