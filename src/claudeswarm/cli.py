@@ -18,17 +18,24 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import NoReturn
 
+from claudeswarm.agent_cards import AgentCard, AgentCardRegistry
 from claudeswarm.config import (
     ConfigValidationError,
     _find_config_file,
     get_config,
     load_config,
 )
+from claudeswarm.conflict_resolution import ConflictResolver
+from claudeswarm.context import ContextDecision, ContextStore, SharedContext
+from claudeswarm.delegation import DelegationManager
 from claudeswarm.discovery import list_active_agents, refresh_registry
+from claudeswarm.learning import LearningSystem
 from claudeswarm.locking import LockManager
 from claudeswarm.logging_config import get_logger, setup_logging
+from claudeswarm.memory import MemoryStore
 from claudeswarm.monitoring import start_monitoring
 from claudeswarm.project import find_project_root
+from claudeswarm.tasks import Task, TaskManager, TaskPriority, TaskStatus
 from claudeswarm.validators import (
     ValidationError,
     validate_agent_id,
@@ -2119,6 +2126,614 @@ def _ensure_hook_in_settings(settings_file: Path) -> None:
         print(f"✓ Created {settings_file} with hook config")
 
 
+# =============================================================================
+# A2A-Inspired Command Handlers
+# =============================================================================
+
+
+def cmd_cards_list(args: argparse.Namespace) -> None:
+    """List all registered agent cards."""
+    try:
+        registry = AgentCardRegistry(project_root=args.project_root)
+        cards = registry.list_all_cards()
+
+        if args.json:
+            print(json.dumps([card.to_dict() for card in cards], indent=2))
+        else:
+            if not cards:
+                print("No agent cards registered.")
+            else:
+                print(f"=== Agent Cards ({len(cards)}) ===")
+                for card in cards:
+                    status_symbol = (
+                        "✓"
+                        if card.availability == "active"
+                        else "⚠" if card.availability == "busy" else "✗"
+                    )
+                    skills_str = ", ".join(card.skills[:3])
+                    if len(card.skills) > 3:
+                        skills_str += f" (+{len(card.skills) - 3} more)"
+                    print(
+                        f"  {status_symbol} {card.agent_id:<12} | {card.name:<20} | Skills: {skills_str}"
+                    )
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_cards_get(args: argparse.Namespace) -> None:
+    """Get a specific agent card."""
+    try:
+        registry = AgentCardRegistry(project_root=args.project_root)
+        card = registry.get_card(args.agent_id)
+
+        if not card:
+            print(f"No card found for agent: {args.agent_id}", file=sys.stderr)
+            sys.exit(1)
+
+        if args.json:
+            print(json.dumps(card.to_dict(), indent=2))
+        else:
+            print(f"=== Agent Card: {card.agent_id} ===")
+            print(f"  Name: {card.name}")
+            print(f"  Description: {card.description}")
+            print(f"  Availability: {card.availability.value}")
+            print(f"  Skills: {', '.join(card.skills)}")
+            print(f"  Tools: {', '.join(card.tools)}")
+            if card.success_rates:
+                print("  Success Rates:")
+                for skill, rate in sorted(card.success_rates.items(), key=lambda x: -x[1]):
+                    print(f"    {skill}: {rate:.1%}")
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_cards_register(args: argparse.Namespace) -> None:
+    """Register a new agent card."""
+    try:
+        validated_agent_id = _require_agent_id(args)
+        skills = args.skills.split(",") if args.skills else []
+        tools = args.tools.split(",") if args.tools else []
+
+        card = AgentCard(
+            agent_id=validated_agent_id,
+            name=args.name or validated_agent_id,
+            description=args.description or "",
+            skills=skills,
+            tools=tools,
+            availability="active",
+        )
+
+        registry = AgentCardRegistry(project_root=args.project_root)
+        registry.register_card(card)
+
+        print(f"Agent card registered: {validated_agent_id}")
+        print(f"  Name: {card.name}")
+        print(f"  Skills: {', '.join(card.skills) or 'none'}")
+        print(f"  Tools: {', '.join(card.tools) or 'none'}")
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_cards_update(args: argparse.Namespace) -> None:
+    """Update an agent card."""
+    try:
+        validated_agent_id = _require_agent_id(args)
+
+        registry = AgentCardRegistry(project_root=args.project_root)
+        card = registry.get_card(validated_agent_id)
+
+        if not card:
+            print(f"No card found for agent: {validated_agent_id}", file=sys.stderr)
+            sys.exit(1)
+
+        updates = {}
+        if args.name:
+            updates["name"] = args.name
+        if args.description:
+            updates["description"] = args.description
+        if args.skills:
+            updates["skills"] = args.skills.split(",")
+        if args.tools:
+            updates["tools"] = args.tools.split(",")
+        if args.availability:
+            updates["availability"] = args.availability
+
+        if not updates:
+            print("No updates specified.", file=sys.stderr)
+            sys.exit(1)
+
+        registry.update_card(validated_agent_id, **updates)
+        print(f"Agent card updated: {validated_agent_id}")
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_tasks_list(args: argparse.Namespace) -> None:
+    """List all tasks."""
+    try:
+        manager = TaskManager(project_root=args.project_root)
+        tasks = manager.list_tasks(
+            status=TaskStatus(args.status) if args.status else None,
+            assignee=args.assignee,
+        )
+
+        if args.json:
+            print(json.dumps([task.to_dict() for task in tasks], indent=2))
+        else:
+            if not tasks:
+                print("No tasks found.")
+            else:
+                print(f"=== Tasks ({len(tasks)}) ===")
+                for task in tasks:
+                    priority_symbol = {
+                        TaskPriority.CRITICAL: "🔴",
+                        TaskPriority.HIGH: "🟠",
+                        TaskPriority.NORMAL: "🟢",
+                        TaskPriority.LOW: "⚪",
+                    }.get(task.priority, "⚪")
+                    assignee = task.assignee or "unassigned"
+                    print(
+                        f"  {priority_symbol} [{task.status.value:<10}] {task.id[:8]}... | {task.objective[:40]} | {assignee}"
+                    )
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_tasks_get(args: argparse.Namespace) -> None:
+    """Get a specific task."""
+    try:
+        manager = TaskManager(project_root=args.project_root)
+        task = manager.get_task(args.task_id)
+
+        if not task:
+            print(f"Task not found: {args.task_id}", file=sys.stderr)
+            sys.exit(1)
+
+        if args.json:
+            print(json.dumps(task.to_dict(), indent=2))
+        else:
+            print(f"=== Task: {task.id} ===")
+            print(f"  Objective: {task.objective}")
+            print(f"  Status: {task.status.value}")
+            print(f"  Priority: {task.priority.value}")
+            print(f"  Creator: {task.creator}")
+            print(f"  Assignee: {task.assignee or 'unassigned'}")
+            if task.constraints:
+                print(f"  Constraints: {', '.join(task.constraints)}")
+            if task.files:
+                print(f"  Files: {', '.join(task.files)}")
+            if task.blocked_by:
+                print(f"  Blocked by: {', '.join(task.blocked_by)}")
+            print(f"  Created: {task.created_at}")
+            if task.completed_at:
+                print(f"  Completed: {task.completed_at}")
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_tasks_create(args: argparse.Namespace) -> None:
+    """Create a new task."""
+    try:
+        validated_agent_id = _require_agent_id(args, "creator")
+
+        constraints = args.constraints.split(",") if args.constraints else []
+        files = args.files.split(",") if args.files else []
+
+        task = Task.create(
+            objective=args.objective,
+            creator=validated_agent_id,
+            priority=TaskPriority(args.priority) if args.priority else TaskPriority.NORMAL,
+            constraints=constraints,
+            files=files,
+            context_id=args.context_id,
+        )
+
+        manager = TaskManager(project_root=args.project_root)
+        manager.save_task(task)
+
+        print(f"Task created: {task.id}")
+        print(f"  Objective: {task.objective}")
+        print(f"  Priority: {task.priority.value}")
+        print(f"  Creator: {task.creator}")
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_tasks_update(args: argparse.Namespace) -> None:
+    """Update a task's status."""
+    try:
+        manager = TaskManager(project_root=args.project_root)
+        task = manager.get_task(args.task_id)
+
+        if not task:
+            print(f"Task not found: {args.task_id}", file=sys.stderr)
+            sys.exit(1)
+
+        if args.status:
+            new_status = TaskStatus(args.status)
+            task.transition_to(new_status)
+
+        if args.assignee:
+            task.assignee = args.assignee
+
+        manager.save_task(task)
+        print(f"Task updated: {task.id}")
+        print(f"  Status: {task.status.value}")
+        if task.assignee:
+            print(f"  Assignee: {task.assignee}")
+
+        sys.exit(0)
+
+    except ValueError as e:
+        print(f"Invalid transition: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_delegate(args: argparse.Namespace) -> None:
+    """Delegate a task to the best-matched agent."""
+    try:
+        manager = TaskManager(project_root=args.project_root)
+        task = manager.get_task(args.task_id)
+
+        if not task:
+            print(f"Task not found: {args.task_id}", file=sys.stderr)
+            sys.exit(1)
+
+        delegation_manager = DelegationManager(project_root=args.project_root)
+        result = delegation_manager.delegate_task(task)
+
+        if result:
+            print("Task delegated successfully!")
+            print(f"  Task: {task.id}")
+            print(f"  Assigned to: {result['agent_id']}")
+            print(f"  Match score: {result['score']:.2f}")
+            print(f"  Matched skills: {', '.join(result['matched_skills'])}")
+        else:
+            print("No suitable agent found for delegation.", file=sys.stderr)
+            sys.exit(1)
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_find_agent(args: argparse.Namespace) -> None:
+    """Find the best agent for a task or skill."""
+    try:
+        delegation_manager = DelegationManager(project_root=args.project_root)
+
+        if args.skill:
+            # Find agents with specific skill
+            registry = AgentCardRegistry(project_root=args.project_root)
+            agents = registry.find_agents_with_skill(args.skill)
+
+            if args.json:
+                print(json.dumps([a.to_dict() for a in agents], indent=2))
+            else:
+                if not agents:
+                    print(f"No agents found with skill: {args.skill}")
+                else:
+                    print(f"=== Agents with '{args.skill}' skill ({len(agents)}) ===")
+                    for agent in agents:
+                        rate = agent.success_rates.get(args.skill, 0.0)
+                        print(f"  {agent.agent_id:<12} | Success rate: {rate:.1%}")
+        else:
+            # Find best agent for a task description
+            if not args.objective:
+                print("Either --skill or --objective must be provided", file=sys.stderr)
+                sys.exit(1)
+
+            # Create a temporary task to find best agent
+            temp_task = Task.create(
+                objective=args.objective,
+                creator="cli",
+            )
+            result = delegation_manager.find_best_agent(temp_task)
+
+            if args.json:
+                print(json.dumps(result, indent=2) if result else "{}")
+            else:
+                if result:
+                    print(f"Best agent for: {args.objective}")
+                    print(f"  Agent: {result['agent_id']}")
+                    print(f"  Score: {result['score']:.2f}")
+                    print(f"  Matched skills: {', '.join(result['matched_skills'])}")
+                else:
+                    print("No suitable agent found.")
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_context_list(args: argparse.Namespace) -> None:
+    """List all shared contexts."""
+    try:
+        store = ContextStore(project_root=args.project_root)
+        contexts = store.list_contexts()
+
+        if args.json:
+            print(json.dumps([ctx.to_dict() for ctx in contexts], indent=2))
+        else:
+            if not contexts:
+                print("No contexts found.")
+            else:
+                print(f"=== Shared Contexts ({len(contexts)}) ===")
+                for ctx in contexts:
+                    files_count = len(ctx.files_touched)
+                    decisions_count = len(ctx.decisions)
+                    print(
+                        f"  {ctx.context_id:<20} | {ctx.summary[:40]} | {files_count} files, {decisions_count} decisions"
+                    )
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_context_get(args: argparse.Namespace) -> None:
+    """Get a specific context."""
+    try:
+        store = ContextStore(project_root=args.project_root)
+        ctx = store.get_context(args.context_id)
+
+        if not ctx:
+            print(f"Context not found: {args.context_id}", file=sys.stderr)
+            sys.exit(1)
+
+        if args.json:
+            print(json.dumps(ctx.to_dict(), indent=2))
+        else:
+            print(f"=== Context: {ctx.context_id} ===")
+            print(f"  Summary: {ctx.summary}")
+            if ctx.files_touched:
+                print(f"  Files: {', '.join(ctx.files_touched)}")
+            if ctx.related_contexts:
+                print(f"  Related: {', '.join(ctx.related_contexts)}")
+            if ctx.decisions:
+                print("  Decisions:")
+                for decision in ctx.decisions:
+                    print(f"    - {decision.decision} (by {decision.by})")
+                    if decision.reason:
+                        print(f"      Reason: {decision.reason}")
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_context_create(args: argparse.Namespace) -> None:
+    """Create a new shared context."""
+    try:
+        related = args.related.split(",") if args.related else []
+
+        ctx = SharedContext(
+            context_id=args.context_id,
+            summary=args.summary,
+            related_contexts=related,
+        )
+
+        store = ContextStore(project_root=args.project_root)
+        store.save_context(ctx)
+
+        print(f"Context created: {ctx.context_id}")
+        print(f"  Summary: {ctx.summary}")
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_context_add_decision(args: argparse.Namespace) -> None:
+    """Add a decision to a context."""
+    try:
+        validated_agent_id = _require_agent_id(args, "by")
+
+        store = ContextStore(project_root=args.project_root)
+        ctx = store.get_context(args.context_id)
+
+        if not ctx:
+            print(f"Context not found: {args.context_id}", file=sys.stderr)
+            sys.exit(1)
+
+        decision = ContextDecision(
+            decision=args.decision,
+            by=validated_agent_id,
+            reason=args.reason,
+        )
+
+        ctx.add_decision(decision)
+        store.save_context(ctx)
+
+        print(f"Decision added to context: {ctx.context_id}")
+        print(f"  Decision: {decision.decision}")
+        print(f"  By: {decision.by}")
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_memory_get(args: argparse.Namespace) -> None:
+    """Get an agent's memory."""
+    try:
+        validated_agent_id = _require_agent_id(args)
+
+        store = MemoryStore(project_root=args.project_root)
+        memory = store.get_memory(validated_agent_id)
+
+        if not memory:
+            print(f"No memory found for agent: {validated_agent_id}")
+            sys.exit(0)
+
+        if args.json:
+            print(json.dumps(memory.to_dict(), indent=2))
+        else:
+            print(f"=== Memory: {memory.agent_id} ===")
+            print(f"  Task history: {len(memory.task_history)} tasks")
+            print(f"  Patterns learned: {len(memory.patterns)} patterns")
+            print(f"  Relationships: {len(memory.relationships)} agents")
+            print(f"  Knowledge items: {len(memory.knowledge)} items")
+
+            if memory.patterns:
+                print("\n  Recent Patterns:")
+                for pattern in list(memory.patterns.values())[:3]:
+                    print(f"    - {pattern.pattern}: {pattern.description}")
+
+            if memory.relationships:
+                print("\n  Agent Relationships:")
+                for agent_id, rel in list(memory.relationships.items())[:3]:
+                    print(
+                        f"    - {agent_id}: trust={rel.trust_score:.2f}, collaborations={rel.collaboration_count}"
+                    )
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_memory_clear(args: argparse.Namespace) -> None:
+    """Clear an agent's memory."""
+    try:
+        validated_agent_id = _require_agent_id(args)
+
+        store = MemoryStore(project_root=args.project_root)
+        store.clear_memory(validated_agent_id)
+
+        print(f"Memory cleared for agent: {validated_agent_id}")
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_learning_stats(args: argparse.Namespace) -> None:
+    """Show learning statistics for an agent."""
+    try:
+        validated_agent_id = _require_agent_id(args)
+
+        system = LearningSystem(project_root=args.project_root)
+        performance = system.get_agent_performance(validated_agent_id)
+
+        if not performance:
+            print(f"No learning data for agent: {validated_agent_id}")
+            sys.exit(0)
+
+        if args.json:
+            print(json.dumps(performance.to_dict(), indent=2))
+        else:
+            print(f"=== Learning Stats: {performance.agent_id} ===")
+            print(f"  Tasks completed: {performance.tasks_completed}")
+            print(f"  Tasks failed: {performance.tasks_failed}")
+            print(f"  Average response time: {performance.avg_response_time:.1f}s")
+
+            if performance.skill_metrics:
+                print("\n  Skill Performance:")
+                for skill, metrics in sorted(
+                    performance.skill_metrics.items(), key=lambda x: -x[1].success_rate
+                )[:5]:
+                    print(
+                        f"    {skill}: {metrics.success_rate:.1%} ({metrics.success_count}/{metrics.total_count})"
+                    )
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_conflict_resolve(args: argparse.Namespace) -> None:
+    """Resolve a file lock conflict."""
+    try:
+        resolver = ConflictResolver(project_root=args.project_root)
+
+        # Get the current conflict for the file
+        lock_manager = LockManager(project_root=args.project_root)
+        lock = lock_manager.who_has_lock(args.filepath)
+
+        if not lock:
+            print(f"No lock conflict on: {args.filepath}")
+            sys.exit(0)
+
+        validated_agent_id = _require_agent_id(args, "requester")
+
+        if lock.agent_id == validated_agent_id:
+            print(f"You already hold the lock on: {args.filepath}")
+            sys.exit(0)
+
+        # Try to resolve the conflict
+        result = resolver.resolve_conflict(
+            filepath=args.filepath,
+            requester_id=validated_agent_id,
+            holder_id=lock.agent_id,
+        )
+
+        if result.resolved:
+            print(f"Conflict resolved: {args.filepath}")
+            print(f"  Winner: {result.winner}")
+            print(f"  Strategy: {result.strategy.value}")
+            if result.message:
+                print(f"  Message: {result.message}")
+        else:
+            print(f"Conflict not resolved: {args.filepath}", file=sys.stderr)
+            if result.message:
+                print(f"  Reason: {result.message}", file=sys.stderr)
+            sys.exit(1)
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     """Initialize Claude Swarm in current project with guided setup.
 
@@ -2517,6 +3132,296 @@ def main() -> NoReturn:
     )
     config_edit_parser.set_defaults(func=cmd_config_edit)
 
+    # ==========================================================================
+    # A2A-Inspired Commands
+    # ==========================================================================
+
+    # cards command group
+    cards_parser = subparsers.add_parser(
+        "cards",
+        help="Agent card management (A2A protocol)",
+    )
+    cards_subparsers = cards_parser.add_subparsers(dest="cards_command", help="Cards command")
+
+    # cards list
+    cards_list_parser = cards_subparsers.add_parser(
+        "list",
+        help="List all registered agent cards",
+    )
+    cards_list_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    cards_list_parser.set_defaults(func=cmd_cards_list)
+
+    # cards get
+    cards_get_parser = cards_subparsers.add_parser(
+        "get",
+        help="Get a specific agent card",
+    )
+    cards_get_parser.add_argument("agent_id", help="Agent ID to get card for")
+    cards_get_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    cards_get_parser.set_defaults(func=cmd_cards_get)
+
+    # cards register
+    cards_register_parser = cards_subparsers.add_parser(
+        "register",
+        help="Register a new agent card",
+    )
+    cards_register_parser.add_argument(
+        "--agent-id",
+        dest="agent_id",
+        default=None,
+        help="Agent ID (auto-detected if omitted)",
+    )
+    cards_register_parser.add_argument("--name", help="Agent display name")
+    cards_register_parser.add_argument("--description", help="Agent description")
+    cards_register_parser.add_argument("--skills", help="Comma-separated list of skills")
+    cards_register_parser.add_argument("--tools", help="Comma-separated list of tools")
+    cards_register_parser.set_defaults(func=cmd_cards_register)
+
+    # cards update
+    cards_update_parser = cards_subparsers.add_parser(
+        "update",
+        help="Update an agent card",
+    )
+    cards_update_parser.add_argument(
+        "--agent-id",
+        dest="agent_id",
+        default=None,
+        help="Agent ID (auto-detected if omitted)",
+    )
+    cards_update_parser.add_argument("--name", help="New agent display name")
+    cards_update_parser.add_argument("--description", help="New agent description")
+    cards_update_parser.add_argument("--skills", help="New comma-separated list of skills")
+    cards_update_parser.add_argument("--tools", help="New comma-separated list of tools")
+    cards_update_parser.add_argument(
+        "--availability",
+        choices=["active", "busy", "offline"],
+        help="New availability status",
+    )
+    cards_update_parser.set_defaults(func=cmd_cards_update)
+
+    # tasks command group
+    tasks_parser = subparsers.add_parser(
+        "tasks",
+        help="Task lifecycle management",
+    )
+    tasks_subparsers = tasks_parser.add_subparsers(dest="tasks_command", help="Tasks command")
+
+    # tasks list
+    tasks_list_parser = tasks_subparsers.add_parser(
+        "list",
+        help="List all tasks",
+    )
+    tasks_list_parser.add_argument(
+        "--status",
+        choices=[
+            "pending",
+            "assigned",
+            "working",
+            "review",
+            "completed",
+            "blocked",
+            "failed",
+            "cancelled",
+        ],
+        help="Filter by status",
+    )
+    tasks_list_parser.add_argument("--assignee", help="Filter by assignee")
+    tasks_list_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    tasks_list_parser.set_defaults(func=cmd_tasks_list)
+
+    # tasks get
+    tasks_get_parser = tasks_subparsers.add_parser(
+        "get",
+        help="Get a specific task",
+    )
+    tasks_get_parser.add_argument("task_id", help="Task ID")
+    tasks_get_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    tasks_get_parser.set_defaults(func=cmd_tasks_get)
+
+    # tasks create
+    tasks_create_parser = tasks_subparsers.add_parser(
+        "create",
+        help="Create a new task",
+    )
+    tasks_create_parser.add_argument("objective", help="Task objective")
+    tasks_create_parser.add_argument(
+        "--creator",
+        default=None,
+        help="Creator agent ID (auto-detected if omitted)",
+    )
+    tasks_create_parser.add_argument(
+        "--priority",
+        choices=["low", "normal", "high", "critical"],
+        default="normal",
+        help="Task priority (default: normal)",
+    )
+    tasks_create_parser.add_argument("--constraints", help="Comma-separated constraints")
+    tasks_create_parser.add_argument("--files", help="Comma-separated file paths")
+    tasks_create_parser.add_argument("--context-id", dest="context_id", help="Related context ID")
+    tasks_create_parser.set_defaults(func=cmd_tasks_create)
+
+    # tasks update
+    tasks_update_parser = tasks_subparsers.add_parser(
+        "update",
+        help="Update a task",
+    )
+    tasks_update_parser.add_argument("task_id", help="Task ID to update")
+    tasks_update_parser.add_argument(
+        "--status",
+        choices=[
+            "pending",
+            "assigned",
+            "working",
+            "review",
+            "completed",
+            "blocked",
+            "failed",
+            "cancelled",
+        ],
+        help="New status",
+    )
+    tasks_update_parser.add_argument("--assignee", help="New assignee agent ID")
+    tasks_update_parser.set_defaults(func=cmd_tasks_update)
+
+    # delegate command
+    delegate_parser = subparsers.add_parser(
+        "delegate",
+        help="Delegate a task to the best-matched agent",
+    )
+    delegate_parser.add_argument("task_id", help="Task ID to delegate")
+    delegate_parser.set_defaults(func=cmd_delegate)
+
+    # find-agent command
+    find_agent_parser = subparsers.add_parser(
+        "find-agent",
+        help="Find the best agent for a task or skill",
+    )
+    find_agent_parser.add_argument("--skill", help="Find agents with specific skill")
+    find_agent_parser.add_argument("--objective", help="Find best agent for task objective")
+    find_agent_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    find_agent_parser.set_defaults(func=cmd_find_agent)
+
+    # context command group
+    context_parser = subparsers.add_parser(
+        "context",
+        help="Shared context management",
+    )
+    context_subparsers = context_parser.add_subparsers(
+        dest="context_command", help="Context command"
+    )
+
+    # context list
+    context_list_parser = context_subparsers.add_parser(
+        "list",
+        help="List all shared contexts",
+    )
+    context_list_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    context_list_parser.set_defaults(func=cmd_context_list)
+
+    # context get
+    context_get_parser = context_subparsers.add_parser(
+        "get",
+        help="Get a specific context",
+    )
+    context_get_parser.add_argument("context_id", help="Context ID")
+    context_get_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    context_get_parser.set_defaults(func=cmd_context_get)
+
+    # context create
+    context_create_parser = context_subparsers.add_parser(
+        "create",
+        help="Create a new shared context",
+    )
+    context_create_parser.add_argument("context_id", help="Context ID (e.g., feature-auth)")
+    context_create_parser.add_argument("summary", help="Context summary")
+    context_create_parser.add_argument("--related", help="Comma-separated related context IDs")
+    context_create_parser.set_defaults(func=cmd_context_create)
+
+    # context add-decision
+    context_decision_parser = context_subparsers.add_parser(
+        "add-decision",
+        help="Add a decision to a context",
+    )
+    context_decision_parser.add_argument("context_id", help="Context ID")
+    context_decision_parser.add_argument("decision", help="Decision made")
+    context_decision_parser.add_argument("--reason", help="Reason for decision")
+    context_decision_parser.add_argument(
+        "--by",
+        default=None,
+        help="Agent who made the decision (auto-detected if omitted)",
+    )
+    context_decision_parser.set_defaults(func=cmd_context_add_decision)
+
+    # memory command group
+    memory_parser = subparsers.add_parser(
+        "memory",
+        help="Agent memory management",
+    )
+    memory_subparsers = memory_parser.add_subparsers(dest="memory_command", help="Memory command")
+
+    # memory get
+    memory_get_parser = memory_subparsers.add_parser(
+        "get",
+        help="Get an agent's memory",
+    )
+    memory_get_parser.add_argument(
+        "--agent-id",
+        dest="agent_id",
+        default=None,
+        help="Agent ID (auto-detected if omitted)",
+    )
+    memory_get_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    memory_get_parser.set_defaults(func=cmd_memory_get)
+
+    # memory clear
+    memory_clear_parser = memory_subparsers.add_parser(
+        "clear",
+        help="Clear an agent's memory",
+    )
+    memory_clear_parser.add_argument(
+        "--agent-id",
+        dest="agent_id",
+        default=None,
+        help="Agent ID (auto-detected if omitted)",
+    )
+    memory_clear_parser.set_defaults(func=cmd_memory_clear)
+
+    # learning command group
+    learning_parser = subparsers.add_parser(
+        "learning",
+        help="Capability learning statistics",
+    )
+    learning_subparsers = learning_parser.add_subparsers(
+        dest="learning_command", help="Learning command"
+    )
+
+    # learning stats
+    learning_stats_parser = learning_subparsers.add_parser(
+        "stats",
+        help="Show learning statistics for an agent",
+    )
+    learning_stats_parser.add_argument(
+        "--agent-id",
+        dest="agent_id",
+        default=None,
+        help="Agent ID (auto-detected if omitted)",
+    )
+    learning_stats_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    learning_stats_parser.set_defaults(func=cmd_learning_stats)
+
+    # resolve-conflict command
+    resolve_conflict_parser = subparsers.add_parser(
+        "resolve-conflict",
+        help="Resolve a file lock conflict",
+    )
+    resolve_conflict_parser.add_argument("filepath", help="Path to the conflicted file")
+    resolve_conflict_parser.add_argument(
+        "--requester",
+        default=None,
+        help="Agent ID requesting the lock (auto-detected if omitted)",
+    )
+    resolve_conflict_parser.set_defaults(func=cmd_conflict_resolve)
+
     # help command
     help_parser = subparsers.add_parser(
         "help",
@@ -2574,6 +3479,31 @@ Utility Commands (run from anywhere):
     list-all-locks       List all active locks
     cleanup-stale-locks  Clean up stale locks
     reload               Reload claudeswarm CLI with latest changes
+
+A2A Protocol Commands (autonomous coordination):
+    cards list           List all registered agent cards
+    cards get            Get a specific agent card
+    cards register       Register a new agent card
+    cards update         Update an agent card
+
+    tasks list           List all tasks
+    tasks get            Get a specific task
+    tasks create         Create a new task
+    tasks update         Update a task's status
+
+    delegate             Delegate a task to the best-matched agent
+    find-agent           Find the best agent for a task or skill
+    resolve-conflict     Resolve a file lock conflict autonomously
+
+    context list         List all shared contexts
+    context get          Get a specific context
+    context create       Create a new shared context
+    context add-decision Add a decision to a context
+
+    memory get           Get an agent's memory
+    memory clear         Clear an agent's memory
+
+    learning stats       Show learning statistics for an agent
 
 Configuration Commands:
     config init          Create default configuration file

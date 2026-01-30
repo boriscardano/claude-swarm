@@ -12,6 +12,16 @@ Claude Swarm enables multiple Claude Code agents to work together on the same co
 - **Stale Detection:** Automatically clean up locks from crashed agents
 - **Monitoring:** Real-time dashboard of agent activity
 
+### A2A Protocol-Inspired Features (NEW)
+
+- **Agent Cards:** Capability discovery with skills, tools, and availability
+- **Task Lifecycle:** Structured tasks with status tracking (pending → working → completed)
+- **Skill-Based Delegation:** Automatically route tasks to the best-matched agent
+- **Capability Learning:** Track agent performance and improve delegation over time
+- **Autonomous Conflict Resolution:** Resolve file conflicts without human intervention
+- **Shared Context:** Preserve decisions and coordinate related work
+- **Agent Memory:** Remember task history, patterns, and relationships
+
 ## Quick Start
 
 ### 🚀 Super Simple Setup (Recommended)
@@ -330,6 +340,233 @@ cp examples/configs/small-team.yaml .claudeswarm.yaml
 
 For complete configuration reference, see [Configuration Guide](docs/CONFIGURATION.md).
 
+## A2A Protocol-Inspired Features
+
+Claude Swarm now supports autonomous agent coordination through A2A Protocol-inspired features. These enable agents to work together with minimal human intervention.
+
+### Agent Cards
+
+Each agent can register a card advertising its capabilities:
+
+```bash
+# Register an agent with skills and tools
+claudeswarm cards register --name "Backend Developer" \
+  --skills "python,api,database" \
+  --tools "Read,Edit,Bash"
+
+# List all registered agents
+claudeswarm cards list
+
+# Get details about a specific agent
+claudeswarm cards get agent-0
+
+# Update availability
+claudeswarm cards update --availability busy
+```
+
+```python
+from claudeswarm.agent_cards import AgentCard, AgentCardRegistry
+
+# Create and register a card
+card = AgentCard(
+    agent_id="agent-0",
+    name="Architect Agent",
+    skills=["architecture", "design", "planning"],
+    tools=["Read", "Grep", "Glob"],
+    availability="active",
+)
+
+registry = AgentCardRegistry()
+registry.register_card(card)
+
+# Find agents with specific skills
+python_agents = registry.find_agents_with_skill("python")
+```
+
+### Task Lifecycle Management
+
+Create and track tasks with full lifecycle states:
+
+```bash
+# Create a task
+claudeswarm tasks create "Implement user authentication" \
+  --priority high \
+  --files "src/auth.py,src/middleware.py"
+
+# List tasks
+claudeswarm tasks list --status working
+
+# Update task status
+claudeswarm tasks update <task-id> --status completed
+```
+
+```python
+from claudeswarm.tasks import Task, TaskManager, TaskStatus, TaskPriority
+
+# Create a task
+task = Task.create(
+    objective="Implement JWT authentication",
+    creator="agent-0",
+    priority=TaskPriority.HIGH,
+    files=["src/auth.py"],
+)
+
+manager = TaskManager()
+manager.save_task(task)
+
+# Transition task through lifecycle
+task.transition_to(TaskStatus.WORKING)
+task.transition_to(TaskStatus.REVIEW)
+task.transition_to(TaskStatus.COMPLETED)
+```
+
+### Skill-Based Task Delegation
+
+Automatically route tasks to the best-matched agent:
+
+```bash
+# Find the best agent for a task
+claudeswarm find-agent --objective "Optimize database queries"
+
+# Find agents with specific skill
+claudeswarm find-agent --skill python
+
+# Delegate a task automatically
+claudeswarm delegate <task-id>
+```
+
+```python
+from claudeswarm.delegation import DelegationManager
+
+manager = DelegationManager()
+
+# Find best agent for a task
+result = manager.find_best_agent(task)
+print(f"Best agent: {result['agent_id']}, score: {result['score']:.2f}")
+
+# Delegate task to best agent
+manager.delegate_task(task)
+```
+
+### Capability Learning
+
+Track agent performance and improve delegation over time:
+
+```bash
+# View learning statistics
+claudeswarm learning stats --agent-id agent-0
+```
+
+```python
+from claudeswarm.learning import LearningSystem
+
+system = LearningSystem()
+
+# Record task completion
+system.record_task_completion(
+    agent_id="agent-0",
+    task=task,
+    success=True,
+    duration_seconds=120.0,
+)
+
+# Get performance statistics
+perf = system.get_agent_performance("agent-0")
+print(f"Success rate for python: {perf.skill_metrics['python'].success_rate:.1%}")
+```
+
+### Autonomous Conflict Resolution
+
+Resolve file lock conflicts without human intervention:
+
+```bash
+# Attempt to resolve a conflict
+claudeswarm resolve-conflict src/auth.py
+```
+
+```python
+from claudeswarm.conflict_resolution import ConflictResolver
+
+resolver = ConflictResolver()
+
+# Resolve a conflict
+result = resolver.resolve_conflict(
+    filepath="src/auth.py",
+    requester_id="agent-1",
+    holder_id="agent-0",
+)
+
+if result.resolved:
+    print(f"Winner: {result.winner}, Strategy: {result.strategy}")
+```
+
+### Shared Context
+
+Preserve decisions and coordinate related work:
+
+```bash
+# Create a shared context
+claudeswarm context create feature-auth "Implementing JWT authentication"
+
+# Add a decision
+claudeswarm context add-decision feature-auth "Use HS256 algorithm" \
+  --reason "Simpler key management"
+
+# View context
+claudeswarm context get feature-auth
+```
+
+```python
+from claudeswarm.context import SharedContext, ContextStore, ContextDecision
+
+# Create context
+ctx = SharedContext(
+    context_id="feature-auth",
+    summary="Implementing JWT authentication for API",
+)
+
+# Record a decision
+ctx.add_decision(ContextDecision(
+    decision="Use HS256 algorithm",
+    by="agent-0",
+    reason="Simpler key management",
+))
+
+store = ContextStore()
+store.save_context(ctx)
+```
+
+### Agent Memory
+
+Each agent maintains persistent memory of task history, patterns, and relationships:
+
+```bash
+# View agent memory
+claudeswarm memory get
+
+# Clear memory
+claudeswarm memory clear
+```
+
+```python
+from claudeswarm.memory import MemoryStore, TaskMemory
+
+store = MemoryStore()
+memory = store.get_memory("agent-0")
+
+# Record a task
+memory.add_task(TaskMemory(
+    task_id=task.id,
+    objective=task.objective,
+    success=True,
+))
+
+# Learn a pattern
+memory.add_pattern("python-tests", "Always run pytest before committing Python code")
+
+store.save_memory(memory)
+```
+
 ## Integration with Your Project
 
 ### Quick Integration
@@ -377,6 +614,16 @@ For detailed integration instructions, git safety guidelines, and best practices
 - **`cli.py`** - Command-line interface
 - **`project.py`** - Project root detection utilities
 
+### A2A-Inspired Modules
+
+- **`agent_cards.py`** - Agent capability cards for discovery
+- **`tasks.py`** - Task lifecycle state machine
+- **`delegation.py`** - Skill-based task delegation
+- **`learning.py`** - Capability learning system
+- **`conflict_resolution.py`** - Autonomous conflict resolution
+- **`context.py`** - Shared context store
+- **`memory.py`** - Agent memory system
+
 ### Helper Scripts
 
 The repository includes convenience scripts in the root directory:
@@ -399,6 +646,11 @@ The repository includes convenience scripts in the root directory:
 ### System Files
 
 - **`ACTIVE_AGENTS.json`** - Registry of discovered agents
+- **`AGENT_CARDS.json`** - Agent capability cards
+- **`TASKS.json`** - Task lifecycle state store
+- **`CONTEXTS.json`** - Shared context store
+- **`LEARNING_DATA.json`** - Agent performance metrics
+- **`.agent_memory/`** - Per-agent memory files
 - **`agent_messages.log`** - Message delivery log
 - **`.agent_locks/*.lock`** - Lock files for file coordination
 - **`COORDINATION.md`** - Shared coordination workspace
@@ -474,24 +726,34 @@ claude-swarm/
 ├── src/claudeswarm/         # Core modules
 │   ├── discovery.py         # Agent discovery
 │   ├── messaging.py         # Inter-agent messaging
-│   ├── locking.py          # File locking
-│   ├── ack.py              # Acknowledgments
-│   ├── coordination.py     # Coordination file
-│   ├── monitoring.py       # Monitoring dashboard
-│   └── cli.py              # Command-line interface
+│   ├── locking.py           # File locking
+│   ├── ack.py               # Acknowledgments
+│   ├── coordination.py      # Coordination file
+│   ├── monitoring.py        # Monitoring dashboard
+│   ├── cli.py               # Command-line interface
+│   │
+│   │   # A2A-inspired modules
+│   ├── agent_cards.py       # Agent capability cards
+│   ├── tasks.py             # Task lifecycle management
+│   ├── delegation.py        # Skill-based delegation
+│   ├── learning.py          # Capability learning
+│   ├── conflict_resolution.py  # Conflict resolution
+│   ├── context.py           # Shared context store
+│   └── memory.py            # Agent memory system
+│
 ├── tests/
-│   ├── integration/        # Integration tests (29 tests)
-│   │   ├── helpers.py      # Test utilities
+│   ├── integration/         # Integration tests
+│   │   ├── helpers.py       # Test utilities
 │   │   ├── test_basic_coordination.py
 │   │   ├── test_code_review_workflow.py
 │   │   ├── test_message_escalation.py
 │   │   └── test_stale_lock_recovery.py
-│   └── test_*.py           # Unit tests
-├── examples/               # Demo scripts
-│   ├── demo_setup.sh       # 8-pane tmux setup
-│   ├── demo_walkthrough.sh # Automated demo
-│   └── README.md           # Demo documentation
-└── docs/                   # Additional documentation
+│   └── test_*.py            # Unit tests
+├── examples/                # Demo scripts
+│   ├── demo_setup.sh        # 8-pane tmux setup
+│   ├── demo_walkthrough.sh  # Automated demo
+│   └── README.md            # Demo documentation
+└── docs/                    # Additional documentation
 ```
 
 ### Code Quality
@@ -593,6 +855,39 @@ claudeswarm start-dashboard              # Start web dashboard (opens browser)
 claudeswarm start-dashboard --port 9000  # Custom port
 claudeswarm start-dashboard --no-browser # Don't open browser
 claudeswarm start-dashboard --reload     # Development mode with auto-reload
+
+# A2A Protocol Commands (Autonomous Coordination)
+# Agent Cards
+claudeswarm cards list                   # List all agent cards
+claudeswarm cards get <agent-id>         # Get specific agent card
+claudeswarm cards register               # Register new agent card
+claudeswarm cards update                 # Update agent card
+
+# Task Management
+claudeswarm tasks list                   # List all tasks
+claudeswarm tasks list --status working  # Filter by status
+claudeswarm tasks get <task-id>          # Get task details
+claudeswarm tasks create <objective>     # Create new task
+claudeswarm tasks update <task-id>       # Update task status
+
+# Delegation
+claudeswarm delegate <task-id>           # Delegate task to best agent
+claudeswarm find-agent --skill python    # Find agents with skill
+claudeswarm find-agent --objective "..." # Find best agent for task
+
+# Context Management
+claudeswarm context list                 # List all contexts
+claudeswarm context get <id>             # Get context details
+claudeswarm context create <id> <summary> # Create new context
+claudeswarm context add-decision <id> <decision>  # Add decision
+
+# Memory & Learning
+claudeswarm memory get                   # Get agent memory
+claudeswarm memory clear                 # Clear agent memory
+claudeswarm learning stats               # Show learning statistics
+
+# Conflict Resolution
+claudeswarm resolve-conflict <filepath>  # Resolve file lock conflict
 
 # Global Options
 claudeswarm --project-root /path/to/project <command>

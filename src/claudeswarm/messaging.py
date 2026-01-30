@@ -48,6 +48,7 @@ from .validators import (
 __all__ = [
     "MessageType",
     "Message",
+    "TaskInfo",
     "RateLimiter",
     "TmuxMessageDelivery",
     "MessageLogger",
@@ -206,8 +207,23 @@ class MessageDeliveryError(MessagingError):
 
 
 class MessageType(Enum):
-    """Types of messages that can be sent between agents."""
+    """Types of messages that can be sent between agents.
 
+    Original types:
+        QUESTION, REVIEW_REQUEST, BLOCKED, COMPLETED, CHALLENGE, INFO, ACK
+
+    A2A-inspired types (new):
+        TASK_DELEGATION: Delegate a task to another agent
+        TASK_RESULT: Return results from a delegated task
+        CONFLICT: Report a file/resource conflict
+        NEGOTIATION: Conflict resolution negotiation
+        CAPABILITY_QUERY: Query agent capabilities
+        CAPABILITY_RESPONSE: Response to capability query
+        REVIEW_FEEDBACK: Feedback on reviewed work
+        CONTEXT_UPDATE: Share context updates
+    """
+
+    # Original message types
     QUESTION = "QUESTION"
     REVIEW_REQUEST = "REVIEW-REQUEST"
     BLOCKED = "BLOCKED"
@@ -216,12 +232,66 @@ class MessageType(Enum):
     INFO = "INFO"
     ACK = "ACK"
 
+    # A2A-inspired message types
+    TASK_DELEGATION = "TASK-DELEGATION"
+    TASK_RESULT = "TASK-RESULT"
+    CONFLICT = "CONFLICT"
+    NEGOTIATION = "NEGOTIATION"
+    CAPABILITY_QUERY = "CAPABILITY-QUERY"
+    CAPABILITY_RESPONSE = "CAPABILITY-RESPONSE"
+    REVIEW_FEEDBACK = "REVIEW-FEEDBACK"
+    CONTEXT_UPDATE = "CONTEXT-UPDATE"
+
+
+@dataclass
+class TaskInfo:
+    """Task information embedded in A2A-style messages.
+
+    Attributes:
+        objective: What the task should accomplish
+        constraints: List of constraints for the task
+        files: List of files relevant to the task
+        priority: Task priority level
+        task_id: Reference to an existing task (optional)
+        context_id: ID for grouping related messages/tasks
+    """
+
+    objective: str = ""
+    constraints: list[str] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)
+    priority: str = "normal"  # low, normal, high, critical
+    task_id: str | None = None
+    context_id: str | None = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "objective": self.objective,
+            "constraints": self.constraints,
+            "files": self.files,
+            "priority": self.priority,
+            "task_id": self.task_id,
+            "context_id": self.context_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> TaskInfo:
+        """Create from dictionary."""
+        return cls(
+            objective=data.get("objective", ""),
+            constraints=data.get("constraints", []),
+            files=data.get("files", []),
+            priority=data.get("priority", "normal"),
+            task_id=data.get("task_id"),
+            context_id=data.get("context_id"),
+        )
+
 
 @dataclass
 class Message:
     """Represents a message sent between agents.
 
-    Attributes:
+    Original attributes (backward compatible):
         sender_id: ID of the sending agent
         timestamp: When the message was created
         msg_type: Type of message (from MessageType enum)
@@ -230,6 +300,13 @@ class Message:
         msg_id: Unique identifier for tracking (UUID)
         signature: HMAC signature for message authentication (optional, auto-generated)
         delivery_status: Dict mapping recipient_id -> delivery success (populated after sending)
+
+    A2A-inspired attributes (new):
+        context_id: ID for grouping related messages (optional)
+        task: Task information for TASK_DELEGATION messages (optional)
+        requires_ack: Whether the message requires acknowledgment
+        parent_msg_id: ID of parent message for threading (optional)
+        metadata: Additional message metadata (optional)
     """
 
     sender_id: str
@@ -240,6 +317,12 @@ class Message:
     msg_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     signature: str = field(default="")
     delivery_status: dict[str, bool] = field(default_factory=dict)
+    # A2A-inspired fields
+    context_id: str | None = field(default=None)
+    task: TaskInfo | None = field(default=None)
+    requires_ack: bool = field(default=False)
+    parent_msg_id: str | None = field(default=None)
+    metadata: dict = field(default_factory=dict)
 
     def __post_init__(self):
         """Validate message fields."""
@@ -266,6 +349,10 @@ class Message:
             self.msg_type = MessageType(self.msg_type)
         if isinstance(self.timestamp, str):
             self.timestamp = datetime.fromisoformat(self.timestamp)
+
+        # Convert task dict to TaskInfo if needed
+        if isinstance(self.task, dict):
+            self.task = TaskInfo.from_dict(self.task)
 
     def _get_message_data_for_signing(self) -> str:
         """Get canonical representation of message for signing.
@@ -316,7 +403,7 @@ class Message:
         for internal serialization (e.g., ACK system, message reconstruction).
         For log file format, use to_log_dict() instead.
         """
-        return {
+        result = {
             "sender_id": self.sender_id,
             "timestamp": self.timestamp.isoformat(),
             "msg_type": self.msg_type.value,
@@ -326,6 +413,18 @@ class Message:
             "signature": self.signature,
             "delivery_status": self.delivery_status,
         }
+        # A2A-inspired fields (only include if set)
+        if self.context_id is not None:
+            result["context_id"] = self.context_id
+        if self.task is not None:
+            result["task"] = self.task.to_dict()
+        if self.requires_ack:
+            result["requires_ack"] = self.requires_ack
+        if self.parent_msg_id is not None:
+            result["parent_msg_id"] = self.parent_msg_id
+        if self.metadata:
+            result["metadata"] = self.metadata
+        return result
 
     def to_log_dict(self) -> dict:
         """Convert message to log file dictionary format.
@@ -334,7 +433,7 @@ class Message:
         field. It's the format written to agent_messages.log and expected by
         read_messages.py, coord.py, and monitoring.py.
         """
-        return {
+        result = {
             "sender": self.sender_id,
             "timestamp": self.timestamp.isoformat(),
             "msg_type": self.msg_type.value,
@@ -342,6 +441,16 @@ class Message:
             "recipients": self.recipients,
             "msg_id": self.msg_id,
         }
+        # A2A-inspired fields (only include if set)
+        if self.context_id is not None:
+            result["context_id"] = self.context_id
+        if self.task is not None:
+            result["task"] = self.task.to_dict()
+        if self.requires_ack:
+            result["requires_ack"] = self.requires_ack
+        if self.parent_msg_id is not None:
+            result["parent_msg_id"] = self.parent_msg_id
+        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> Message:
@@ -350,6 +459,11 @@ class Message:
         This expects the format from to_dict() which includes 'sender_id' and
         'signature' fields. For parsing log file entries, use from_log_dict() instead.
         """
+        # Parse task if present
+        task = None
+        if "task" in data and data["task"] is not None:
+            task = TaskInfo.from_dict(data["task"])
+
         return cls(
             sender_id=data["sender_id"],
             timestamp=datetime.fromisoformat(data["timestamp"]),
@@ -358,6 +472,11 @@ class Message:
             recipients=data["recipients"],
             msg_id=data.get("msg_id", str(uuid.uuid4())),
             signature=data.get("signature", ""),
+            context_id=data.get("context_id"),
+            task=task,
+            requires_ack=data.get("requires_ack", False),
+            parent_msg_id=data.get("parent_msg_id"),
+            metadata=data.get("metadata", {}),
         )
 
     @classmethod
@@ -369,6 +488,11 @@ class Message:
         Extra fields like 'delivery_status', 'success_count', and 'failure_count'
         are ignored.
         """
+        # Parse task if present
+        task = None
+        if "task" in data and data["task"] is not None:
+            task = TaskInfo.from_dict(data["task"])
+
         return cls(
             sender_id=data["sender"],  # Note: log format uses 'sender'
             timestamp=datetime.fromisoformat(data["timestamp"]),
@@ -377,6 +501,11 @@ class Message:
             recipients=data["recipients"],
             msg_id=data.get("msg_id", str(uuid.uuid4())),
             signature="",  # Log format doesn't include signature
+            context_id=data.get("context_id"),
+            task=task,
+            requires_ack=data.get("requires_ack", False),
+            parent_msg_id=data.get("parent_msg_id"),
+            metadata=data.get("metadata", {}),
         )
 
     def format_for_display(self) -> str:
