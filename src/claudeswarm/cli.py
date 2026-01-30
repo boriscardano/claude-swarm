@@ -1294,14 +1294,18 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     _report_onboarding_results(agents, messages_sent, failed_messages, len(messages))
 
     # Step 5: Send onboarding to self AFTER all output is done
-    # This ensures the Enter key isn't swallowed while the command is still printing
+    # This ensures the Enter key isn't swallowed while the command is still printing.
+    # When tmux send-keys sends an Enter key while the CLI is still printing output,
+    # the Enter can be "swallowed" by the terminal's input buffer, causing the message
+    # to not execute. The delay ensures terminal rendering completes before self-messaging.
     self_agent_id, _ = _detect_current_agent()
     if self_agent_id:
         from claudeswarm.messaging import MessageType, send_message
 
-        # Small delay to ensure all stdout is flushed
+        # Delay to ensure all stdout is flushed and terminal rendering completes
         sys.stdout.flush()
-        time.sleep(0.3)
+        sys.stderr.flush()
+        time.sleep(0.5)
 
         for msg in messages:
             try:
@@ -1311,8 +1315,9 @@ def cmd_onboard(args: argparse.Namespace) -> None:
                     message_type=MessageType.INFO,
                     content=msg,
                 )
-            except Exception:
-                pass  # Best effort - don't fail if self-message fails
+            except Exception as e:
+                # Log but don't fail - self-message delivery is best effort
+                logger.debug(f"Failed to send onboarding message to self: {e}")
 
     sys.exit(0)
 
