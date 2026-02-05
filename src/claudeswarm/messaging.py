@@ -732,7 +732,9 @@ class TmuxMessageDelivery:
             if pane_id in cls._pane_cache:
                 exists, timestamp = cls._pane_cache[pane_id]
                 age = time.time() - timestamp
-                ttl = cls._PANE_CACHE_POSITIVE_TTL_SECONDS if exists else cls._PANE_CACHE_TTL_SECONDS
+                ttl = (
+                    cls._PANE_CACHE_POSITIVE_TTL_SECONDS if exists else cls._PANE_CACHE_TTL_SECONDS
+                )
                 if age < ttl:
                     return exists
                 # Cache expired, remove entry
@@ -1203,6 +1205,7 @@ class MessagingSystem:
         log_file: Path = None,
         rate_limit_messages: int | None = None,
         rate_limit_window: int | None = None,
+        backend: object | None = None,
     ):
         """Initialize messaging system.
 
@@ -1210,10 +1213,13 @@ class MessagingSystem:
             log_file: Path to message log file
             rate_limit_messages: Max messages per agent per window (None = use config)
             rate_limit_window: Rate limit window in seconds (None = use config)
+            backend: Optional TerminalBackend instance. When provided, uses backend
+                    for message delivery instead of direct TmuxMessageDelivery.
         """
         self.rate_limiter = RateLimiter(rate_limit_messages, rate_limit_window)
         self.message_logger = MessageLogger(log_file)
         self.delivery = TmuxMessageDelivery()
+        self._backend = backend
 
     def _load_agent_registry(self) -> AgentRegistry | None:
         """Load the current agent registry with file locking.
@@ -1253,13 +1259,16 @@ class MessagingSystem:
             return None
 
     def _get_agent_pane(self, agent_id: str) -> str | None:
-        """Get tmux pane ID for an agent.
+        """Get the target identifier for an agent.
+
+        For tmux backend, returns the tmux pane ID. For process backend,
+        returns the TTY path or pane_index (used for file-based routing).
 
         Args:
             agent_id: ID of the agent
 
         Returns:
-            Pane ID if found
+            Target identifier string if found
 
         Raises:
             AgentNotFoundError: If agent not found or not active
@@ -1276,6 +1285,9 @@ class MessagingSystem:
         for agent in registry.agents:
             if agent.id == agent_id:
                 if agent.status == "active":
+                    # For process backend agents, return pane_index (which is TTY or pid:N)
+                    if hasattr(agent, "backend_type") and agent.backend_type == "process":
+                        return agent.pane_index
                     # Prefer stable tmux_pane_id (%N format) if available
                     # Falls back to pane_index for backward compatibility
                     if agent.tmux_pane_id:
@@ -1444,24 +1456,37 @@ class MessagingSystem:
         # Track delivery success for logging
         success = False
 
-        try:
-            self.delivery.send_to_pane(
-                pane_id, formatted_msg, timeout=DIRECT_MESSAGE_TIMEOUT_SECONDS
-            )
-            success = True
-            logger.info(f"Message {message.msg_id} delivered to {recipient_id}")
+        # Use backend for delivery if available, otherwise use tmux directly
+        use_file_only = self._backend is not None and self._backend.name != "tmux"
 
-        except (TmuxError, TmuxSocketError, TmuxPaneNotFoundError, TmuxTimeoutError) as e:
-            # Tmux delivery failed - message will be saved to inbox
+        if use_file_only:
+            # Process backend: skip real-time delivery, rely on file-based inbox
             logger.debug(
-                f"Real-time delivery failed for {recipient_id}, saved to inbox: {type(e).__name__}"
+                f"Using file-based delivery for {recipient_id} (backend: {self._backend.name})"
             )
+        else:
+            try:
+                if self._backend is not None and self._backend.name == "tmux":
+                    success = self._backend.send_message(pane_id, formatted_msg)
+                else:
+                    self.delivery.send_to_pane(
+                        pane_id, formatted_msg, timeout=DIRECT_MESSAGE_TIMEOUT_SECONDS
+                    )
+                    success = True
+                if success:
+                    logger.info(f"Message {message.msg_id} delivered to {recipient_id}")
 
-        except Exception as e:
-            logger.error(
-                f"Unexpected error delivering message {message.msg_id} to {recipient_id}: {e}"
-            )
-            raise MessageDeliveryError(f"Message delivery failed: {e}") from e
+            except (TmuxError, TmuxSocketError, TmuxPaneNotFoundError, TmuxTimeoutError) as e:
+                # Tmux delivery failed - message will be saved to inbox
+                logger.debug(
+                    f"Real-time delivery failed for {recipient_id}, saved to inbox: {type(e).__name__}"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"Unexpected error delivering message {message.msg_id} to {recipient_id}: {e}"
+                )
+                raise MessageDeliveryError(f"Message delivery failed: {e}") from e
 
         # Always execute these operations regardless of path taken above
         # Record rate limit if we got past the rate limit check
@@ -1647,14 +1672,26 @@ class MessagingSystem:
         # Send to all recipients, tracking successes and failures
         delivery_status = {}
 
+        # Determine if we should skip real-time delivery (process backend)
+        use_file_only = self._backend is not None and self._backend.name != "tmux"
+
         for recipient_id in recipients:
+            if use_file_only:
+                # Process backend: all messages go through file-based inbox
+                delivery_status[recipient_id] = False
+                continue
+
             try:
                 # Get pane without raising (handle gracefully for broadcast)
                 # Prefer stable tmux_pane_id (%N format) if available
                 pane_id = None
                 for agent in registry.agents:
                     if agent.id == recipient_id and agent.status == "active":
-                        pane_id = agent.tmux_pane_id or agent.pane_index
+                        # For process backend agents, use pane_index
+                        if hasattr(agent, "backend_type") and agent.backend_type == "process":
+                            pane_id = agent.pane_index
+                        else:
+                            pane_id = agent.tmux_pane_id or agent.pane_index
                         break
 
                 if not pane_id:

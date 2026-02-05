@@ -24,7 +24,7 @@ from claudeswarm.messaging import Message, MessageLogger, MessageType
 class TestWhoamiMessageDisplay:
     """Tests for whoami command message display functionality."""
 
-    @patch("claudeswarm.cli.get_active_agents_path")
+    @patch("claudeswarm.project.get_active_agents_path")
     @patch("subprocess.run")
     def test_whoami_shows_recent_messages(self, mock_subprocess, mock_get_path, tmp_path, capsys):
         """Test that whoami shows recent messages."""
@@ -102,7 +102,7 @@ class TestWhoamiMessageDisplay:
         if "TMUX_PANE" in os.environ:
             del os.environ["TMUX_PANE"]
 
-    @patch("claudeswarm.cli.get_active_agents_path")
+    @patch("claudeswarm.project.get_active_agents_path")
     @patch("subprocess.run")
     def test_whoami_message_limit_of_3(self, mock_subprocess, mock_get_path, tmp_path, capsys):
         """Test limit of 3 messages is enforced."""
@@ -171,7 +171,7 @@ class TestWhoamiMessageDisplay:
         if "TMUX_PANE" in os.environ:
             del os.environ["TMUX_PANE"]
 
-    @patch("claudeswarm.cli.get_active_agents_path")
+    @patch("claudeswarm.project.get_active_agents_path")
     @patch("subprocess.run")
     def test_whoami_graceful_handling_when_no_messages(
         self, mock_subprocess, mock_get_path, tmp_path, capsys
@@ -223,7 +223,7 @@ class TestWhoamiMessageDisplay:
         if "TMUX_PANE" in os.environ:
             del os.environ["TMUX_PANE"]
 
-    @patch("claudeswarm.cli.get_active_agents_path")
+    @patch("claudeswarm.project.get_active_agents_path")
     @patch("subprocess.run")
     def test_whoami_graceful_handling_when_logger_fails(
         self, mock_subprocess, mock_get_path, tmp_path, capsys
@@ -257,8 +257,8 @@ class TestWhoamiMessageDisplay:
         with open(registry_path, "w") as f:
             json.dump(agent_data, f)
 
-        # Mock MessageLogger to raise an exception
-        with patch("claudeswarm.cli.MessageLogger") as mock_logger_class:
+        # Mock MessageLogger to raise an exception (imported inside the function)
+        with patch("claudeswarm.messaging.MessageLogger") as mock_logger_class:
             mock_logger_instance = Mock()
             mock_logger_instance.get_messages_for_agent.side_effect = Exception("Test error")
             mock_logger_class.return_value = mock_logger_instance
@@ -282,7 +282,7 @@ class TestWhoamiMessageDisplay:
         if "TMUX_PANE" in os.environ:
             del os.environ["TMUX_PANE"]
 
-    @patch("claudeswarm.cli.get_active_agents_path")
+    @patch("claudeswarm.project.get_active_agents_path")
     @patch("subprocess.run")
     def test_whoami_message_display_format(self, mock_subprocess, mock_get_path, tmp_path, capsys):
         """Test message display format is correct."""
@@ -345,7 +345,7 @@ class TestWhoamiMessageDisplay:
         if "TMUX_PANE" in os.environ:
             del os.environ["TMUX_PANE"]
 
-    @patch("claudeswarm.cli.get_active_agents_path")
+    @patch("claudeswarm.project.get_active_agents_path")
     @patch("subprocess.run")
     def test_whoami_shows_commands_available(
         self, mock_subprocess, mock_get_path, tmp_path, capsys
@@ -400,7 +400,7 @@ class TestWhoamiMessageDisplay:
         if "TMUX_PANE" in os.environ:
             del os.environ["TMUX_PANE"]
 
-    @patch("claudeswarm.cli.get_active_agents_path")
+    @patch("claudeswarm.project.get_active_agents_path")
     @patch("subprocess.run")
     def test_whoami_with_multiple_message_types(
         self, mock_subprocess, mock_get_path, tmp_path, capsys

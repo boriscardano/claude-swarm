@@ -339,6 +339,10 @@ def cmd_discover_agents(args: argparse.Namespace) -> None:
     """Discover active Claude Code agents."""
     import time
 
+    from claudeswarm.backend import get_backend
+
+    backend = get_backend()
+
     # Validate stale_threshold
     try:
         if args.stale_threshold < MIN_STALE_THRESHOLD or args.stale_threshold > MAX_STALE_THRESHOLD:
@@ -363,7 +367,9 @@ def cmd_discover_agents(args: argparse.Namespace) -> None:
             print("Watching for agents (Ctrl+C to stop)...")
             try:
                 while True:
-                    registry = refresh_registry(stale_threshold=args.stale_threshold)
+                    registry = refresh_registry(
+                        stale_threshold=args.stale_threshold, backend=backend
+                    )
 
                     if not args.json:
                         print(f"\n=== Agent Discovery [{registry.updated_at}] ===")
@@ -391,7 +397,7 @@ def cmd_discover_agents(args: argparse.Namespace) -> None:
                 sys.exit(0)
         else:
             # Single discovery
-            registry = refresh_registry(stale_threshold=args.stale_threshold)
+            registry = refresh_registry(stale_threshold=args.stale_threshold, backend=backend)
 
             if args.json:
                 print(json.dumps(registry.to_dict(), indent=2))
@@ -452,26 +458,34 @@ def cmd_list_agents(args: argparse.Namespace) -> None:
 
 
 def _detect_current_agent() -> tuple[str | None, dict | None]:
-    """Detect the current agent from TMUX_PANE environment variable.
+    """Detect the current agent from the active backend.
+
+    Uses the backend abstraction to get the current agent identifier,
+    then matches against the agent registry.
+
+    For tmux backend: uses TMUX_PANE env var
+    For process backend: uses TTY path
 
     Returns:
         Tuple of (agent_id, agent_dict) if found, (None, None) otherwise
     """
     import os
 
+    from claudeswarm.backend import get_backend
     from claudeswarm.project import get_active_agents_path
 
-    # Check if running in tmux
-    tmux_pane_id = os.environ.get("TMUX_PANE")
-    if not tmux_pane_id:
+    backend = get_backend()
+    current_identifier = backend.get_current_agent_identifier()
+
+    if not current_identifier:
         return None, None
 
-    # Validate tmux pane ID to prevent command injection
-    try:
-        tmux_pane_id = validate_tmux_pane_id(tmux_pane_id)
-    except ValidationError:
-        # Invalid pane ID format - cannot proceed safely
-        return None, None
+    # For tmux backend, validate the pane ID format
+    if backend.name == "tmux":
+        try:
+            current_identifier = validate_tmux_pane_id(current_identifier)
+        except ValidationError:
+            return None, None
 
     # Load registry
     registry_path = get_active_agents_path()
@@ -486,62 +500,79 @@ def _detect_current_agent() -> tuple[str | None, dict | None]:
 
     agents = registry.get("agents", [])
 
-    # Try matching by TMUX_PANE env var (works in sandboxed environments!)
-    # SECURITY: Also validate that the agent's PID is still valid to prevent
-    # identity confusion when tmux pane IDs are reused after panes close.
-    for agent in agents:
-        if agent.get("tmux_pane_id") == tmux_pane_id:
-            # Validate agent status to prevent identity confusion
-            if agent.get("status") != "active":
-                logger.debug(f"Skipping non-active agent {agent.get('id')} with matching pane ID")
-                continue
-
-            # Verify PID is still running if available (prevents reused pane ID confusion)
-            # If no PID is recorded, we skip this check for backward compatibility
-            agent_pid = agent.get("pid")
-            if agent_pid:
-                try:
-                    os.kill(agent_pid, 0)  # Check if process exists
-                except ProcessLookupError:
-                    # PID no longer exists - this is a stale registry entry
+    if backend.name == "tmux":
+        # Try matching by TMUX_PANE env var (works in sandboxed environments!)
+        for agent in agents:
+            if agent.get("tmux_pane_id") == current_identifier:
+                if agent.get("status") != "active":
                     logger.debug(
-                        f"Agent {agent.get('id')} PID {agent_pid} no longer running, "
-                        f"skipping stale registry entry"
+                        f"Skipping non-active agent {agent.get('id')} with matching pane ID"
                     )
                     continue
-                except PermissionError:
-                    pass  # Process exists but we can't signal it - that's OK
-                except OSError:
-                    # Other OS error - be lenient and allow the match
-                    logger.debug(
-                        f"Could not verify PID {agent_pid} for agent {agent.get('id')}, "
-                        f"allowing match anyway"
-                    )
 
-            return agent.get("id"), agent
+                agent_pid = agent.get("pid")
+                if agent_pid:
+                    try:
+                        os.kill(agent_pid, 0)
+                    except ProcessLookupError:
+                        logger.debug(
+                            f"Agent {agent.get('id')} PID {agent_pid} no longer running, "
+                            f"skipping stale registry entry"
+                        )
+                        continue
+                    except PermissionError:
+                        pass
+                    except OSError:
+                        logger.debug(
+                            f"Could not verify PID {agent_pid} for agent {agent.get('id')}, "
+                            f"allowing match anyway"
+                        )
 
-    # Fallback: Try converting TMUX_PANE to pane index format
-    try:
-        result = subprocess.run(
-            [
-                "tmux",
-                "display-message",
-                "-p",
-                "-t",
-                tmux_pane_id,
-                "#{session_name}:#{window_index}.#{pane_index}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=2.0,
-        )
-        if result.returncode == 0:
-            current_pane = result.stdout.strip()
-            for agent in agents:
-                if agent.get("pane_index") == current_pane:
-                    return agent.get("id"), agent
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
+                return agent.get("id"), agent
+
+        # Fallback: Try converting TMUX_PANE to pane index format
+        try:
+            result = subprocess.run(
+                [
+                    "tmux",
+                    "display-message",
+                    "-p",
+                    "-t",
+                    current_identifier,
+                    "#{session_name}:#{window_index}.#{pane_index}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            if result.returncode == 0:
+                current_pane = result.stdout.strip()
+                for agent in agents:
+                    if agent.get("pane_index") == current_pane:
+                        return agent.get("id"), agent
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+    elif backend.name == "process":
+        # Match by TTY path or pane_index (which is the identifier for process backend)
+        for agent in agents:
+            if (
+                agent.get("tty") == current_identifier
+                or agent.get("pane_index") == current_identifier
+            ):
+                if agent.get("status") != "active":
+                    continue
+
+                agent_pid = agent.get("pid")
+                if agent_pid:
+                    try:
+                        os.kill(agent_pid, 0)
+                    except ProcessLookupError:
+                        continue
+                    except (PermissionError, OSError):
+                        pass
+
+                return agent.get("id"), agent
 
     return None, None
 
@@ -1515,56 +1546,65 @@ def cmd_acknowledge_message(args: argparse.Namespace) -> None:
 def cmd_whoami(args: argparse.Namespace) -> None:
     """Display information about the current agent.
 
-    Checks if the current tmux pane is registered as an agent and displays
+    Checks if the current terminal is registered as an agent and displays
     agent information if found, or indicates if not running as an agent.
+    Works with both tmux and process backends.
 
     Exit Codes:
         0: Success (agent found or not)
-        1: Error (not in tmux, registry not found, etc.)
+        1: Error (no identifier available, registry not found, etc.)
     """
-    # Check if running in tmux by checking TMUX_PANE environment variable
     import os
 
+    from claudeswarm.backend import get_backend
     from claudeswarm.project import get_active_agents_path
 
-    tmux_pane_id = os.environ.get("TMUX_PANE")
+    backend = get_backend()
+    current_identifier = backend.get_current_agent_identifier()
 
-    if not tmux_pane_id:
-        print("Not running in a tmux session.", file=sys.stderr)
-        print("The 'whoami' command only works within tmux panes.", file=sys.stderr)
-        sys.exit(1)
-
-    # Validate tmux pane ID to prevent command injection
-    try:
-        tmux_pane_id = validate_tmux_pane_id(tmux_pane_id)
-    except ValidationError as e:
-        print(f"Error: Invalid TMUX_PANE environment variable: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Convert tmux pane ID (like %2) to session:window.pane format (like 0:1.1)
-    current_pane = None
-
-    try:
-        result = subprocess.run(
-            [
-                "tmux",
-                "display-message",
-                "-p",
-                "-t",
-                tmux_pane_id,
-                "#{session_name}:#{window_index}.#{pane_index}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=2.0,
-        )
-        if result.returncode == 0:
-            current_pane = result.stdout.strip()
+    if not current_identifier:
+        if backend.name == "tmux":
+            print("Not running in a tmux session.", file=sys.stderr)
+            print("The 'whoami' command only works within tmux panes.", file=sys.stderr)
         else:
-            # Store error for optional display (permission errors are expected in sandboxed environments)
-            _ = result.stderr.strip()
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        _ = str(e)
+            print("Could not determine terminal identity.", file=sys.stderr)
+            print(
+                f"Backend: {backend.name}. No TTY or terminal identifier found.",
+                file=sys.stderr,
+            )
+        sys.exit(1)
+
+    # For tmux backend, validate pane ID format
+    if backend.name == "tmux":
+        try:
+            current_identifier = validate_tmux_pane_id(current_identifier)
+        except ValidationError as e:
+            print(f"Error: Invalid TMUX_PANE environment variable: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    # Convert tmux pane ID to session:window.pane format for display
+    current_pane = None
+    if backend.name == "tmux":
+        try:
+            result = subprocess.run(
+                [
+                    "tmux",
+                    "display-message",
+                    "-p",
+                    "-t",
+                    current_identifier,
+                    "#{session_name}:#{window_index}.#{pane_index}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            if result.returncode == 0:
+                current_pane = result.stdout.strip()
+            else:
+                _ = result.stderr.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            _ = str(e)
 
     # Load active agents registry
     registry_path = get_active_agents_path()
@@ -1584,31 +1624,39 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         print(f"Error reading agent registry: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Search for current pane in registry
+    # Search for current agent in registry
     agents = registry.get("agents", [])
     current_agent = None
 
-    # Try matching by TMUX_PANE env var first (works in sandboxed environments!)
-    for agent in agents:
-        if agent.get("tmux_pane_id") == tmux_pane_id:
-            current_agent = agent
-            break
-
-    # Fallback 1: Try matching by pane index (if we successfully converted it)
-    if not current_agent and current_pane:
+    if backend.name == "tmux":
+        # Try matching by TMUX_PANE env var first
         for agent in agents:
-            if agent.get("pane_index") == current_pane:
+            if agent.get("tmux_pane_id") == current_identifier:
                 current_agent = agent
                 break
 
-    # Fallback 2: Try matching by PID (last resort for old registries without tmux_pane_id)
+        # Fallback 1: Try matching by pane index
+        if not current_agent and current_pane:
+            for agent in agents:
+                if agent.get("pane_index") == current_pane:
+                    current_agent = agent
+                    break
+
+    elif backend.name == "process":
+        # Match by TTY path or pane_index
+        for agent in agents:
+            if (
+                agent.get("tty") == current_identifier
+                or agent.get("pane_index") == current_identifier
+            ):
+                current_agent = agent
+                break
+
+    # Fallback: Try matching by PID (works for any backend)
     if not current_agent:
-        # Get current process and check if it's a Claude Code agent
-        # Claude Code agents spawn bash as child processes, so check parent
         current_pid = os.getpid()
         parent_pid = os.getppid()
 
-        # Try both current PID and parent PID
         for agent in agents:
             agent_pid = agent.get("pid")
             if agent_pid and agent_pid in (current_pid, parent_pid):
@@ -1624,6 +1672,10 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         print(f"  PID: {current_agent.get('pid', 'unknown')}")
         print(f"  Status: {current_agent.get('status', 'unknown')}")
         print(f"  Session: {current_agent.get('session_name', 'unknown')}")
+        print(f"  Backend: {backend.name}")
+
+        if current_agent.get("tty"):
+            print(f"  TTY: {current_agent.get('tty')}")
 
         last_seen = current_agent.get("last_seen")
         if last_seen:
@@ -1645,7 +1697,7 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         # Auto-check for pending messages (shows recent 3)
         print()
         print("=" * 68)
-        print("📬 RECENT MESSAGES (auto-checked)")
+        print("RECENT MESSAGES (auto-checked)")
         print("=" * 68)
         try:
             from claudeswarm.messaging import MessageLogger
@@ -1673,9 +1725,13 @@ def cmd_whoami(args: argparse.Namespace) -> None:
             print(f"\n  (Could not check messages: {e})")
         print()
     else:
-        print("=== Current Pane ===")
+        print("=== Current Terminal ===")
         print()
-        print(f"  Pane: {current_pane if current_pane else tmux_pane_id}")
+        if backend.name == "tmux":
+            print(f"  Pane: {current_pane if current_pane else current_identifier}")
+        else:
+            print(f"  Terminal: {current_identifier}")
+            print(f"  Backend: {backend.name}")
         print()
         print("You are NOT registered as an agent.")
         print()
@@ -1981,39 +2037,70 @@ def _init_check_and_create_config(project_root: Path, auto_yes: bool) -> None:
     print()
 
 
-def _init_check_tmux_status() -> str:
-    """Check tmux installation and running status.
+def _init_check_terminal_status() -> str:
+    """Check terminal backend status.
+
+    Detects the active backend and reports its status.
 
     Returns:
         Status string: "running", "not_running", "not_installed", or "error"
     """
-    print("Step 3: Checking tmux...")
-    try:
-        result = subprocess.run(["tmux", "list-sessions"], capture_output=True, timeout=2)
-        if result.returncode == 0:
-            sessions = result.stdout.decode().strip().split("\n")
-            print(f"✓ tmux is running with {len(sessions)} session(s)")
+    from claudeswarm.backend import get_backend
+
+    backend = get_backend()
+    print(f"Step 3: Checking terminal backend ({backend.name})...")
+
+    if backend.name == "tmux":
+        try:
+            result = subprocess.run(["tmux", "list-sessions"], capture_output=True, timeout=2)
+            if result.returncode == 0:
+                sessions = result.stdout.decode().strip().split("\n")
+                print(f"  Backend: tmux with {len(sessions)} session(s)")
+                print()
+                return "running"
+            else:
+                print("  tmux is installed but no sessions are running")
+                print("  Tip: Start tmux with: tmux new -s myproject")
+                print()
+                return "not_running"
+        except FileNotFoundError:
+            print("  tmux not found - Install it first!")
+            print("  macOS: brew install tmux")
+            print("  Linux: apt install tmux / yum install tmux")
             print()
-            return "running"
-        else:
-            print("⚠ tmux is installed but no sessions are running")
-            print("  Tip: Start tmux with: tmux new -s myproject")
+            return "not_installed"
+        except subprocess.TimeoutExpired:
+            print("  tmux command timed out")
             print()
-            return "not_running"
-    except FileNotFoundError:
-        print("✗ tmux not found - Install it first!")
-        print("  macOS: brew install tmux")
-        print("  Linux: apt install tmux / yum install tmux")
+            return "error"
+        except Exception as e:
+            print(f"  Error checking tmux: {e}")
+            print()
+            return "error"
+    elif backend.name == "process":
+        terminal_name = _detect_terminal_name()
+        identifier = backend.get_current_agent_identifier()
+        print(f"  Backend: process (terminal: {terminal_name})")
+        if identifier:
+            print(f"  TTY: {identifier}")
+        print("  Messages: file-based (via Claude Code hooks)")
         print()
-        return "not_installed"
-    except subprocess.TimeoutExpired:
-        print("⚠ tmux command timed out")
+        return "running"
+    else:
+        print(f"  Unknown backend: {backend.name}")
         print()
         return "error"
-    except Exception as e:
-        print(f"⚠ Error checking tmux: {e}")
-        print()
-        return "error"
+
+
+def _detect_terminal_name() -> str:
+    """Detect the current terminal application name.
+
+    Returns:
+        Terminal name string.
+    """
+    from .process_backend import _detect_terminal_name as _detect
+
+    return _detect()
 
 
 def _init_display_next_steps(project_root: Path, tmux_status: str) -> None:
@@ -2862,8 +2949,8 @@ def cmd_init(args: argparse.Namespace) -> None:
     # Step 2: Check and create configuration
     _init_check_and_create_config(project_root, args.yes)
 
-    # Step 3: Check tmux status
-    tmux_status = _init_check_tmux_status()
+    # Step 3: Check terminal backend status
+    tmux_status = _init_check_terminal_status()
 
     # Step 4: Set up message hooks
     _init_setup_hooks(project_root, args.yes)
