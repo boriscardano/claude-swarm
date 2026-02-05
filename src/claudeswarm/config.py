@@ -314,7 +314,7 @@ class BackendConfig:
             ConfigValidationError: If validation fails
         """
         valid_providers = ("auto", "tmux", "process")
-        if self.provider not in valid_providers:
+        if self.provider.lower() not in valid_providers:
             raise ConfigValidationError(
                 f"backend.provider must be one of {valid_providers}, got '{self.provider}'"
             )

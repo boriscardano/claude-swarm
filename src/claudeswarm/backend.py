@@ -158,10 +158,10 @@ def detect_backend() -> TerminalBackend:
 
             return ProcessBackend()
         else:
-            # Truncate to prevent log injection with very long values
-            safe_value = env_backend[:30]
+            # Sanitize to prevent log injection
+            safe_value = repr(env_backend[:30])
             logger.warning(
-                f"Unknown CLAUDESWARM_BACKEND value '{safe_value}', falling back to auto-detection"
+                f"Unknown CLAUDESWARM_BACKEND value {safe_value}, falling back to auto-detection"
             )
 
     # 2. Config file override

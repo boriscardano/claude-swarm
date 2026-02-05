@@ -85,21 +85,16 @@ class TestDetectBackend:
         backend = detect_backend()
         assert backend.name == "process"
 
-    @patch.dict(
-        os.environ,
-        {"CLAUDESWARM_BACKEND": "invalid_backend"},
-        clear=False,
-    )
     def test_env_var_unknown_falls_through(self):
         """Unknown env var value should fall through to auto-detection."""
-        # Remove TMUX vars so we get ProcessBackend as default
         env = os.environ.copy()
         env.pop("TMUX", None)
         env.pop("TMUX_PANE", None)
         env["CLAUDESWARM_BACKEND"] = "invalid_backend"
         with patch.dict(os.environ, env, clear=True):
-            backend = detect_backend()
-            assert backend.name == "process"
+            with patch("claudeswarm.config.get_config", side_effect=Exception("no config")):
+                backend = detect_backend()
+                assert backend.name == "process"
 
     @patch.dict(
         os.environ,

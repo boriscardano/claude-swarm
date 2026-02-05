@@ -313,19 +313,21 @@ class TestProcessBackendVerify:
     def test_verify_bare_tty_name(self):
         backend = ProcessBackend()
         # Bare TTY names get /dev/ prefixed after pattern validation
-        with patch("claudeswarm.process_backend.Path") as MockPath:
-            mock_instance = MagicMock()
-            mock_instance.exists.return_value = True
-            MockPath.return_value = mock_instance
+        with patch.object(Path, "resolve") as mock_resolve:
+            mock_resolved = MagicMock()
+            mock_resolved.__str__ = lambda self: "/dev/ttys005"
+            mock_resolved.exists.return_value = True
+            mock_resolve.return_value = mock_resolved
             assert backend.verify_agent("ttys005") is True
 
     def test_verify_bare_tty_pts_name(self):
         """Linux pts/ style TTY names should also work."""
         backend = ProcessBackend()
-        with patch("claudeswarm.process_backend.Path") as MockPath:
-            mock_instance = MagicMock()
-            mock_instance.exists.return_value = True
-            MockPath.return_value = mock_instance
+        with patch.object(Path, "resolve") as mock_resolve:
+            mock_resolved = MagicMock()
+            mock_resolved.__str__ = lambda self: "/dev/pts/3"
+            mock_resolved.exists.return_value = True
+            mock_resolve.return_value = mock_resolved
             assert backend.verify_agent("pts/3") is True
 
     def test_verify_unknown_identifier(self):

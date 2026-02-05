@@ -291,8 +291,13 @@ class ProcessBackend(TerminalBackend):
         if not _TTY_NAME_PATTERN.match(identifier):
             return False
 
-        dev_path = Path(f"/dev/{identifier}")
-        return dev_path.exists()
+        try:
+            dev_path = Path(f"/dev/{identifier}").resolve()
+            if not str(dev_path).startswith("/dev/"):
+                return False
+            return dev_path.exists()
+        except (ValueError, OSError):
+            return False
 
     def get_current_agent_identifier(self) -> str | None:
         """Get the TTY path for the current process.
