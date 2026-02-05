@@ -158,8 +158,10 @@ def detect_backend() -> TerminalBackend:
 
             return ProcessBackend()
         else:
+            # Truncate to prevent log injection with very long values
+            safe_value = env_backend[:30]
             logger.warning(
-                f"Unknown CLAUDESWARM_BACKEND value '{env_backend}', falling back to auto-detection"
+                f"Unknown CLAUDESWARM_BACKEND value '{safe_value}', falling back to auto-detection"
             )
 
     # 2. Config file override
@@ -168,7 +170,7 @@ def detect_backend() -> TerminalBackend:
 
         config = get_config()
         if hasattr(config, "backend") and config.backend is not None:
-            provider = config.backend.provider
+            provider = config.backend.provider.lower() if config.backend.provider else None
             if provider and provider != "auto":
                 if provider == "tmux":
                     logger.info("Using TmuxBackend (config file)")
@@ -182,11 +184,14 @@ def detect_backend() -> TerminalBackend:
                     return ProcessBackend()
                 else:
                     logger.warning(
-                        f"Unknown backend provider '{provider}' in config, falling back to auto-detection"
+                        f"Unknown backend provider '{provider[:30]}' in config, "
+                        f"falling back to auto-detection"
                     )
-    except Exception:
+    except (FileNotFoundError, ImportError):
         # Config not available yet, continue with auto-detection
         pass
+    except Exception as e:
+        logger.debug(f"Config loading failed during backend detection: {e}")
 
     # 3. Auto-detect: check for tmux (either TMUX or TMUX_PANE env var)
     if os.environ.get("TMUX") or os.environ.get("TMUX_PANE"):

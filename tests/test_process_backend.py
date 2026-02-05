@@ -249,8 +249,22 @@ class TestProcessBackendVerify:
         backend = ProcessBackend()
         with patch("claudeswarm.process_backend.os.kill") as mock_kill:
             mock_kill.return_value = None
-            assert backend.verify_agent("pid:12345") is True
+            # Mock the subprocess call for Claude process verification
+            with patch("claudeswarm.process_backend.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(stdout="claude\n")
+                with patch("claudeswarm.discovery._is_claude_code_process", return_value=True):
+                    assert backend.verify_agent("pid:12345") is True
             mock_kill.assert_called_once_with(12345, 0)
+
+    def test_verify_pid_alive_not_claude_anymore(self):
+        """PID exists but is no longer a Claude process (PID reuse)."""
+        backend = ProcessBackend()
+        with patch("claudeswarm.process_backend.os.kill") as mock_kill:
+            mock_kill.return_value = None
+            with patch("claudeswarm.process_backend.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(stdout="vim\n")
+                with patch("claudeswarm.discovery._is_claude_code_process", return_value=False):
+                    assert backend.verify_agent("pid:12345") is False
 
     def test_verify_pid_dead(self):
         backend = ProcessBackend()
@@ -261,30 +275,68 @@ class TestProcessBackendVerify:
         backend = ProcessBackend()
         assert backend.verify_agent("pid:notanumber") is False
 
-    def test_verify_tty_exists(self, tmp_path):
-        # Create a fake device file
-        fake_tty = tmp_path / "ttys999"
-        fake_tty.touch()
+    def test_verify_tty_exists(self):
         backend = ProcessBackend()
-        with patch.object(Path, "exists", return_value=True):
+        with patch("claudeswarm.process_backend.Path") as MockPath:
+            mock_resolved = MagicMock()
+            mock_resolved.__str__ = lambda self: "/dev/ttys999"
+            mock_resolved.exists.return_value = True
+            mock_path_instance = MagicMock()
+            mock_path_instance.resolve.return_value = mock_resolved
+            MockPath.return_value = mock_path_instance
             assert backend.verify_agent("/dev/ttys999") is True
 
     def test_verify_tty_missing(self):
         backend = ProcessBackend()
-        assert backend.verify_agent("/dev/ttys_nonexistent_99999") is False
+        with patch("claudeswarm.process_backend.Path") as MockPath:
+            mock_resolved = MagicMock()
+            mock_resolved.__str__ = lambda self: "/dev/ttys_nonexistent"
+            mock_resolved.exists.return_value = False
+            mock_path_instance = MagicMock()
+            mock_path_instance.resolve.return_value = mock_resolved
+            MockPath.return_value = mock_path_instance
+            assert backend.verify_agent("/dev/ttys_nonexistent") is False
 
-    def test_verify_bare_tty_name(self, tmp_path):
+    def test_verify_tty_path_traversal_blocked(self):
+        """Path traversal attempts should be rejected."""
         backend = ProcessBackend()
-        # Bare TTY names get /dev/ prefixed
+        with patch("claudeswarm.process_backend.Path") as MockPath:
+            # Simulate resolve() returning a path outside /dev/
+            mock_resolved = MagicMock()
+            mock_resolved.__str__ = lambda self: "/etc/passwd"
+            mock_resolved.exists.return_value = True
+            mock_path_instance = MagicMock()
+            mock_path_instance.resolve.return_value = mock_resolved
+            MockPath.return_value = mock_path_instance
+            assert backend.verify_agent("/dev/../../etc/passwd") is False
+
+    def test_verify_bare_tty_name(self):
+        backend = ProcessBackend()
+        # Bare TTY names get /dev/ prefixed after pattern validation
         with patch("claudeswarm.process_backend.Path") as MockPath:
             mock_instance = MagicMock()
             mock_instance.exists.return_value = True
             MockPath.return_value = mock_instance
             assert backend.verify_agent("ttys005") is True
 
+    def test_verify_bare_tty_pts_name(self):
+        """Linux pts/ style TTY names should also work."""
+        backend = ProcessBackend()
+        with patch("claudeswarm.process_backend.Path") as MockPath:
+            mock_instance = MagicMock()
+            mock_instance.exists.return_value = True
+            MockPath.return_value = mock_instance
+            assert backend.verify_agent("pts/3") is True
+
     def test_verify_unknown_identifier(self):
         backend = ProcessBackend()
         assert backend.verify_agent("some-unknown-id") is False
+
+    def test_verify_bare_tty_invalid_pattern(self):
+        """Invalid TTY patterns should be rejected."""
+        backend = ProcessBackend()
+        assert backend.verify_agent("../../etc/passwd") is False
+        assert backend.verify_agent("notadevice") is False
 
 
 class TestProcessBackendIdentity:

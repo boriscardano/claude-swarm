@@ -14,6 +14,7 @@ Key design decisions:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +31,9 @@ PS_TIMEOUT_SECONDS = 3
 
 # Timeout for lsof CWD detection (seconds)
 LSOF_TIMEOUT_SECONDS = 1
+
+# Pattern for valid TTY device names (macOS/Linux)
+_TTY_NAME_PATTERN = re.compile(r"^(tty[sp]?\d+|pts/\d+)$")
 
 
 def _detect_terminal_name() -> str:
@@ -62,12 +66,14 @@ def _find_claude_processes() -> list[dict]:
     our_pid = os.getpid()
 
     try:
+        # Use minimal environment - only PATH and locale settings needed for ps
+        ps_env = {"LC_ALL": "C", "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
         result = subprocess.run(
             ["ps", "-eo", "pid=,ppid=,tty=,command="],
             capture_output=True,
             text=True,
             timeout=PS_TIMEOUT_SECONDS,
-            env={**os.environ, "LC_ALL": "C"},
+            env=ps_env,
         )
 
         if result.returncode != 0:
@@ -237,8 +243,9 @@ class ProcessBackend(TerminalBackend):
     def verify_agent(self, identifier: str) -> bool:
         """Verify an agent is still alive.
 
-        For PID-based identifiers, checks process liveness.
-        For TTY-based identifiers, checks if the TTY device exists.
+        For PID-based identifiers, checks process liveness and verifies
+        it's still a Claude Code process (guards against PID reuse).
+        For TTY-based identifiers, validates the path and checks existence.
 
         Args:
             identifier: Agent identifier (TTY path or "pid:NNN").
@@ -250,20 +257,42 @@ class ProcessBackend(TerminalBackend):
             try:
                 pid = int(identifier[4:])
                 os.kill(pid, 0)
+                # Guard against PID reuse: verify it's still a Claude process
+                try:
+                    from .discovery import _is_claude_code_process
+
+                    ps_result = subprocess.run(
+                        ["ps", "-p", str(pid), "-o", "command="],
+                        capture_output=True,
+                        text=True,
+                        timeout=1,
+                    )
+                    cmd = ps_result.stdout.strip()
+                    if cmd and not _is_claude_code_process(cmd, pid):
+                        return False
+                except Exception:
+                    pass  # Fall through - PID is alive, best effort
                 return True
             except (ValueError, ProcessLookupError, OSError):
                 return False
 
-        # TTY-based identifier - check if device exists
+        # TTY-based identifier - validate and check if device exists
         if identifier.startswith("/dev/"):
-            return Path(identifier).exists()
+            # Resolve to canonical path and ensure it stays under /dev
+            try:
+                resolved = Path(identifier).resolve()
+                if not str(resolved).startswith("/dev/"):
+                    return False
+                return resolved.exists()
+            except (ValueError, OSError):
+                return False
 
-        # For bare TTY names (e.g., "ttys005"), check /dev/ prefix
+        # For bare TTY names (e.g., "ttys005"), validate format first
+        if not _TTY_NAME_PATTERN.match(identifier):
+            return False
+
         dev_path = Path(f"/dev/{identifier}")
-        if dev_path.exists():
-            return True
-
-        return False
+        return dev_path.exists()
 
     def get_current_agent_identifier(self) -> str | None:
         """Get the TTY path for the current process.
