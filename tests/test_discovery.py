@@ -483,7 +483,7 @@ class TestRefreshRegistry:
         result = refresh_registry()
 
         # After config integration, default is None (uses config value)
-        mock_discover.assert_called_once_with(stale_threshold=None)
+        mock_discover.assert_called_once_with(stale_threshold=None, backend=None)
         mock_save.assert_called_once()
         assert result == mock_registry
 

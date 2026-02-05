@@ -90,6 +90,7 @@ __all__ = [
     "DiscoveryConfig",
     "OnboardingConfig",
     "DashboardConfig",
+    "BackendConfig",
     "ClaudeSwarmConfig",
     "load_config",
     "get_config",
@@ -295,6 +296,39 @@ class DashboardConfig:
 
 
 @dataclass
+class BackendConfig:
+    """Configuration for terminal backend.
+
+    Attributes:
+        provider: Backend provider to use ("auto", "tmux", "process")
+        message_poll_interval: Interval in seconds for polling file-based messages
+    """
+
+    provider: str = "auto"
+    message_poll_interval: int = 5
+
+    def validate(self) -> None:
+        """Validate backend configuration.
+
+        Raises:
+            ConfigValidationError: If validation fails
+        """
+        valid_providers = ("auto", "tmux", "process")
+        if self.provider.lower() not in valid_providers:
+            raise ConfigValidationError(
+                f"backend.provider must be one of {valid_providers}, got '{self.provider}'"
+            )
+        if self.message_poll_interval < 1:
+            raise ConfigValidationError(
+                f"message_poll_interval must be >= 1, got {self.message_poll_interval}"
+            )
+        if self.message_poll_interval > 300:
+            raise ConfigValidationError(
+                f"message_poll_interval too high (max 300s), got {self.message_poll_interval}"
+            )
+
+
+@dataclass
 class ClaudeSwarmConfig:
     """Complete configuration for Claude Swarm.
 
@@ -304,6 +338,7 @@ class ClaudeSwarmConfig:
         discovery: Agent discovery configuration
         onboarding: Onboarding configuration
         dashboard: Dashboard configuration
+        backend: Terminal backend configuration
         project_root: Project root directory (None = auto-detect)
     """
 
@@ -312,6 +347,7 @@ class ClaudeSwarmConfig:
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     onboarding: OnboardingConfig = field(default_factory=OnboardingConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    backend: BackendConfig = field(default_factory=BackendConfig)
     project_root: Path | None = None
 
     def validate(self) -> None:
@@ -325,6 +361,7 @@ class ClaudeSwarmConfig:
         self.discovery.validate()
         self.onboarding.validate()
         self.dashboard.validate()
+        self.backend.validate()
 
         if self.project_root is not None:
             if not isinstance(self.project_root, (Path, str)):
@@ -349,6 +386,7 @@ class ClaudeSwarmConfig:
             "discovery": asdict(self.discovery),
             "onboarding": asdict(self.onboarding),
             "dashboard": asdict(self.dashboard),
+            "backend": asdict(self.backend),
         }
         if self.project_root is not None:
             result["project_root"] = str(self.project_root)
@@ -570,6 +608,13 @@ def _dict_to_config(data: dict[str, Any]) -> ClaudeSwarmConfig:
             refresh_interval=dashboard_data.get("refresh_interval", 1),
         )
 
+        # Extract backend config
+        backend_data = data.get("backend", {})
+        backend = BackendConfig(
+            provider=backend_data.get("provider", "auto"),
+            message_poll_interval=backend_data.get("message_poll_interval", 5),
+        )
+
         # Extract project root
         project_root = None
         if "project_root" in data and data["project_root"] is not None:
@@ -581,6 +626,7 @@ def _dict_to_config(data: dict[str, Any]) -> ClaudeSwarmConfig:
             discovery=discovery,
             onboarding=onboarding,
             dashboard=dashboard,
+            backend=backend,
             project_root=project_root,
         )
     except Exception as e:

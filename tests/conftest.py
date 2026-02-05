@@ -15,6 +15,20 @@ from unittest.mock import Mock
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def reset_backend_singleton():
+    """Reset the backend singleton before each test.
+
+    This prevents backend state from leaking between tests,
+    especially when tests manipulate TMUX/TMUX_PANE env vars.
+    """
+    from claudeswarm.backend import reset_backend
+
+    reset_backend()
+    yield
+    reset_backend()
+
+
 @pytest.fixture
 def temp_config_dir(tmp_path):
     """Create a temporary directory for config files.

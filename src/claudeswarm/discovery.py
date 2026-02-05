@@ -137,15 +137,39 @@ class Agent:
     last_seen: str  # ISO 8601 format
     session_name: str
     tmux_pane_id: str | None = None  # Internal %N format for TMUX_PANE env var matching
+    tty: str | None = None  # TTY device path for process backend
+    backend_type: str | None = None  # Backend that discovered this agent ("tmux", "process")
 
     def to_dict(self) -> dict:
         """Convert agent to dictionary for JSON serialization."""
-        return asdict(self)
+        result = asdict(self)
+        # Omit None optional fields for backward compatibility
+        if result.get("tty") is None:
+            del result["tty"]
+        if result.get("backend_type") is None:
+            del result["backend_type"]
+        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> "Agent":
-        """Create Agent from dictionary."""
-        return cls(**data)
+        """Create Agent from dictionary.
+
+        Handles both old format (without tty/backend_type) and new format.
+        """
+        # Filter to only known fields to handle forward/backward compatibility
+        known_fields = {
+            "id",
+            "pane_index",
+            "pid",
+            "status",
+            "last_seen",
+            "session_name",
+            "tmux_pane_id",
+            "tty",
+            "backend_type",
+        }
+        filtered_data = {k: v for k, v in data.items() if k in known_fields}
+        return cls(**filtered_data)
 
 
 @dataclass
@@ -958,20 +982,27 @@ def _save_registry(registry: AgentRegistry) -> None:
 
 
 def discover_agents(
-    session_name: str | None = None, stale_threshold: int | None = None
+    session_name: str | None = None,
+    stale_threshold: int | None = None,
+    backend: Any | None = None,
 ) -> AgentRegistry:
-    """Discover active Claude Code agents in tmux panes.
+    """Discover active Claude Code agents.
+
+    Supports both tmux-based discovery (original) and backend-based discovery
+    when a backend is provided.
 
     Args:
         session_name: Optional tmux session name to filter by (None = all sessions)
         stale_threshold: Seconds after which an agent is considered stale
                         (None = use configured discovery.stale_threshold)
+        backend: Optional TerminalBackend instance. When provided, uses backend
+                for discovery instead of direct tmux calls.
 
     Returns:
         AgentRegistry containing all discovered agents
 
     Raises:
-        TmuxNotRunningError: If tmux is not running or not accessible
+        TmuxNotRunningError: If tmux is not running or not accessible (tmux path only)
         TmuxPermissionError: If permission denied accessing tmux
         RegistryLockError: If cannot acquire lock on registry file
         DiscoveryError: For other discovery-related errors
@@ -995,13 +1026,6 @@ def discover_agents(
             existing_ids[agent.pane_index] = agent.id
             existing_agents_map[agent.pane_index] = agent
 
-    # Discover current panes
-    panes = _parse_tmux_panes()
-
-    # Filter by session if specified
-    if session_name:
-        panes = [p for p in panes if p["session_name"] == session_name]
-
     # Get project root for directory filtering
     from .project import get_project_root
 
@@ -1011,35 +1035,65 @@ def discover_agents(
     discovered_agents = []
     active_pane_indices = set()
 
-    for pane in panes:
-        if not _is_claude_code_process(pane["command"], pane["pid"]):
-            continue
+    if backend is not None:
+        # Backend-based discovery
+        backend_agents = backend.discover_agents(project_root=str(project_root))
 
-        # Filter by project directory based on configuration
-        # When enable_cross_project_coordination is False (default), only include agents
-        # working in this project. This creates project-isolated swarms for security.
-        # When True, agents from all projects are visible for cross-project coordination.
-        if not get_config().discovery.enable_cross_project_coordination:
-            if not _is_in_project(pane["pid"], project_root):
+        for agent_info in backend_agents:
+            pane_index = agent_info.identifier
+            active_pane_indices.add(pane_index)
+            agent_id = _generate_agent_id(pane_index, existing_ids)
+
+            # Add newly generated ID to existing_ids so next iteration sees it
+            existing_ids[pane_index] = agent_id
+
+            agent = Agent(
+                id=agent_id,
+                pane_index=pane_index,
+                pid=agent_info.pid,
+                status="active",
+                last_seen=current_time.isoformat(),
+                session_name=agent_info.session_name,
+                tmux_pane_id=agent_info.metadata.get("tmux_pane_id"),
+                tty=agent_info.metadata.get("tty"),
+                backend_type=backend.name,
+            )
+            discovered_agents.append(agent)
+    else:
+        # Original tmux-based discovery
+        panes = _parse_tmux_panes()
+
+        # Filter by session if specified
+        if session_name:
+            panes = [p for p in panes if p["session_name"] == session_name]
+
+        for pane in panes:
+            if not _is_claude_code_process(pane["command"], pane["pid"]):
                 continue
 
-        pane_index = pane["pane_index"]
-        active_pane_indices.add(pane_index)
-        agent_id = _generate_agent_id(pane_index, existing_ids)
+            # Filter by project directory based on configuration
+            if not get_config().discovery.enable_cross_project_coordination:
+                if not _is_in_project(pane["pid"], project_root):
+                    continue
 
-        # Add newly generated ID to existing_ids so next iteration sees it
-        existing_ids[pane_index] = agent_id
+            pane_index = pane["pane_index"]
+            active_pane_indices.add(pane_index)
+            agent_id = _generate_agent_id(pane_index, existing_ids)
 
-        agent = Agent(
-            id=agent_id,
-            pane_index=pane_index,
-            pid=pane["pid"],
-            status="active",
-            last_seen=current_time.isoformat(),
-            session_name=pane["session_name"],
-            tmux_pane_id=pane.get("tmux_pane_id"),  # Internal %N format for TMUX_PANE matching
-        )
-        discovered_agents.append(agent)
+            # Add newly generated ID to existing_ids so next iteration sees it
+            existing_ids[pane_index] = agent_id
+
+            agent = Agent(
+                id=agent_id,
+                pane_index=pane_index,
+                pid=pane["pid"],
+                status="active",
+                last_seen=current_time.isoformat(),
+                session_name=pane["session_name"],
+                tmux_pane_id=pane.get("tmux_pane_id"),
+                backend_type="tmux",
+            )
+            discovered_agents.append(agent)
 
     # Check for stale agents (in registry but not currently active)
     for pane_index, agent in existing_agents_map.items():
@@ -1094,7 +1148,9 @@ def discover_agents(
     return registry
 
 
-def refresh_registry(stale_threshold: int | None = None) -> AgentRegistry:
+def refresh_registry(
+    stale_threshold: int | None = None, backend: Any | None = None
+) -> AgentRegistry:
     """Refresh the agent registry file.
 
     Discovers agents and saves updated registry to ACTIVE_AGENTS.json.
@@ -1102,6 +1158,7 @@ def refresh_registry(stale_threshold: int | None = None) -> AgentRegistry:
     Args:
         stale_threshold: Seconds after which an agent is considered stale
                         (None = use configured discovery.stale_threshold)
+        backend: Optional TerminalBackend instance for backend-aware discovery.
 
     Returns:
         Updated AgentRegistry
@@ -1112,7 +1169,7 @@ def refresh_registry(stale_threshold: int | None = None) -> AgentRegistry:
         RegistryLockError: If cannot acquire lock on registry file
         DiscoveryError: For other discovery-related errors
     """
-    registry = discover_agents(stale_threshold=stale_threshold)
+    registry = discover_agents(stale_threshold=stale_threshold, backend=backend)
     _save_registry(registry)
     logger.info(f"Registry refreshed with {len(registry.agents)} agents")
     return registry
@@ -1262,7 +1319,9 @@ def sync_agents_to_cards(registry: AgentRegistry | None = None) -> int:
             existing_card = card_registry.get_card(agent.id)
             if existing_card and existing_card.availability != "offline":
                 card_registry.set_availability(agent.id, "offline")
-                logger.debug(f"Set agent {agent.id} availability to offline (status: {agent.status})")
+                logger.debug(
+                    f"Set agent {agent.id} availability to offline (status: {agent.status})"
+                )
                 updated_count += 1
 
     # Also mark any cards not in registry as offline

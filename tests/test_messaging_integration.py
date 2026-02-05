@@ -18,7 +18,7 @@ from claudeswarm.messaging import MessageType, MessagingSystem, TmuxMessageDeliv
 class TestMessagingDiscoveryIntegration:
     """Tests for messaging system integration with discovery."""
 
-    @patch("claudeswarm.discovery.get_registry_path")
+    @patch("claudeswarm.messaging.get_registry_path")
     def test_load_agent_registry(self, mock_get_path):
         """Test that messaging system can load agent registry."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -59,7 +59,7 @@ class TestMessagingDiscoveryIntegration:
             assert registry.agents[0].id == "agent-1"
             assert registry.agents[1].id == "agent-2"
 
-    @patch("claudeswarm.discovery.get_registry_path")
+    @patch("claudeswarm.messaging.get_registry_path")
     def test_get_agent_pane(self, mock_get_path):
         """Test getting agent pane from registry."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -88,7 +88,7 @@ class TestMessagingDiscoveryIntegration:
 
             assert pane == "session:0.1"
 
-    @patch("claudeswarm.discovery.get_registry_path")
+    @patch("claudeswarm.messaging.get_registry_path")
     @patch.object(TmuxMessageDelivery, "send_to_pane")
     def test_send_message_with_registry(self, mock_send, mock_get_path):
         """Test sending message using discovery registry."""
@@ -133,7 +133,7 @@ class TestMessagingDiscoveryIntegration:
             assert result.recipients == ["agent-2"]
             mock_send.assert_called_once()
 
-    @patch("claudeswarm.discovery.get_registry_path")
+    @patch("claudeswarm.messaging.get_registry_path")
     @patch.object(TmuxMessageDelivery, "send_to_pane")
     def test_broadcast_with_registry(self, mock_send, mock_get_path):
         """Test broadcasting message using discovery registry."""

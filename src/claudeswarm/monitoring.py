@@ -31,6 +31,7 @@ from pathlib import Path
 from claudeswarm.ack import PendingAck, check_pending_acks
 from claudeswarm.discovery import Agent, list_active_agents
 from claudeswarm.locking import FileLock, LockManager
+from claudeswarm.logging_config import get_logger
 from claudeswarm.messaging import Message, MessageType
 from claudeswarm.validators import ValidationError, validate_agent_id
 
@@ -41,6 +42,9 @@ __all__ = [
     "start_monitoring",
     "ColorScheme",
 ]
+
+# Configure logging
+logger = get_logger(__name__)
 
 
 # ANSI color codes
@@ -527,10 +531,6 @@ def create_tmux_monitoring_pane(
     Returns:
         Pane ID if successful, None otherwise
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     try:
         # Split current pane vertically
         result = subprocess.run(
@@ -575,6 +575,10 @@ def start_monitoring(
 ) -> None:
     """Start the monitoring dashboard.
 
+    Uses the backend abstraction for creating monitoring panes when available.
+    Falls back to running in the current terminal when the backend doesn't
+    support pane creation (e.g., process backend).
+
     SECURITY NOTE:
     This function handles user-provided filter parameters that are ultimately
     passed to shell commands via tmux send-keys. To prevent command injection:
@@ -582,16 +586,10 @@ def start_monitoring(
     2. filter_agent is validated with validate_agent_id() (alphanumeric, hyphens, underscores only)
     3. Both parameters are escaped with shlex.quote() before shell execution
 
-    These three layers of defense ensure that malicious inputs like:
-    - "INFO && rm -rf /"
-    - "agent-1; malicious-command"
-    - "$(malicious)" or "`malicious`"
-    are rejected or safely escaped before reaching the shell.
-
     Args:
         filter_type: If provided, filter to this message type
         filter_agent: If provided, filter to this agent ID
-        use_tmux: Whether to create a dedicated tmux pane
+        use_tmux: Whether to create a dedicated tmux pane (when backend supports it)
 
     Raises:
         RuntimeError: If tmux is required but not available
@@ -619,23 +617,27 @@ def start_monitoring(
     # Create monitor
     monitor = Monitor(message_filter=msg_filter)
 
-    # If using tmux, create dedicated pane
+    # Try to create a dedicated pane via backend
     if use_tmux:
-        # Check if tmux is available
         try:
-            subprocess.run(["tmux", "list-panes"], capture_output=True, timeout=5, check=True)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            raise RuntimeError("tmux is not available or not running")
+            from claudeswarm.backend import get_backend
 
-        # Create monitoring pane
-        pane_id = create_tmux_monitoring_pane()
-        if not pane_id:
-            print(
-                "Warning: Failed to create tmux pane, running in current terminal", file=sys.stderr
-            )
-        else:
+            backend = get_backend()
+            pane_id = backend.create_monitoring_pane()
+        except Exception:
+            pane_id = None
+
+        if pane_id is None and use_tmux:
+            # Backend doesn't support pane creation or it failed
+            # For tmux backend, try direct tmux as fallback
+            try:
+                subprocess.run(["tmux", "list-panes"], capture_output=True, timeout=5, check=True)
+                pane_id = create_tmux_monitoring_pane()
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+
+        if pane_id:
             # Send monitoring command to the new pane
-            # Build command safely with proper escaping to prevent command injection
             cmd_parts = [
                 "cd",
                 shlex.quote(str(Path.cwd())),
@@ -645,9 +647,7 @@ def start_monitoring(
                 "claudeswarm.monitoring",
             ]
 
-            # Validate and add filter_type if provided
             if filter_type:
-                # Validate filter_type is a valid MessageType to prevent injection
                 try:
                     MessageType(filter_type)
                     cmd_parts.extend(["--filter-type", shlex.quote(filter_type)])
@@ -658,9 +658,7 @@ def start_monitoring(
                     )
                     sys.exit(1)
 
-            # Validate and add filter_agent if provided
             if filter_agent:
-                # Validate agent_id format to prevent injection
                 try:
                     validate_agent_id(filter_agent)
                     cmd_parts.extend(["--filter-agent", shlex.quote(filter_agent)])
@@ -674,6 +672,11 @@ def start_monitoring(
 
             print(f"Monitoring dashboard started in tmux pane {pane_id}")
             return
+        else:
+            print(
+                "Note: Running monitoring in current terminal (no pane creation available)",
+                file=sys.stderr,
+            )
 
     # Run monitoring in current terminal
     monitor.run_dashboard()
