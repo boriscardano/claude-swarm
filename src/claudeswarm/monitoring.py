@@ -31,6 +31,7 @@ from pathlib import Path
 from claudeswarm.ack import PendingAck, check_pending_acks
 from claudeswarm.discovery import Agent, list_active_agents
 from claudeswarm.locking import FileLock, LockManager
+from claudeswarm.logging_config import get_logger
 from claudeswarm.messaging import Message, MessageType
 from claudeswarm.validators import ValidationError, validate_agent_id
 
@@ -41,6 +42,9 @@ __all__ = [
     "start_monitoring",
     "ColorScheme",
 ]
+
+# Configure logging
+logger = get_logger(__name__)
 
 
 # ANSI color codes
@@ -527,10 +531,6 @@ def create_tmux_monitoring_pane(
     Returns:
         Pane ID if successful, None otherwise
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     try:
         # Split current pane vertically
         result = subprocess.run(
